@@ -1,0 +1,15 @@
+.env
+.venv/
+venv/
+*.pyc
+__pycache__/
+*.log   
+db.sqlite3
+media/
+staticfiles/
+.coverage
+htmlcov/
+.pytest_cache/
+CLASSE.md
+GEMINI.md
+AGENTS.md
