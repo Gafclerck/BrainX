@@ -14,9 +14,34 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+
+# Read from the resolved settings, not from `config.settings.base`, so the
+# mounts follow whichever settings module is active. `API_PREFIX` keeps its
+# leading slash so it reads as a full path prefix; a `path()` route must not
+# carry one, or every mount warns urls.W002.
+API_MOUNT = settings.API_PREFIX.lstrip('/')
+
+# `SPECTACULAR_SETTINGS` deliberately sets no `SERVE_PERMISSIONS`, so the schema
+# and the Swagger UI stay anonymously readable at the drf-spectacular default
+# even though `REST_FRAMEWORK` pins `IsAuthenticated` for the API itself. That
+# is a decision, not an oversight: the schema is generated from the code and
+# describes the contract rather than any account's data, and the UI renders
+# that same document. `SERVE_PERMISSIONS` is the single place to change it.
+# `SERVE_AUTHENTICATION` is set for the same decision, because its default of
+# `None` would fall back to the project's authenticators and 401 a request that
+# carries a bad `Bearer` header. Both settings move together.
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path(f'{API_MOUNT}/', include('apps.users.urls')),
+    path(f'{API_MOUNT}/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path(
+        f'{API_MOUNT}/docs/',
+        SpectacularSwaggerView.as_view(url_name='schema'),
+        name='swagger-ui',
+    ),
 ]

@@ -39,6 +39,12 @@ EMAIL_PORT = env.int('EMAIL_PORT', default=1025)  # 1025 = Mailpit/Mailhog local
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=False)
+# A relay that drops packets instead of refusing the connection never raises,
+# and Django's default of None means smtplib sets no socket timeout at all, so
+# the request thread would sit in connect() for as long as the OS retries the
+# SYN. Ten seconds is long enough for a slow relay and short enough that an
+# open registration endpoint cannot be used to hold a worker open.
+EMAIL_TIMEOUT = env.int('EMAIL_TIMEOUT', default=10)
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='no-reply@brainx.local')
 
 # API version: the URL prefix is built from a constant (the version contract)
@@ -64,7 +70,13 @@ THIRD_PARTY_APPS = [
 
 LOCAL_APPS = [
     'apps.core',
+    'apps.users',
 ]
+
+# The account model is the project's own, not django.contrib.auth's User.
+# It must be set before the first migration is applied, hence here rather than
+# in an app config.
+AUTH_USER_MODEL = 'users.User'
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -124,9 +136,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {
-    # PostgreSQL 15+ is the only supported engine. SQLite cannot express the
-    # UNIQUE-constraint single-use token guarantee of AD-10, so it is not an
-    # option. Override locally with DATABASE_URL in the .env.
+    # PostgreSQL 15+ is the only supported engine. AD-10's single-use token
+    # needs a partial unique index and a CONCURRENTLY migration, and its
+    # timestamps need TIMESTAMPTZ; SQLite offers none of the three. Override
+    # locally with DATABASE_URL in the .env.
     'default': env.db(
         'DATABASE_URL',
         default='postgres://brainx:brainx@localhost:5432/brainx',
@@ -229,6 +242,9 @@ REST_FRAMEWORK = {
 PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
 PASSWORD_RESET_INVITE_TTL_DAYS = 7
 
+# Email verification. Human-speed, so a day rather than the reset's minutes.
+EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
@@ -238,6 +254,7 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # Frontend URL and configurable redirect paths
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
 FRONTEND_RESET_PASSWORD_PATH = env('FRONTEND_RESET_PASSWORD_PATH', default='/reset-password')
+FRONTEND_VERIFY_PATH = env('FRONTEND_VERIFY_PATH', default='/verify-email')
 # FRONTEND_LOGO_PATH = env('FRONTEND_LOGO_PATH', default='/logo-xarala.png')
 
 # Email
@@ -263,6 +280,15 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API de gestion de la plateforme BrainX',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    # No authentication either, and that is the other half of the same
+    # decision. drf-spectacular's default for SERVE_AUTHENTICATION is None,
+    # which it resolves to the project's DEFAULT_AUTHENTICATION_CLASSES - so
+    # with it left unset, a request that happens to carry a stale or malformed
+    # `Authorization: Bearer` header is answered with a 401 before the
+    # AllowAny permission is ever consulted. An empty list is what makes the
+    # schema and the Swagger UI anonymously readable in every case rather than
+    # only for a client that sends no credentials at all.
+    'SERVE_AUTHENTICATION': [],
 }
 
 LOGGING = {
