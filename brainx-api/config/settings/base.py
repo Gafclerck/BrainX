@@ -30,9 +30,9 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 ALLOWED_HOSTS = env('ALLOWED_HOSTS')
 
-# Email : piloté par l'environnement. Défaut = console (dev local, zéro config).
-# Pour passer en SMTP réel (dev comme prod), suffit de mettre EMAIL_BACKEND et
-# les variables SMTP_* dans le .env - aucun changement de code nécessaire.
+# Email: driven by the environment. Default = console (local dev, zero config).
+# To switch to real SMTP (dev and prod alike) set EMAIL_BACKEND and the SMTP_*
+# variables in the .env - no code change needed.
 EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 EMAIL_HOST = env('EMAIL_HOST', default='localhost')
 EMAIL_PORT = env.int('EMAIL_PORT', default=1025)  # 1025 = Mailpit/Mailhog local
@@ -41,7 +41,7 @@ EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=False)
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='no-reply@brainx.local')
 
-# Version de l'API : préfixe d'URL construit depuis une constante (contrat du code)
+# API version: the URL prefix is built from a constant (the version contract)
 API_VERSION = 'v1'
 API_PREFIX = f'/api/{API_VERSION}'
 
@@ -62,7 +62,9 @@ THIRD_PARTY_APPS = [
     'corsheaders',
 ]
 
-LOCAL_APPS = []
+LOCAL_APPS = [
+    'apps.core',
+]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -81,12 +83,21 @@ MIDDLEWARE = [
 ROOT_URLCONF = 'config.urls'
 ASGI_APPLICATION = 'config.asgi.application'
 
-# Channel layer (WebSockets) : Redis en dev/prod, InMemory dans les tests.
+# Channel layer (WebSockets): Redis in dev and prod.
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [env('CHANNEL_REDIS_URL', default='redis://redis:6379/0')],
+            # Each host is a kwargs dict handed to the redis connection. The
+            # explicit `socket_timeout: None` is required: redis-py 8.x defaults
+            # to a 5s socket timeout, which aborts the long-lived blocking reads
+            # channels-redis relies on for group sends and listens.
+            'hosts': [
+                {
+                    'address': env('CHANNEL_REDIS_URL', default='redis://redis:6379/0'),
+                    'socket_timeout': None,
+                },
+            ],
         },
     },
 }
@@ -113,9 +124,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {
+    # PostgreSQL 15+ is the only supported engine. SQLite cannot express the
+    # UNIQUE-constraint single-use token guarantee of AD-10, so it is not an
+    # option. Override locally with DATABASE_URL in the .env.
     'default': env.db(
         'DATABASE_URL',
-        default='sqlite:///' + (BASE_DIR / 'db.sqlite3').as_posix(),
+        default='postgres://brainx:brainx@localhost:5432/brainx',
     ),
 }
 
@@ -151,9 +165,9 @@ MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Stockage des fichiers (Attachment)
-# 'local' : disque du serveur (dev, zéro config). 's3' : bucket S3-compatible
-# (R2, Backblaze B2, DigitalOcean Spaces, AWS S3) — URLs signées et temporaires.
+# File storage (Attachment)
+# 'local': server disk (dev, zero config). 's3': an S3-compatible bucket
+# (R2, Backblaze B2, DigitalOcean Spaces, AWS S3) with signed temporary URLs.
 STORAGE_BACKEND = env('STORAGE_BACKEND', default='local')
 
 if STORAGE_BACKEND == 's3':
@@ -195,6 +209,8 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
     'DEFAULT_PARSER_CLASSES': ['rest_framework.parsers.JSONParser'],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # One error envelope for every rejection: {type, title, status, detail, errors}
+    'EXCEPTION_HANDLER': 'apps.core.exceptions.brainx_exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
@@ -209,7 +225,7 @@ REST_FRAMEWORK = {
     },
 }
 
-# Rénitialisation de mot de passe
+# Password reset
 PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
 PASSWORD_RESET_INVITE_TTL_DAYS = 7
 
@@ -219,7 +235,7 @@ PASSWORD_RESET_INVITE_TTL_DAYS = 7
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 
-# Frontend URL & Chemins de redirection configurables
+# Frontend URL and configurable redirect paths
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
 FRONTEND_RESET_PASSWORD_PATH = env('FRONTEND_RESET_PASSWORD_PATH', default='/reset-password')
 # FRONTEND_LOGO_PATH = env('FRONTEND_LOGO_PATH', default='/logo-xarala.png')
@@ -252,11 +268,19 @@ SPECTACULAR_SETTINGS = {
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'formatters': {'verbose': {'format': '{levelname} {asctime} {module} {message}', 'style': '{'}},
-    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'verbose'}},
+    'formatters': {
+        'json': {'()': 'apps.core.logging.JsonFormatter'},
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'json',
+            'stream': 'ext://sys.stdout',
+        },
+    },
     'root': {'handlers': ['console'], 'level': 'DEBUG' if DEBUG else 'INFO'},
     'loggers': {
-        # Le SDK AWS est très verbeux : on ne remonte que les erreurs.
+        # The AWS SDK is very verbose: only surface errors.
         'boto3': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         'botocore': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
         's3transfer': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
