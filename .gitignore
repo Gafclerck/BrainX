@@ -1,0 +1,5 @@
+# BMAD tooling and generated artifacts - local only, never committed
+.agents/
+.opencode/
+_bmad/
+_bmad-output/
