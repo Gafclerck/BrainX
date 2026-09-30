@@ -1,9 +1,10 @@
-"""The open registration endpoint."""
+"""The open registration endpoint, and the verification and account-state reads."""
 
 import logging
 import smtplib
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -12,16 +13,28 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from rest_framework import serializers, status
-from rest_framework.permissions import AllowAny
+from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.exceptions import ServiceUnavailable
+from apps.core.permissions import IsVerifiedAccount
 
 from .email import send_verification_email
-from .models import User
-from .serializers import RegistrationSerializer
-from .tokens import issue_verification_token, live_verification_token
+from .models import TokenConsumption, User
+from .serializers import (
+    AccountStateSerializer,
+    EmailVerificationSerializer,
+    RegistrationSerializer,
+)
+from .tokens import (
+    TokenRejected,
+    consume_verification_token,
+    issue_verification_token,
+    live_verification_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +55,18 @@ REGISTRATION_RESPONSE = inline_serializer(
 # Both failure modes, described for the same reason. A client generated from a
 # document that names only the success cannot parse a rejection, and the two are
 # not the same shape as each other: the 400 names the offending fields, the 503
-# carries a `Retry-After`. Describing the envelope itself as a shared component
-# belongs to the story that owns all seven statuses; naming it here is what
-# keeps this endpoint's contract honest on its own.
+# carries a `Retry-After`. Describing the envelope itself as a component shared
+# by every operation belongs to the story that owns all seven statuses; naming
+# it here is what keeps this endpoint's contract honest on its own.
+#
+# Named for the envelope rather than for registration, because the three
+# operations in this module now share this one component. Which is the reason it
+# is not spelled out three times: three descriptions of a 400 drift apart, and
+# only one of them would be noticed when they did. The component is still local
+# to this module rather than a shared schema entry, because none of the seven
+# statuses has an owner yet to own it.
 ENVELOPE_RESPONSE = inline_serializer(
-    name='RegistrationErrorResponse',
+    name='ErrorResponse',
     fields={
         'type': serializers.CharField(),
         'title': serializers.CharField(),
@@ -90,6 +110,27 @@ SERVICE_UNAVAILABLE_RESPONSE = OpenApiResponse(
 RETRY_AFTER_HEADER = OpenApiParameter(
     'Retry-After', OpenApiTypes.STR, OpenApiParameter.HEADER, response=[503]
 )
+
+# The pair verification hands back, described for the same reason as the 201
+# above. Both fields are whole, and neither is the account: a client that can
+# read one more field here is reading a field this endpoint has no business
+# publishing.
+VERIFICATION_RESPONSE = inline_serializer(
+    name='EmailVerificationResponse',
+    fields={
+        'access': serializers.CharField(),
+        'refresh': serializers.CharField(),
+    },
+)
+
+# The one sentence a refused token gets, whatever the cause (AD-10). Written out
+# rather than derived from the reason, so the body a client sees cannot carry
+# the reason: an unknown, a replay, a forgery, a lapsed link, a token minted
+# for another purpose and a token for a mismatched address are all this
+# sentence and nothing else. The token and the address stay out of it too -
+# neither is the client's to be reminded of, and a log line that named one
+# would name it in every deployment's log aggregator.
+TOKEN_REJECTED_MESSAGE = 'The token is not valid.'
 
 
 class RegisterView(APIView):
@@ -240,3 +281,171 @@ class RegisterView(APIView):
         return (
             isinstance(exc, smtplib.SMTPResponseException) and exc.smtp_code >= 500
         )
+
+
+class VerifyEmailView(APIView):
+    """Accept an emailed verification token, and hand back a JWT pair.
+
+    The credential is the link, not a JWT, so this is the one endpoint in the
+    project a client may reach having proved nothing at all. Nothing about that
+    makes it a weaker version of the others: the token names a row, the row names
+    an account, and the token can be spent exactly once.
+    """
+
+    # Anonymous because the caller holds a link, and it is the only credential
+    # there is at this point in the account's life - the pair this endpoint
+    # returns does not exist yet. Authenticating here would also lock out the
+    # case this endpoint exists for: a client carrying an expired pair in its
+    # header while verifying the very account that pair was issued to.
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=EmailVerificationSerializer,
+        responses={
+            200: VERIFICATION_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            405: DRF_ERROR_RESPONSE,
+            415: DRF_ERROR_RESPONSE,
+        },
+    )
+    def post(self, request):
+        """Verify the account the token names, and return the pair it earns.
+
+        The token is POSTed as a body field because the emailed link carries it
+        in a URL fragment and the client reads it out of the page. A fragment
+        never reaches the server, so a query parameter would be the only other
+        way in, and a query string travels in `Referer` to every host the page
+        links to - which, for a product that embeds third-party destinations, is
+        every one of them (AD-10).
+
+        Two exceptions land here and produce one answer. `TokenRejected` is
+        every reason the token does not authorise: no such row, a bad signature,
+        another purpose, a lapsed row, a spent one, an address that does not
+        match. `IntegrityError` is the one that cannot be enumerated in advance
+        - the unique constraint on `TokenConsumption.token`, which is the only
+        constraint inside this transaction and is what two acceptances of one
+        token actually collide on. Both are refused the same way, so there is
+        one response for a client to be told about and nothing to compare.
+
+        The `except` sits outside the `atomic()` the insert happens in, and
+        catching inside would leave the connection holding an aborted
+        transaction, which every later query on it would then fail.
+        """
+        serializer = EmailVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            user, row = self._resolve(serializer.validated_data)
+            tokens = self._spend(user, row)
+        except (TokenRejected, IntegrityError):
+            # The cause goes nowhere near the client. It is not logged either:
+            # a rejected token is ordinary traffic rather than an anomaly - a
+            # stale link, a second tab, a client that retried - and a log line
+            # that named the reason would be one that could tell the causes
+            # apart in the one place a client cannot read. `raise ... from None`
+            # so the chained cause does not ride along in any traceback this
+            # frame is ever printed in.
+            raise ValidationError({'token': [TOKEN_REJECTED_MESSAGE]}) from None
+
+        # The account id, never the address and never the token, for the reason
+        # every other line in this module logs the same way.
+        logger.info('Account %s verified its email address', user.pk)
+        return Response(tokens, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _resolve(payload):
+        """Return the `(account, row)` this payload authorises, or reject.
+
+        The row resolves the account and nothing else does. A supplied `email`
+        is compared with the account the row names and a mismatch is refused as
+        though the token had never existed - comparing rather than resolving is
+        what keeps one account's link from verifying another, and refusing it
+        indistinguishably is what keeps the refusal from confirming which
+        addresses hold live tokens.
+        """
+        user, row = consume_verification_token(payload['token'])
+        claimed = payload.get('email')
+        if claimed is not None and claimed != user.email:
+            raise TokenRejected()
+        return user, row
+
+    @staticmethod
+    def _spend(user, row):
+        """Verify `user`, record the spend, and mint the pair - one transaction.
+
+        The consumption row goes in first, while the account is still untouched.
+        The constraint is what fails on a second acceptance, and inserting before
+        the flag is flipped means that failure needs no compensating write: the
+        rollback has nothing of ours to undo.
+
+        `used_at` is stamped in the same transaction, so the column agrees with
+        the consumption row instead of reporting a spent token as unspent -
+        `live_verification_token` filters on `used_at IS NULL`, and a column that
+        lies there is a query that answers wrongly later. The constraint stays
+        the real guard: a sequential replay is now turned away one step earlier,
+        by the `used_at IS NULL` pre-read inside `consume_verification_token`,
+        and the `UNIQUE` failure is left to do the job it exists for, which is
+        two acceptances racing each other where neither transaction can see the
+        other's uncommitted insert.
+
+        The pair is minted inside this transaction rather than after it. That is
+        what makes a failure here recoverable: rolled back, the account is
+        unverified and the token is unspent, so the client's own link is still
+        good and a retry works. Minted outside, the same failure would leave an
+        account that is verified, holding a spent token, with no pair - and since
+        a verified account is sent no new link, that is the end of its access.
+
+        `last_login` is not touched. It means "this account authenticated", and
+        the settings that would update it belong to a sign-in endpoint, which
+        does not exist; writing it here would record a login that never
+        happened. Verification is not one - the client is not proving it knows
+        the password.
+        """
+        with transaction.atomic():
+            TokenConsumption.objects.create(token=row)
+            row.used_at = timezone.now()
+            row.save(update_fields=['used_at'])
+            user.is_email_verified = True
+            user.save(update_fields=['is_email_verified'])
+            refresh = RefreshToken()
+            refresh['user_id'] = str(user.pk)
+            return {'access': str(refresh.access_token), 'refresh': str(refresh)}
+
+
+class MeView(APIView):
+    """The caller's own account state, read from the credential it arrived on.
+
+    This is what a client calls immediately after verifying, which is why it
+    carries `IsVerifiedAccount` alongside `IsAuthenticated`: a client that has a
+    pair and finds itself refused here knows its verification did not take,
+    rather than having to infer it from a later read failing for some other
+    reason.
+    """
+
+    permission_classes = [IsAuthenticated, IsVerifiedAccount]
+
+    @extend_schema(
+        responses={
+            200: AccountStateSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            405: DRF_ERROR_RESPONSE,
+        },
+    )
+    def get(self, request):
+        """Return the caller's address and whether it is verified.
+
+        `request.user`, and no path segment, no query parameter and no body. A
+        read that took an account id would need its own absent-versus-refused
+        reasoning to avoid confirming which ids exist, and it would put an
+        enumeration oracle on the one endpoint whose whole job is telling a
+        client who it is. The authenticator has already resolved the caller
+        from the credential, so there is nothing left for a caller to vary -
+        which is also what makes the permission decision and the data provably
+        the same fact: both come from the one token in the header.
+
+        No privilege field, and not by an accident of the serializer: `me/`
+        reports what state the account is in, never what it may do.
+        """
+        return Response(AccountStateSerializer(request.user).data)

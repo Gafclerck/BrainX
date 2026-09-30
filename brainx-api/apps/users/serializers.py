@@ -1,6 +1,6 @@
-"""The registration payload.
+"""The registration and verification payloads, and the account state read.
 
-`is_publisher` is deliberately absent from this serializer, which is what makes
+`is_publisher` is deliberately absent from this module, which is what makes
 self-registration structurally unable to grant the privilege (AD-9, AR-12).
 """
 
@@ -64,3 +64,50 @@ class RegistrationSerializer(serializers.Serializer):
         raw = self.initial_data if isinstance(self.initial_data, Mapping) else {}
         validate_password(value, User(email=normalize_email(raw.get('email'))))
         return value
+
+
+class EmailVerificationSerializer(serializers.Serializer):
+    """The token the emailed link carried, and optionally the account's address.
+
+    `token` is the whole contract. `email` is a claim a client may add, and the
+    view compares it to the address the row resolves to rather than resolving
+    anything with it: the row, never the body, says which account this is
+    (AD-10). A client that supplies no address is the common case, so the field
+    is optional rather than required.
+    """
+
+    token = serializers.CharField()
+    email = serializers.EmailField(required=False)
+
+    def to_internal_value(self, data):
+        """Normalize a supplied address before the comparison that uses it.
+
+        The account's stored address is normalized, and the column is
+        case-sensitive, so comparing a raw `Student@Example.com` against a
+        stored `student@example.com` would refuse a caller who owns the very
+        mailbox they typed. Delegated to the manager's rule for the same reason
+        registration delegates to it: two implementations of one rule is how two
+        spellings of one mailbox end up on two rows.
+
+        A value that is not a string is left exactly as it arrived, for
+        `RegistrationSerializer`'s reason: coercing it would report a type
+        problem as a malformed address.
+        """
+        if isinstance(data, Mapping) and isinstance(data.get('email'), str):
+            data = {**data, 'email': normalize_email(data['email'])}
+        return super().to_internal_value(data)
+
+
+class AccountStateSerializer(serializers.ModelSerializer):
+    """What a client may read about its own account.
+
+    Two fields, and no privilege flag. `is_publisher` is in no serializer here
+    or in registration, and the point of `me/` is to report whether the caller
+    is verified - not to tell a caller what it may not do, and never about any
+    other account.
+    """
+
+    class Meta:
+        model = User
+        fields = ('email', 'is_email_verified')
+        read_only_fields = fields

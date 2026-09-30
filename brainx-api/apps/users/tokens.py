@@ -1,10 +1,11 @@
-"""Issuing account tokens.
+"""Issuing and spending account tokens.
 
 The signed string a client holds is not self-contained: it names an
 `AccountToken` row, and that row is what resolves the account, the purpose and
 the expiry (AD-10).
 """
 
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
@@ -18,6 +19,16 @@ from .models import AccountToken
 VERIFY_TOKEN_SALT = 'user-verification'
 
 
+class TokenRejected(Exception):
+    """Every reason a signed token does not authorise, as one outcome.
+
+    One class rather than one per cause, so a caller has a single thing to
+    catch and a new cause cannot grow a branch that answers differently. What
+    the caller does with it - render it as a 400, or log it - is the caller's
+    decision; what it may not do is tell one cause from another to the client.
+    """
+
+
 def issue_verification_token(user):
     """Return the `(signed_token, row)` pair that verifies `user`.
 
@@ -28,9 +39,14 @@ def issue_verification_token(user):
 
     Sequentially, and only sequentially. The update runs before the insert and
     nothing here takes a lock, so two transactions issuing at the same moment
-    can each leave an unspent row behind. That is harmless until 1.3 adds the
-    partial unique index which makes spending a token an insert-or-fail, and
-    this docstring must not claim what that index will enforce.
+    can each leave an unspent row behind. That is a separate question from
+    spending one, which `consume_verification_token` settles on the
+    `TokenConsumption` unique constraint: two acceptances of the *same* token
+    collide there, and there is still nothing here that stops two concurrent
+    issues from leaving two live rows for one account. Both rows verify the
+    same account, so the property that is actually at stake - one link per
+    account, and the older one dead - is only ever weakened transiently, and
+    only by a client issuing twice at once.
     """
     purpose = AccountToken.Purpose.VERIFY
     with transaction.atomic():
@@ -44,6 +60,76 @@ def issue_verification_token(user):
             + timedelta(hours=settings.EMAIL_VERIFICATION_TOKEN_TTL_HOURS),
         )
     return signing.dumps(str(row.pk), salt=VERIFY_TOKEN_SALT), row
+
+
+def consume_verification_token(signed):
+    """Return the `(account, row)` a verification token authorises, or reject.
+
+    Resolution happens here rather than in the view, and it is the row that
+    resolves: nothing in the signed value is trusted except its integrity. The
+    signed payload is a UUID naming an `AccountToken`, and that row is what
+    says which account, which purpose and when it lapses (AD-10).
+
+    A token is refused unless it verifies, carries the `verify` purpose, is
+    still unspent, has not lapsed, and names an account that is not already
+    verified. All five refusals raise `TokenRejected`, so the caller has one
+    branch and the responses cannot drift apart.
+
+    The already-verified case is here rather than left to the caller because
+    the row still looks spendable when the account behind it is not: another
+    device may have verified it, or an operator may have, and a live token for
+    a verified account must not be consumable. Deciding it here is what keeps a
+    second caller of this function from having to remember.
+
+    Expiry is decided against the stored `expires_at` and not against the
+    signing `max_age`. `signing.dumps` embeds a timestamp and `loads` will
+    enforce a `max_age` handed to it, but a number the caller supplies is a
+    number the caller can also get wrong; the stored value is the one the row
+    was written with.
+
+    Nothing is written here. Spending is the caller's transaction, so the
+    insert-or-fail and the effect it authorises commit together (AD-10).
+    """
+    row = _row_named_by(signed)
+    if (
+        row.purpose != AccountToken.Purpose.VERIFY
+        or row.used_at is not None
+        or row.expires_at <= timezone.now()
+        or row.user.is_email_verified
+    ):
+        raise TokenRejected()
+    return row.user, row
+
+
+def _row_named_by(signed):
+    """The live `AccountToken` a signed string names, or reject.
+
+    `BadSignature` covers a tampered value, one signed with another salt and
+    one whose embedded timestamp is older than a `max_age` - `SignatureExpired`
+    is a subclass of it, so a purpose-scoped salt and a max-age check both land
+    here without a second name.
+
+    `signing.loads` returns whatever was signed, and `signing.dumps` will sign
+    any JSON-encodable value, so a value that verifies is not yet a UUID.
+    `uuid.UUID` is what turns it into something the pk lookup can be asked for,
+    and it is the only call in the first `try`, so the three ways it can refuse
+    an unusable payload are all part of the same rejection as a signature it
+    did not accept: `ValueError` on a malformed string, `TypeError` on nothing
+    at all, and `AttributeError` on a number, which reaches the constructor's
+    own `hex.replace`.
+
+    The lookup is one query and carries `user` along: the account is needed by
+    the caller on every success and by nothing on a failure.
+    """
+    try:
+        payload = signing.loads(signed, salt=VERIFY_TOKEN_SALT)
+        row_id = uuid.UUID(payload)
+    except (signing.BadSignature, ValueError, TypeError, AttributeError):
+        raise TokenRejected() from None
+    try:
+        return AccountToken.objects.select_related('user').get(pk=row_id)
+    except AccountToken.DoesNotExist:
+        raise TokenRejected() from None
 
 
 def live_verification_token(user):

@@ -106,8 +106,14 @@ class AccountToken(UUIDModel, TimeStampedModel):
     )
     purpose = models.CharField(max_length=32, choices=Purpose.choices, db_index=True)
     expires_at = models.DateTimeField()
-    # Null until the token is spent or superseded. Story 1.3 adds the
-    # TokenConsumption row that makes spending it an insert-or-fail.
+    # Null until the token is spent or superseded - never NULL on a spent one.
+    # Two things write it: a superseding issue, and the acceptance in
+    # `consume_verification_token`, which stamps it in the same transaction as
+    # the `TokenConsumption` row. The consumption row is the authoritative
+    # record of a spend and the constraint behind it; this column is kept
+    # truthful alongside it, because `live_verification_token` and any later
+    # query filtering on `used_at__isnull=True` would otherwise read a spent
+    # token as still spendable.
     used_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
@@ -115,3 +121,32 @@ class AccountToken(UUIDModel, TimeStampedModel):
         # what the signed value carries, so it is here for the two to be lined
         # up in the shell and the admin.
         return f'{self.purpose} token for {self.user_id} ({self.pk})'
+
+
+class TokenConsumption(UUIDModel, TimeStampedModel):
+    """The record that one `AccountToken` has been spent, kept once.
+
+    Spending a token is this row being inserted, never a read followed by a
+    write: the unique constraint is what makes two acceptances of the same
+    token impossible rather than merely unlikely. Sequential callers are turned
+    away one step earlier, by the `used_at IS NULL` pre-read, because spending
+    stamps that column too; the constraint is what two acceptances racing each
+    other actually collide on, since neither can see the other's uncommitted
+    insert.
+
+    One-to-one rather than a plain foreign key, because a unique foreign key is
+    precisely what is being asked for and a one-to-one column *is* one on
+    PostgreSQL. No extra constraint or index is needed to be believed.
+    """
+
+    token = models.OneToOneField(
+        AccountToken,
+        on_delete=models.CASCADE,
+        related_name='consumption',
+    )
+
+    def __str__(self):
+        # The token it spends, and nothing else: the account is one query away
+        # through the token, and repeating it here would be a second copy that
+        # can disagree.
+        return f'consumption of {self.token_id}'
