@@ -17,21 +17,29 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken,
+    OutstandingToken,
+)
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.exceptions import ServiceUnavailable
 from apps.core.permissions import IsVerifiedAccount
 
-from .email import send_verification_email
-from .models import TokenConsumption, User
+from .email import send_password_reset_email, send_verification_email
+from .models import AccountToken, TokenConsumption, User
 from .serializers import (
     AccountStateSerializer,
     EmailVerificationSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     RegistrationSerializer,
 )
 from .tokens import (
+    TOKEN_REJECTED_MESSAGE,
     TokenRejected,
     consume_verification_token,
+    issue_password_reset_token,
     issue_verification_token,
     live_verification_token,
 )
@@ -131,6 +139,24 @@ VERIFICATION_RESPONSE = inline_serializer(
 # neither is the client's to be reminded of, and a log line that named one
 # would name it in every deployment's log aggregator.
 TOKEN_REJECTED_MESSAGE = 'The token is not valid.'
+
+# The uniform 200 response for password reset requests (anti-enumeration).
+PASSWORD_RESET_REQUEST_MESSAGE = (
+    'If an account with that email exists, a password reset link has been sent.'
+)
+
+PASSWORD_RESET_REQUEST_RESPONSE = inline_serializer(
+    name='PasswordResetRequestResponse',
+    fields={'message': serializers.CharField()},
+)
+
+# The 200 response for password reset confirmation.
+PASSWORD_RESET_CONFIRM_MESSAGE = 'Password has been reset successfully.'
+
+PASSWORD_RESET_CONFIRM_RESPONSE = inline_serializer(
+    name='PasswordResetConfirmResponse',
+    fields={'message': serializers.CharField()},
+)
 
 
 class RegisterView(APIView):
@@ -408,9 +434,108 @@ class VerifyEmailView(APIView):
             row.save(update_fields=['used_at'])
             user.is_email_verified = True
             user.save(update_fields=['is_email_verified'])
-            refresh = RefreshToken()
-            refresh['user_id'] = str(user.pk)
+            refresh = RefreshToken.for_user(user)
             return {'access': str(refresh.access_token), 'refresh': str(refresh)}
+
+
+class PasswordResetRequestView(APIView):
+    """Request a password reset link.
+
+    Uniform 200 response for both existing and non-existing accounts to prevent
+    email enumeration (AR-26).
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=PasswordResetRequestSerializer,
+        responses={
+            200: PASSWORD_RESET_REQUEST_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            405: DRF_ERROR_RESPONSE,
+            415: DRF_ERROR_RESPONSE,
+        },
+    )
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+
+        user = User.objects.filter(email=email).first()
+        if user is not None:
+            token, _row = issue_password_reset_token(user)
+            try:
+                send_password_reset_email(user, token)
+            except (smtplib.SMTPException, OSError):
+                # The failure is logged with account id, never email or token.
+                # Uniform 200 is preserved so SMTP errors cannot be used to probe existence.
+                logger.exception(
+                    'Failed to send password reset email to account %s', user.pk
+                )
+
+        return Response(
+            {'message': PASSWORD_RESET_REQUEST_MESSAGE},
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """Set a new password using a valid reset token."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: PASSWORD_RESET_CONFIRM_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            405: DRF_ERROR_RESPONSE,
+            415: DRF_ERROR_RESPONSE,
+        },
+    )
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.validated_data['user']
+        row = serializer.validated_data['token_row']
+        password = serializer.validated_data['password']
+
+        try:
+            self._spend(user, row, password)
+        except (TokenRejected, IntegrityError):
+            raise ValidationError({'token': [TOKEN_REJECTED_MESSAGE]}) from None
+
+        logger.info('Account %s reset its password', user.pk)
+        return Response(
+            {'message': PASSWORD_RESET_CONFIRM_MESSAGE},
+            status=status.HTTP_200_OK,
+        )
+
+    @staticmethod
+    def _spend(user, row, new_password):
+        """Consume the token, update password, and blacklist refresh tokens in one transaction."""
+        with transaction.atomic():
+            locked_row = AccountToken.objects.select_for_update().filter(
+                pk=row.pk, used_at__isnull=True
+            ).first()
+            if locked_row is None:
+                raise TokenRejected()
+            TokenConsumption.objects.create(token=locked_row)
+            locked_row.used_at = timezone.now()
+            locked_row.save(update_fields=['used_at', 'updated_at'])
+            user.set_password(new_password)
+            user.save(update_fields=['password', 'updated_at'])
+
+            outstanding = OutstandingToken.objects.filter(user=user).exclude(
+                blacklistedtoken__isnull=False
+            )
+            BlacklistedToken.objects.bulk_create(
+                [BlacklistedToken(token=t) for t in outstanding],
+                ignore_conflicts=True,
+            )
 
 
 class MeView(APIView):

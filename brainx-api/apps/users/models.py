@@ -98,6 +98,7 @@ class AccountToken(UUIDModel, TimeStampedModel):
 
     class Purpose(models.TextChoices):
         VERIFY = 'verify', 'Verify'
+        RESET = 'reset', 'Reset'
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

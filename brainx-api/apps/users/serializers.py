@@ -7,9 +7,15 @@ self-registration structurally unable to grant the privilege (AD-9, AR-12).
 from collections.abc import Mapping
 
 from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from .models import User, UserManager
+from .tokens import (
+    TOKEN_REJECTED_MESSAGE,
+    TokenRejected,
+    consume_password_reset_token,
+)
 
 
 def normalize_email(value):
@@ -111,3 +117,39 @@ class AccountStateSerializer(serializers.ModelSerializer):
         model = User
         fields = ('email', 'is_email_verified')
         read_only_fields = fields
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """An address to send a password reset link to."""
+
+    email = serializers.EmailField()
+
+    def to_internal_value(self, data):
+        """Normalize the address before field validation."""
+        if isinstance(data, Mapping) and isinstance(data.get('email'), str):
+            data = {**data, 'email': normalize_email(data['email'])}
+        return super().to_internal_value(data)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """A reset token and a new password."""
+
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        token_str = attrs.get('token')
+        try:
+            user, row = consume_password_reset_token(token_str)
+        except TokenRejected:
+            raise serializers.ValidationError({'token': [TOKEN_REJECTED_MESSAGE]}) from None
+
+        try:
+            validate_password(attrs.get('password'), user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)}) from None
+
+        attrs['user'] = user
+        attrs['token_row'] = row
+        return attrs
+

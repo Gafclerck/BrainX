@@ -17,6 +17,10 @@ from .models import AccountToken
 
 # One salt per purpose, so a signature made for one can never verify as another.
 VERIFY_TOKEN_SALT = 'user-verification'
+RESET_TOKEN_SALT = 'password-reset'
+
+# One sentence for every token rejection, so no caller can distinguish causes.
+TOKEN_REJECTED_MESSAGE = 'The token is not valid.'
 
 
 class TokenRejected(Exception):
@@ -101,7 +105,7 @@ def consume_verification_token(signed):
     return row.user, row
 
 
-def _row_named_by(signed):
+def _row_named_by(signed, salt=VERIFY_TOKEN_SALT):
     """The live `AccountToken` a signed string names, or reject.
 
     `BadSignature` covers a tampered value, one signed with another salt and
@@ -122,7 +126,7 @@ def _row_named_by(signed):
     the caller on every success and by nothing on a failure.
     """
     try:
-        payload = signing.loads(signed, salt=VERIFY_TOKEN_SALT)
+        payload = signing.loads(signed, salt=salt)
         row_id = uuid.UUID(payload)
     except (signing.BadSignature, ValueError, TypeError, AttributeError):
         raise TokenRejected() from None
@@ -130,6 +134,54 @@ def _row_named_by(signed):
         return AccountToken.objects.select_related('user').get(pk=row_id)
     except AccountToken.DoesNotExist:
         raise TokenRejected() from None
+
+
+def issue_password_reset_token(user):
+    """Return the `(signed_token, row)` pair that resets `user`'s password.
+
+    Every unspent password reset token the account already holds is invalidated
+    in the same transaction as the new one by setting `used_at = timezone.now()`,
+    so a re-request cannot accumulate usable reset links and older leaked links
+    are immediately dead.
+    """
+    purpose = AccountToken.Purpose.RESET
+    with transaction.atomic():
+        AccountToken.objects.filter(
+            user=user, purpose=purpose, used_at__isnull=True
+        ).update(used_at=timezone.now())
+        row = AccountToken.objects.create(
+            user=user,
+            purpose=purpose,
+            expires_at=timezone.now()
+            + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_TTL_MINUTES),
+        )
+    return signing.dumps(str(row.pk), salt=RESET_TOKEN_SALT), row
+
+
+def consume_password_reset_token(signed):
+    """Return the `(account, row)` a password reset token authorises, or reject.
+
+    Resolution happens here rather than in the view, and it is the row that
+    resolves: nothing in the signed value is trusted except its integrity.
+
+    A token is refused unless it verifies with `RESET_TOKEN_SALT`, carries the
+    `reset` purpose, is still unspent (`used_at is None`), and has not lapsed
+    (`expires_at > timezone.now()`). All refusals raise `TokenRejected`.
+
+    Unlike email verification, account verification status (`is_email_verified`)
+    is not checked: verification is an orthogonal lifecycle event.
+
+    Nothing is written here. Spending is the caller's transaction, so the
+    insert-or-fail and the effect it authorises commit together (AD-10).
+    """
+    row = _row_named_by(signed, salt=RESET_TOKEN_SALT)
+    if (
+        row.purpose != AccountToken.Purpose.RESET
+        or row.used_at is not None
+        or row.expires_at <= timezone.now()
+    ):
+        raise TokenRejected()
+    return row.user, row
 
 
 def live_verification_token(user):

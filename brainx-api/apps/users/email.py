@@ -54,3 +54,47 @@ def send_verification_email(user, token):
         to=[user.email],
     )
     message.send()
+
+
+RESET_SUBJECT = 'Reset your BrainX password'
+
+RESET_BODY = """Hello,
+
+Follow this link to reset your BrainX password:
+
+{link}
+
+The link is valid for {minutes} minutes from when it was first issued. If you did
+not request a password reset, ignore this message and your password will remain
+unchanged.
+"""
+
+
+def build_password_reset_link(token):
+    """The frontend page that reads `token`, with the token in the fragment.
+
+    A fragment, never a query parameter: a query string travels in `Referer` to
+    every host the page links to, and this product opens arbitrary external
+    destinations (AD-10).
+
+    `FRONTEND_URL` is env-driven, so a deployment that ends it with a slash
+    would otherwise produce a link carrying a doubled separator.
+    """
+    base = settings.FRONTEND_URL.rstrip('/')
+    path = settings.FRONTEND_RESET_PASSWORD_PATH.lstrip('/')
+    return f'{base}/{path}#token={token}'
+
+
+def send_password_reset_email(user, token):
+    """Send `user` the link that allows them to reset their password."""
+    message = EmailMessage(
+        subject=RESET_SUBJECT,
+        body=RESET_BODY.format(
+            link=build_password_reset_link(token),
+            minutes=settings.PASSWORD_RESET_TOKEN_TTL_MINUTES,
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[user.email],
+    )
+    message.send()
+
