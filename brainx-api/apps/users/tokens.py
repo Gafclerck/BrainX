@@ -12,6 +12,10 @@ from django.conf import settings
 from django.core import signing
 from django.db import transaction
 from django.utils import timezone
+from rest_framework_simplejwt.token_blacklist.models import (
+    BlacklistedToken,
+    OutstandingToken,
+)
 
 from .models import AccountToken
 
@@ -219,3 +223,19 @@ def live_verification_token(user):
     if row is None:
         return None
     return signing.dumps(str(row.pk), salt=VERIFY_TOKEN_SALT)
+
+
+def blacklist_outstanding_refresh_tokens(user):
+    """Blacklist every outstanding, non-blacklisted refresh token for `user`.
+
+    Invalidates existing sessions so privilege changes and credential rotations
+    take effect within one access-token lifetime (AR-12).
+    """
+    outstanding = OutstandingToken.objects.filter(user=user).exclude(
+        blacklistedtoken__isnull=False
+    )
+    return BlacklistedToken.objects.bulk_create(
+        [BlacklistedToken(token=t) for t in outstanding],
+        ignore_conflicts=True,
+    )
+

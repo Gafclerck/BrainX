@@ -17,10 +17,6 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.token_blacklist.models import (
-    BlacklistedToken,
-    OutstandingToken,
-)
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.exceptions import ServiceUnavailable
@@ -38,6 +34,7 @@ from .serializers import (
 from .tokens import (
     TOKEN_REJECTED_MESSAGE,
     TokenRejected,
+    blacklist_outstanding_refresh_tokens,
     consume_verification_token,
     issue_password_reset_token,
     issue_verification_token,
@@ -529,13 +526,7 @@ class PasswordResetConfirmView(APIView):
             user.set_password(new_password)
             user.save(update_fields=['password', 'updated_at'])
 
-            outstanding = OutstandingToken.objects.filter(user=user).exclude(
-                blacklistedtoken__isnull=False
-            )
-            BlacklistedToken.objects.bulk_create(
-                [BlacklistedToken(token=t) for t in outstanding],
-                ignore_conflicts=True,
-            )
+            blacklist_outstanding_refresh_tokens(user)
 
 
 class MeView(APIView):
