@@ -406,6 +406,15 @@ class RegistrationEndpointTests(TestCase):
         self.assertFalse(user.is_email_verified)
         self.assertEqual(response.json(), {'message': EXPECTED_MESSAGE})
 
+    def test_registration_ignores_is_publisher_privilege_tampering(self):
+        # A registration payload containing `is_publisher=True` is stripped by
+        # the serializer, yielding a normal account with `is_publisher=False`.
+        response = self.register(is_publisher=True)
+        self.assertEqual(response.status_code, 201)
+        (user,) = User.objects.all()
+        self.assertFalse(user.is_publisher)
+        self.assertEqual(response.json(), {'message': EXPECTED_MESSAGE})
+
     def test_the_token_travels_in_the_fragment_and_never_the_query_string(self):
         self.register()
         link = self.verification_link()
