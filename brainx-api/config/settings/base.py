@@ -227,14 +227,26 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
+        # Per-view scope throttling: the four email-driving views carry an
+        # explicit scope; a view without one skips it (AD-17).
+        'rest_framework.throttling.ScopedRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/day',
         'user': '1000/day',
         'login': '5/minute',
+        'register': '5/hour',
         'forgot': '5/hour',
         'reset': '5/hour',
         'activate': '5/hour',
+        # The per-source backstop on the four mail-driving endpoints, keyed by
+        # REMOTE_ADDR only (AD-17). Two caveats the spec records: throttle
+        # history lives in the per-process LocMemCache (no CACHES setting
+        # exists), so this ceiling is per worker; and behind the production
+        # proxy every client shares one REMOTE_ADDR, so a garbage-token stream
+        # can spend the one bucket and 429 legitimate traffic (accepted
+        # 2026-10-08).
+        'source': '2000/day',
     },
 }
 

@@ -13,20 +13,49 @@ SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 
-# Render (comme la plupart des PaaS) termine le TLS à son edge et transmet la
-# requête en HTTP avec ce header : sans ça, SECURE_SSL_REDIRECT boucle à l'infini.
+# Render (like most PaaS platforms) terminates TLS at its edge and forwards
+# the request in HTTP with this header: without it, SECURE_SSL_REDIRECT
+# loops forever.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-# Recommandé pour les requêtes POST vers /admin/ derrière un proxy HTTPS.
+# Recommended for POST requests to /admin/ behind an HTTPS proxy.
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 
-# En production, les fichiers doivent être stockés en S3 (URLs signées) :
-# le backend 'local' servirait les octets sans authentification.
+# In production, files must be stored on S3 (signed URLs): the 'local'
+# backend would serve the bytes without authentication.
 if env("STORAGE_BACKEND", default="local") != "s3":
-    raise ImproperlyConfigured("STORAGE_BACKEND doit être 's3' en production.")
+    raise ImproperlyConfigured("STORAGE_BACKEND must be 's3' in production.")
 
-# En production, les emails doivent partir en SMTP : un backend console ou
-# locmem expédierait les codes dans le vide, silencieusement.
+# In production, emails must go out over SMTP: a console or locmem backend
+# would dispatch the codes into the void, silently.
 if env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend") == \
         "django.core.mail.backends.console.EmailBackend":
-    raise ImproperlyConfigured("EMAIL_BACKEND doit être le backend SMTP en production.")
+    raise ImproperlyConfigured(
+        "EMAIL_BACKEND must be the SMTP backend in production."
+    )
+
+# Throttling is the only bound on how fast the four email-driving endpoints
+# can send mail (AD-17), so production refuses to boot without it: a missing
+# throttle class or a missing/None scope rate would come up as a 500 on the
+# first request, or - worse - as an unthrottled endpoint (Story 1.7 AC 6).
+# The backstop scope is guarded exactly like the destination scopes, since a
+# `None` silently disables it and a missing key 500s on the first request.
+if 'rest_framework.throttling.ScopedRateThrottle' not in REST_FRAMEWORK.get(
+        'DEFAULT_THROTTLE_CLASSES', []):
+    raise ImproperlyConfigured(
+        "ScopedRateThrottle must be in "
+        "REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] in production."
+    )
+
+REQUIRED_THROTTLE_SCOPES = ('register', 'forgot', 'reset', 'activate', 'source')
+_throttle_rates = REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
+_missing_throttle_scopes = [
+    scope
+    for scope in REQUIRED_THROTTLE_SCOPES
+    if _throttle_rates.get(scope) is None
+]
+if _missing_throttle_scopes:
+    raise ImproperlyConfigured(
+        "REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] must declare a rate for "
+        "scope(s): " + ', '.join(_missing_throttle_scopes) + "."
+    )

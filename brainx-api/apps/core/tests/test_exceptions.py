@@ -9,12 +9,15 @@ import importlib
 import io
 import json
 import logging
+import os
 import sys
+from unittest import mock
 
 import environ
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.exceptions import ImproperlyConfigured
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
@@ -50,6 +53,7 @@ from apps.core.exceptions import (
     brainx_exception_handler,
 )
 from apps.core.logging import JsonFormatter
+from config.settings import base as base_settings
 
 # Written out rather than imported: these assertions exist to catch a change to
 # the contract, so comparing against the constant under test would not.
@@ -198,8 +202,10 @@ class SubstrateSettingsTests(SimpleTestCase):
     """The substrate guarantees, pinned so a regression cannot pass the suite.
 
     Restoring the SQLite default, dropping the `socket_timeout` workaround,
-    unhooking the exception handler, dropping one of the newly pinned packages
-    or reverting the psycopg extras pin would each leave every other test green.
+    unhooking the exception handler, dropping one of the newly pinned packages,
+    reverting the psycopg extras pin, or booting production without the scoped
+    throttle class or one of the five scope rates would each leave every other
+    test green.
     """
 
     def test_default_database_is_postgresql(self):
@@ -255,6 +261,81 @@ class SubstrateSettingsTests(SimpleTestCase):
         slugs = {slug for _, slug in SLUG_BY_EXCEPTION}
         slugs.update(SLUG_BY_STATUS.values())
         self.assertLessEqual(slugs, set(TITLES))
+
+    def _import_production(self, rest_framework=None):
+        """Import `config.settings.production`, optionally with a replaced
+        `REST_FRAMEWORK`.
+
+        The throttle guard (Story 1.7 AC 6) runs at import time, so the test
+        substitutes the configuration in `config.settings.base` - which
+        production star-imports - and supplies the two env values the storage
+        and email guards above it already require. Everything is restored in
+        a `finally`, whether the import succeeds or refuses to boot.
+        """
+        original_rest_framework = base_settings.REST_FRAMEWORK
+        if rest_framework is not None:
+            base_settings.REST_FRAMEWORK = rest_framework
+        # A failed import is already evicted by Python; a successful one is
+        # not, and it must not linger as a second loaded settings module.
+        sys.modules.pop('config.settings.production', None)
+        environment = {
+            'STORAGE_BACKEND': 's3',
+            'EMAIL_BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+        }
+        try:
+            with mock.patch.dict(os.environ, environment):
+                return importlib.import_module('config.settings.production')
+        finally:
+            base_settings.REST_FRAMEWORK = original_rest_framework
+            sys.modules.pop('config.settings.production', None)
+
+    def test_production_boots_when_the_throttle_configuration_is_present(self):
+        # AC 6's other half: the guard must not refuse the configuration the
+        # project actually ships, so a guard that raised unconditionally
+        # cannot pass here.
+        module = self._import_production()
+        # Asserted on the imported module, not on `base_settings`: production
+        # star-imports base, so a configuration the module overrode without
+        # the scoped throttle would still leave base's dict looking right.
+        self.assertIn(
+            'rest_framework.throttling.ScopedRateThrottle',
+            module.REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'],
+        )
+
+    def test_production_refuses_to_boot_without_the_scoped_throttle(self):
+        config = {
+            **base_settings.REST_FRAMEWORK,
+            'DEFAULT_THROTTLE_CLASSES': [
+                'rest_framework.throttling.AnonRateThrottle',
+                'rest_framework.throttling.UserRateThrottle',
+            ],
+        }
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self._import_production(config)
+        self.assertIn('ScopedRateThrottle', str(caught.exception))
+
+    def test_production_refuses_to_boot_when_a_scope_rate_is_absent_or_none(self):
+        # Every one of the five scope rates - the four destinations plus the
+        # `source` backstop - both ways it can be missing (AC 6). The message
+        # names the scope, so an operator is told which rate the boot stopped
+        # on.
+        for scope in ('register', 'forgot', 'reset', 'activate', 'source'):
+            for variant in ('null', 'absent'):
+                with self.subTest(scope=scope, variant=variant):
+                    rates = dict(
+                        base_settings.REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+                    )
+                    if variant == 'null':
+                        rates[scope] = None
+                    else:
+                        del rates[scope]
+                    config = {
+                        **base_settings.REST_FRAMEWORK,
+                        'DEFAULT_THROTTLE_RATES': rates,
+                    }
+                    with self.assertRaises(ImproperlyConfigured) as caught:
+                        self._import_production(config)
+                    self.assertIn(scope, str(caught.exception))
 
 
 def assert_envelope(test_case, response, expected_type, expected_status):

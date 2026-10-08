@@ -31,9 +31,12 @@ from .serializers import (
     PasswordResetRequestSerializer,
     RegistrationSerializer,
 )
+from .throttling import DestinationRateThrottle, SourceRateThrottle
 from .tokens import (
+    RESET_TOKEN_SALT,
     TOKEN_REJECTED_MESSAGE,
     TokenRejected,
+    VERIFY_TOKEN_SALT,
     blacklist_outstanding_refresh_tokens,
     consume_verification_token,
     issue_password_reset_token,
@@ -116,6 +119,19 @@ RETRY_AFTER_HEADER = OpenApiParameter(
     'Retry-After', OpenApiTypes.STR, OpenApiParameter.HEADER, response=[503]
 )
 
+# The 429 both scopes answer with: the same five-key envelope every other
+# rejection uses, plus the `Retry-After` the throttle computed. Declared on all
+# four email-driving endpoints, because either the per-destination budget or
+# the per-source backstop can refuse a request a client believes is ordinary.
+THROTTLED_RESPONSE = OpenApiResponse(
+    response=ENVELOPE_RESPONSE,
+    description=(
+        'Too many requests for this destination address or source. The '
+        'standard envelope; the response carries a Retry-After header with '
+        'the seconds to wait.'
+    ),
+)
+
 # The pair verification hands back, described for the same reason as the 201
 # above. Both fields are whole, and neither is the account: a client that can
 # read one more field here is reading a field this endpoint has no business
@@ -162,6 +178,15 @@ class RegisterView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    # Per-destination, not per-caller: the scope key is the normalised
+    # address in the body, so one attacker cannot mail a victim without
+    # limit and one NAT gateway's many students do not share a budget
+    # (AD-17). The explicit throttle list keeps AnonRateThrottle and
+    # UserRateThrottle - which key on the caller - off this endpoint (AC 5);
+    # SourceRateThrottle is the REMOTE_ADDR backstop.
+    throttle_scope = 'register'
+    throttle_classes = [DestinationRateThrottle, SourceRateThrottle]
+
     @extend_schema(
         request=RegistrationSerializer,
         responses={
@@ -169,6 +194,7 @@ class RegisterView(APIView):
             400: ENVELOPE_RESPONSE,
             405: DRF_ERROR_RESPONSE,
             415: DRF_ERROR_RESPONSE,
+            429: THROTTLED_RESPONSE,
             503: SERVICE_UNAVAILABLE_RESPONSE,
         },
         parameters=[RETRY_AFTER_HEADER],
@@ -323,6 +349,15 @@ class VerifyEmailView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    # Token acceptance is the `reset` scope (AD-17), sharing its bucket with
+    # `reset-password/`. The salt is what lets the throttle resolve this
+    # endpoint's destination from the token's own row - server-side, never
+    # from the body's optional `email` claim; a garbage token resolves to
+    # nothing and is left to the per-source backstop (AC 2, AC 5).
+    throttle_scope = 'reset'
+    throttle_token_salt = VERIFY_TOKEN_SALT
+    throttle_classes = [DestinationRateThrottle, SourceRateThrottle]
+
     @extend_schema(
         request=EmailVerificationSerializer,
         responses={
@@ -330,6 +365,7 @@ class VerifyEmailView(APIView):
             400: ENVELOPE_RESPONSE,
             405: DRF_ERROR_RESPONSE,
             415: DRF_ERROR_RESPONSE,
+            429: THROTTLED_RESPONSE,
         },
     )
     def post(self, request):
@@ -445,6 +481,12 @@ class PasswordResetRequestView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    # Keyed on the normalised address in the body, resolved server-side: the
+    # budget belongs to the destination mailbox, whether or not an account
+    # holds it (AC 2, AC 5).
+    throttle_scope = 'forgot'
+    throttle_classes = [DestinationRateThrottle, SourceRateThrottle]
+
     @extend_schema(
         request=PasswordResetRequestSerializer,
         responses={
@@ -452,6 +494,7 @@ class PasswordResetRequestView(APIView):
             400: ENVELOPE_RESPONSE,
             405: DRF_ERROR_RESPONSE,
             415: DRF_ERROR_RESPONSE,
+            429: THROTTLED_RESPONSE,
         },
     )
     def post(self, request):
@@ -483,6 +526,13 @@ class PasswordResetConfirmView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    # Token acceptance is the `reset` scope (AD-17), sharing its bucket with
+    # `verify-email/`; the salt resolves the destination from the token's own
+    # row, server-side (AC 2), and the backstop bounds what no row can name.
+    throttle_scope = 'reset'
+    throttle_token_salt = RESET_TOKEN_SALT
+    throttle_classes = [DestinationRateThrottle, SourceRateThrottle]
+
     @extend_schema(
         request=PasswordResetConfirmSerializer,
         responses={
@@ -490,6 +540,7 @@ class PasswordResetConfirmView(APIView):
             400: ENVELOPE_RESPONSE,
             405: DRF_ERROR_RESPONSE,
             415: DRF_ERROR_RESPONSE,
+            429: THROTTLED_RESPONSE,
         },
     )
     def post(self, request):
