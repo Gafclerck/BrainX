@@ -6,7 +6,6 @@ DEBUG = False
 SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
-SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_HSTS_SECONDS = 31536000
@@ -18,7 +17,7 @@ SECURE_HSTS_PRELOAD = True
 # loops forever.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-# Recommended for POST requests to /admin/ behind an HTTPS proxy.
+# Trusted origins for a cross-origin POST forwarded by the HTTPS edge.
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 
 # In production, files must be stored on S3 (signed URLs): the 'local'
@@ -26,12 +25,24 @@ CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 if env("STORAGE_BACKEND", default="local") != "s3":
     raise ImproperlyConfigured("STORAGE_BACKEND must be 's3' in production.")
 
-# In production, emails must go out over SMTP: a console or locmem backend
-# would dispatch the codes into the void, silently.
-if env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend") == \
-        "django.core.mail.backends.console.EmailBackend":
+# In production, emails must go out through a backend that actually delivers
+# them: a console, locmem, dummy or filebased backend would dispatch the codes
+# into the void, or into a local file, silently. The known non-delivering sinks
+# are rejected rather than requiring exactly SMTP, so a legitimate provider
+# backend (django-ses, anymail, ...) is not refused.
+NON_DELIVERING_EMAIL_BACKENDS = (
+    'django.core.mail.backends.console.EmailBackend',
+    'django.core.mail.backends.locmem.EmailBackend',
+    'django.core.mail.backends.dummy.EmailBackend',
+    'django.core.mail.backends.filebased.EmailBackend',
+)
+if env(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend',
+) in NON_DELIVERING_EMAIL_BACKENDS:
     raise ImproperlyConfigured(
-        "EMAIL_BACKEND must be the SMTP backend in production."
+        "EMAIL_BACKEND must be a delivering backend in production; the "
+        "console, locmem, dummy and filebased backends do not deliver mail."
     )
 
 # Throttling is the only bound on how fast the four email-driving endpoints

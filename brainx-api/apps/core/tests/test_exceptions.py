@@ -6,6 +6,7 @@ test-only endpoints.
 """
 
 import importlib
+import inspect
 import io
 import json
 import logging
@@ -203,9 +204,10 @@ class SubstrateSettingsTests(SimpleTestCase):
 
     Restoring the SQLite default, dropping the `socket_timeout` workaround,
     unhooking the exception handler, dropping one of the newly pinned packages,
-    reverting the psycopg extras pin, or booting production without the scoped
-    throttle class or one of the five scope rates would each leave every other
-    test green.
+    reverting the psycopg extras pin, booting production without the scoped
+    throttle class or one of the five scope rates, or weakening the storage and
+    email guards to accept a local or non-delivering sink would each leave every
+    other test green.
     """
 
     def test_default_database_is_postgresql(self):
@@ -262,15 +264,16 @@ class SubstrateSettingsTests(SimpleTestCase):
         slugs.update(SLUG_BY_STATUS.values())
         self.assertLessEqual(slugs, set(TITLES))
 
-    def _import_production(self, rest_framework=None):
-        """Import `config.settings.production`, optionally with a replaced
-        `REST_FRAMEWORK`.
+    def _import_production(self, rest_framework=None, env_overrides=None):
+        """Import `config.settings.production`, optionally with replaced inputs.
 
-        The throttle guard (Story 1.7 AC 6) runs at import time, so the test
-        substitutes the configuration in `config.settings.base` - which
-        production star-imports - and supplies the two env values the storage
-        and email guards above it already require. Everything is restored in
-        a `finally`, whether the import succeeds or refuses to boot.
+        `rest_framework`, when given, replaces `REST_FRAMEWORK` in
+        `config.settings.base` - which production star-imports - so the
+        throttle guard (Story 1.7 AC 6) can be exercised. `env_overrides`
+        replaces the safe environment defaults (`s3` storage, SMTP email) so
+        the storage and email guards above the throttle guard can be exercised
+        with a value that must be refused. Everything is restored in a
+        `finally`, whether the import succeeds or refuses to boot.
         """
         original_rest_framework = base_settings.REST_FRAMEWORK
         if rest_framework is not None:
@@ -282,6 +285,13 @@ class SubstrateSettingsTests(SimpleTestCase):
             'STORAGE_BACKEND': 's3',
             'EMAIL_BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
         }
+        if env_overrides:
+            environment.update(env_overrides)
+            # If a key is explicitly set to None, do not inject it; test is
+            # exercising the default of the production guard.
+            for key, value in list(environment.items()):
+                if value is None:
+                    environment.pop(key)
         try:
             with mock.patch.dict(os.environ, environment):
                 return importlib.import_module('config.settings.production')
@@ -336,6 +346,87 @@ class SubstrateSettingsTests(SimpleTestCase):
                     with self.assertRaises(ImproperlyConfigured) as caught:
                         self._import_production(config)
                     self.assertIn(scope, str(caught.exception))
+
+    def test_production_refuses_to_boot_on_a_non_delivering_email_backend(self):
+        # AD-11: a backend that swallows the message (console, locmem, dummy)
+        # or writes it to a file leaves the user with no code and no error. One
+        # subTest per sink, so losing a member from the rejected set fails on
+        # the member that was lost rather than passing on the ones that remain.
+        for backend in (
+            'django.core.mail.backends.console.EmailBackend',
+            'django.core.mail.backends.locmem.EmailBackend',
+            'django.core.mail.backends.dummy.EmailBackend',
+            'django.core.mail.backends.filebased.EmailBackend',
+        ):
+            with self.subTest(backend=backend):
+                with self.assertRaises(ImproperlyConfigured) as caught:
+                    self._import_production(
+                        env_overrides={'EMAIL_BACKEND': backend}
+                    )
+                self.assertIn('EMAIL_BACKEND', str(caught.exception))
+
+    def test_production_refuses_to_boot_when_email_backend_is_absent(self):
+        # The guard's inline default must not let production boot on the
+        # console backend; when EMAIL_BACKEND is absent, the env default used
+        # by the production guard must be rejected.
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self._import_production(env_overrides={'EMAIL_BACKEND': None})
+        self.assertIn('EMAIL_BACKEND', str(caught.exception))
+
+    def test_production_boots_with_a_non_smtp_delivering_backend(self):
+        # The guard rejects the known non-delivering sinks, not "anything but
+        # SMTP": a provider backend (django-ses, anymail, ...) must still boot.
+        module = self._import_production(
+            env_overrides={'EMAIL_BACKEND': 'django_ses.SESBackend'}
+        )
+        self.assertIsNotNone(module)
+
+    def test_production_refuses_to_boot_with_local_storage(self):
+        # A local backend serves the bytes without authentication, so the
+        # deployment that cannot store on S3 must fail at import.
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self._import_production(
+                env_overrides={'STORAGE_BACKEND': 'local'}
+            )
+        self.assertIn('STORAGE_BACKEND', str(caught.exception))
+
+    def test_production_keeps_the_tls_edge_contract(self):
+        # The platform host sits behind a single TLS edge that terminates TLS
+        # and forwards this header; without it SECURE_SSL_REDIRECT loops.
+        module = self._import_production()
+        self.assertEqual(
+            module.SECURE_PROXY_SSL_HEADER,
+            ('HTTP_X_FORWARDED_PROTO', 'https'),
+        )
+
+    def test_production_keeps_the_managed_redis_channel_layer(self):
+        # The channel layer is a managed Redis, not the per-process in-memory
+        # layer; nothing else in the suite pins the backend itself.
+        module = self._import_production()
+        self.assertEqual(
+            module.CHANNEL_LAYERS['default']['BACKEND'],
+            'channels_redis.core.RedisChannelLayer',
+        )
+
+    def test_secret_key_has_no_default(self):
+        # Repository hygiene: a default would let a deployment boot with a
+        # predictable signing key. The single assignment must read the env
+        # with no fallback.
+        source = inspect.getsource(base_settings)
+        secret_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if line.strip().startswith('SECRET_KEY')
+        ]
+        self.assertEqual(secret_lines, ["SECRET_KEY = env('SECRET_KEY')"])
+
+    def test_dotenv_is_git_ignored(self):
+        # The `.env` file holds SECRET_KEY and every other secret; it must
+        # never be trackable.
+        gitignore = (base_settings.BASE_DIR / '.gitignore').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn('.env', gitignore.splitlines())
 
 
 def assert_envelope(test_case, response, expected_type, expected_status):

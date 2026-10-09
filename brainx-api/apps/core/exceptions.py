@@ -11,7 +11,7 @@ exception DRF does not handle returns None so Django renders its 500.
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.http import Http404
+from django.http import Http404, JsonResponse
 
 from rest_framework import status
 from rest_framework.exceptions import (
@@ -295,6 +295,20 @@ def _build_envelope(exc, error_type, status_code):
         'detail': _summarize(detail) or TITLES[error_type],
         'errors': _field_errors(detail),
     }
+
+
+def not_found_response():
+    """The project 404 body, built from the same envelope the handler renders.
+
+    `Resolver404` is raised by Django's base handler before any DRF `dispatch`,
+    so an unmatched route never reaches `brainx_exception_handler`. The
+    project's `handler404` builds its body here, from the same
+    `_build_envelope`, so the handled-404 path and this one cannot diverge.
+    """
+    return JsonResponse(
+        _build_envelope(NotFound(), 'not_found', 404),
+        status=404,
+    )
 
 
 def brainx_exception_handler(exc, context):

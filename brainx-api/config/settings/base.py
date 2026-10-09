@@ -53,7 +53,6 @@ API_PREFIX = f'/api/{API_VERSION}'
 
 # Application definition
 DJANGO_APPS = [
-    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',

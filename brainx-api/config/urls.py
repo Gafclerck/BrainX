@@ -15,7 +15,6 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.conf import settings
-from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
@@ -35,9 +34,14 @@ API_MOUNT = settings.API_PREFIX.lstrip('/')
 # `None` would fall back to the project's authenticators and 401 a request that
 # carries a bad `Bearer` header. Both settings move together.
 
+# `Resolver404` is raised by Django's base handler before any DRF view runs, so
+# an unmatched route never reaches `brainx_exception_handler`. `handler404`
+# builds the same five-key envelope in `apps.core.views`.
+handler404 = 'apps.core.views.handler404'
+
 urlpatterns = [
-    path('admin/', admin.site.urls),
     path(f'{API_MOUNT}/', include('apps.users.urls')),
+    path(f'{API_MOUNT}/', include('apps.core.urls')),
     path(f'{API_MOUNT}/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(
         f'{API_MOUNT}/docs/',
