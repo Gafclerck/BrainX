@@ -1,12 +1,15 @@
-"""The four create endpoints of the content tree.
+"""The create and update endpoints of the content tree.
 
-Each endpoint is Publisher-only and creates exactly one level. The parent is
+Each endpoint is Publisher-only and acts on exactly one level. The parent is
 resolved from the URL rather than the body, so a node can never be created
 under a parent other than the path names, and an unknown parent id is a 404
-before any row is written. `position` is assigned by the server (the next free
-slot under the parent); explicit ordering is Story 2.4's. The write itself -
-row, actor stamp and all - belongs to `mutate`, so a view only validates and
-resolves; it never persists a content row itself.
+before any row is written. `position` is assigned by the server on create (the
+next free slot under the parent); explicit ordering is Story 2.4's. An update
+is a `PATCH` on the row's own UUID and writes only the fields the body carries,
+so a descriptive edit never touches `position` and never moves the row to a new
+parent. The write itself - row, actor stamp and all - belongs to `mutate`, so a
+view only validates, resolves and looks the row up; it never persists a content
+row itself.
 """
 
 from django.db.models import Max
@@ -187,3 +190,127 @@ class LessonCreateView(APIView):
         return Response(
             LessonSerializer(lesson).data, status=status.HTTP_201_CREATED
         )
+
+
+class CourseUpdateView(APIView):
+    """Edit or rename a Course, addressed by its own UUID.
+
+    Only the fields in the body change; the serializer arrives `partial`, so
+    an absent field is left alone. `position`, `is_deleted`, `last_modified_by`
+    and `id` are read-only and ignored if a body supplies them.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=CourseSerializer,
+        responses={
+            200: CourseSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        serializer = CourseSerializer(course, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        course = mutate(
+            actor=request.user,
+            model=Course,
+            instance=course,
+            data=serializer.validated_data,
+        )
+        return Response(CourseSerializer(course).data)
+
+
+class ModuleUpdateView(APIView):
+    """Edit or rename a Module, addressed by its own UUID."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=ModuleSerializer,
+        responses={
+            200: ModuleSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        serializer = ModuleSerializer(module, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        module = mutate(
+            actor=request.user,
+            model=Module,
+            instance=module,
+            data=serializer.validated_data,
+        )
+        return Response(ModuleSerializer(module).data)
+
+
+class ChapterUpdateView(APIView):
+    """Edit or rename a Chapter, addressed by its own UUID."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=ChapterSerializer,
+        responses={
+            200: ChapterSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        serializer = ChapterSerializer(
+            chapter, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        chapter = mutate(
+            actor=request.user,
+            model=Chapter,
+            instance=chapter,
+            data=serializer.validated_data,
+        )
+        return Response(ChapterSerializer(chapter).data)
+
+
+class LessonUpdateView(APIView):
+    """Edit a Lesson, addressed by its own UUID.
+
+    A partial update leaves an omitted field alone, but a required field
+    (`title`, `teacher`, `course_date`) that is present and blank is rejected
+    400, naming it under `errors`.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=LessonSerializer,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        serializer = LessonSerializer(lesson, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        lesson = mutate(
+            actor=request.user,
+            model=Lesson,
+            instance=lesson,
+            data=serializer.validated_data,
+        )
+        return Response(LessonSerializer(lesson).data)
