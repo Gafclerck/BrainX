@@ -9,8 +9,13 @@ flag it needs alongside its metadata.
 Containment is a real non-null foreign key, which is what makes an orphan node
 impossible at the database rather than only at the API. Identifiers come from
 `UUIDModel`, so no level is ever addressed by an integer or a slug.
+
+Every row also records the account that last changed it (Story 2.2). The stamp
+lives on the row, never as a single author field shared by the tree, so a
+second Publisher is a permission change rather than a data migration.
 """
 
+from django.conf import settings
 from django.db import models
 
 from apps.core.models import TimeStampedModel, UUIDModel
@@ -21,13 +26,22 @@ class ContentNode(UUIDModel, TimeStampedModel):
 
     Carries only what Course, Module and Chapter have in common. `position` is
     the Publisher's ordering control and `is_deleted` is the soft-removal flag
-    (AD-5); neither is set from a client payload. Lesson deliberately does not
-    inherit this base, because its own fields make it a different kind of node.
+    (AD-5); neither is set from a client payload. `last_modified_by` is the
+    per-row actor stamp, set only by `apps.content.mutations.mutate`. Lesson
+    deliberately does not inherit this base, because its own fields make it a
+    different kind of node - which is why it declares the stamp itself.
     """
 
     name = models.CharField(max_length=255)
     position = models.PositiveIntegerField()
     is_deleted = models.BooleanField(default=False)
+    # PROTECT: an account that has touched content cannot be deleted, so the
+    # audit trail is never cascaded away.
+    last_modified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='%(app_label)s_%(class)s_last_modified_by',
+    )
 
     class Meta:
         abstract = True
@@ -95,6 +109,10 @@ class Lesson(UUIDModel, TimeStampedModel):
     `title`, `teacher` and `course_date` are required at creation. `description`
     is optional here and becomes mandatory only when the Lesson is published
     (Epic 4).
+
+    The per-row actor stamp and the removal/ordering controls are duplicated
+    from `ContentNode` on purpose: this level is a different kind of node, so
+    it declares what it needs rather than inheriting the container base.
     """
 
     chapter = models.ForeignKey(
@@ -108,6 +126,13 @@ class Lesson(UUIDModel, TimeStampedModel):
     course_date = models.DateField()
     position = models.PositiveIntegerField()
     is_deleted = models.BooleanField(default=False)
+    # PROTECT: an account that has touched content cannot be deleted, so the
+    # audit trail is never cascaded away.
+    last_modified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='%(app_label)s_%(class)s_last_modified_by',
+    )
 
     class Meta:
         ordering = ('position', 'id')

@@ -5,11 +5,18 @@ from datetime import date
 from django.db import IntegrityError, models, transaction
 from django.test import TestCase
 
+from apps.users.models import User
+
 from ..models import Chapter, ContentNode, Course, Lesson, Module
 
 
 class TreeShapeTests(TestCase):
     """Four concrete models in one foreign-key chain."""
+
+    def setUp(self):
+        # The rows here carry a real stamp, because every content row records
+        # its actor (Story 2.2) - a fixture without one is not a valid row.
+        self.actor = User.objects.create_user(email='actor@example.com')
 
     def test_course_module_chapter_share_the_abstract_base(self):
         self.assertTrue(ContentNode._meta.abstract)
@@ -39,8 +46,24 @@ class TreeShapeTests(TestCase):
         # The one path the API cannot take, because the parent comes from the
         # URL - and the reason containment is structural rather than a habit.
         cases = (
-            (Module, {'name': 'orphan', 'position': 1, 'course': None}),
-            (Chapter, {'name': 'orphan', 'position': 1, 'module': None}),
+            (
+                Module,
+                {
+                    'name': 'orphan',
+                    'position': 1,
+                    'course': None,
+                    'last_modified_by': self.actor,
+                },
+            ),
+            (
+                Chapter,
+                {
+                    'name': 'orphan',
+                    'position': 1,
+                    'module': None,
+                    'last_modified_by': self.actor,
+                },
+            ),
             (
                 Lesson,
                 {
@@ -49,6 +72,7 @@ class TreeShapeTests(TestCase):
                     'course_date': date(2026, 9, 1),
                     'position': 1,
                     'chapter': None,
+                    'last_modified_by': self.actor,
                 },
             ),
         )
@@ -63,21 +87,35 @@ class PositionUniquenessTests(TestCase):
     """`position` is unique per parent, enforced by the applied schema."""
 
     def setUp(self):
-        self.course = Course.objects.create(name='Maths', subject='X', position=1)
-        self.module = Module.objects.create(course=self.course, name='M', position=1)
-        self.chapter = Chapter.objects.create(module=self.module, name='C', position=1)
+        self.actor = User.objects.create_user(email='actor@example.com')
+        self.course = Course.objects.create(
+            name='Maths', subject='X', position=1, last_modified_by=self.actor
+        )
+        self.module = Module.objects.create(
+            course=self.course, name='M', position=1, last_modified_by=self.actor
+        )
+        self.chapter = Chapter.objects.create(
+            module=self.module, name='C', position=1, last_modified_by=self.actor
+        )
         self.lesson = Lesson.objects.create(
             chapter=self.chapter,
             title='L',
             teacher='Ms Ada',
             course_date=date(2026, 9, 1),
             position=1,
+            last_modified_by=self.actor,
         )
 
     def test_a_duplicate_position_within_a_parent_is_rejected(self):
         cases = (
-            (Module, {'course': self.course, 'name': 'dup'}),
-            (Chapter, {'module': self.module, 'name': 'dup'}),
+            (
+                Module,
+                {'course': self.course, 'name': 'dup', 'last_modified_by': self.actor},
+            ),
+            (
+                Chapter,
+                {'module': self.module, 'name': 'dup', 'last_modified_by': self.actor},
+            ),
             (
                 Lesson,
                 {
@@ -85,6 +123,7 @@ class PositionUniquenessTests(TestCase):
                     'title': 'dup',
                     'teacher': 'Ms Ada',
                     'course_date': date(2026, 9, 1),
+                    'last_modified_by': self.actor,
                 },
             ),
         )

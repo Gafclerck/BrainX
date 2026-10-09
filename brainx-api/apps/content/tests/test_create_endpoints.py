@@ -46,12 +46,17 @@ class ContentEndpointTestCase(TestCase):
         self.student_client = client_for(self.student)
         self.anonymous_client = APIClient()
 
-        self.course = Course.objects.create(name='Maths', subject='Algebra', position=1)
+        self.course = Course.objects.create(
+            name='Maths', subject='Algebra', position=1,
+            last_modified_by=self.publisher,
+        )
         self.module = Module.objects.create(
-            course=self.course, name='Module 1', position=1
+            course=self.course, name='Module 1', position=1,
+            last_modified_by=self.publisher,
         )
         self.chapter = Chapter.objects.create(
-            module=self.module, name='Chapter 1', position=1
+            module=self.module, name='Chapter 1', position=1,
+            last_modified_by=self.publisher,
         )
 
     def lesson_url(self, chapter=None):
@@ -133,7 +138,10 @@ class CreateChildTests(ContentEndpointTestCase):
     def test_chapter_position_is_scoped_to_its_module(self):
         # A fresh module has no chapters, so its first chapter is slot 1 even
         # though the other module already holds one - position is per parent.
-        other = Module.objects.create(course=self.course, name='Other', position=2)
+        other = Module.objects.create(
+            course=self.course, name='Other', position=2,
+            last_modified_by=self.publisher,
+        )
         first = self.publisher_client.post(
             reverse('chapter-create', args=[other.pk]),
             {'name': 'First'},
@@ -260,3 +268,12 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
             with self.subTest(path=path):
                 self.assertIn(path, paths)
                 self.assertIn('post', paths[path])
+
+    def test_the_schema_marks_the_stamp_and_timestamp_read_only(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        components = schema['components']['schemas']
+        for name in ('Course', 'Module', 'Chapter', 'Lesson'):
+            with self.subTest(component=name):
+                properties = components[name]['properties']
+                self.assertIs(properties['last_modified_by']['readOnly'], True)
+                self.assertIs(properties['updated_at']['readOnly'], True)

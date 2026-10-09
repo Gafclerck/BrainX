@@ -4,7 +4,9 @@ Each endpoint is Publisher-only and creates exactly one level. The parent is
 resolved from the URL rather than the body, so a node can never be created
 under a parent other than the path names, and an unknown parent id is a 404
 before any row is written. `position` is assigned by the server (the next free
-slot under the parent); explicit ordering is Story 2.4's.
+slot under the parent); explicit ordering is Story 2.4's. The write itself -
+row, actor stamp and all - belongs to `mutate`, so a view only validates and
+resolves; it never persists a content row itself.
 """
 
 from django.db.models import Max
@@ -18,6 +20,7 @@ from rest_framework.views import APIView
 from apps.core.permissions import IsPublisher
 
 from .models import Chapter, Course, Lesson, Module
+from .mutations import mutate
 from .serializers import (
     ChapterSerializer,
     CourseSerializer,
@@ -70,7 +73,14 @@ class CourseCreateView(APIView):
     def post(self, request):
         serializer = CourseSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        course = serializer.save(position=next_position(Course.objects.all()))
+        course = mutate(
+            actor=request.user,
+            model=Course,
+            data={
+                **serializer.validated_data,
+                'position': next_position(Course.objects.all()),
+            },
+        )
         return Response(
             CourseSerializer(course).data, status=status.HTTP_201_CREATED
         )
@@ -95,9 +105,14 @@ class ModuleCreateView(APIView):
         course = get_object_or_404(Course, pk=course_id)
         serializer = ModuleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        module = serializer.save(
-            course=course,
-            position=next_position(Module.objects.filter(course=course)),
+        module = mutate(
+            actor=request.user,
+            model=Module,
+            data={
+                **serializer.validated_data,
+                'course': course,
+                'position': next_position(Module.objects.filter(course=course)),
+            },
         )
         return Response(
             ModuleSerializer(module).data, status=status.HTTP_201_CREATED
@@ -123,9 +138,16 @@ class ChapterCreateView(APIView):
         module = get_object_or_404(Module, pk=module_id)
         serializer = ChapterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        chapter = serializer.save(
-            module=module,
-            position=next_position(Chapter.objects.filter(module=module)),
+        chapter = mutate(
+            actor=request.user,
+            model=Chapter,
+            data={
+                **serializer.validated_data,
+                'module': module,
+                'position': next_position(
+                    Chapter.objects.filter(module=module)
+                ),
+            },
         )
         return Response(
             ChapterSerializer(chapter).data, status=status.HTTP_201_CREATED
@@ -151,9 +173,16 @@ class LessonCreateView(APIView):
         chapter = get_object_or_404(Chapter, pk=chapter_id)
         serializer = LessonSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        lesson = serializer.save(
-            chapter=chapter,
-            position=next_position(Lesson.objects.filter(chapter=chapter)),
+        lesson = mutate(
+            actor=request.user,
+            model=Lesson,
+            data={
+                **serializer.validated_data,
+                'chapter': chapter,
+                'position': next_position(
+                    Lesson.objects.filter(chapter=chapter)
+                ),
+            },
         )
         return Response(
             LessonSerializer(lesson).data, status=status.HTTP_201_CREATED
