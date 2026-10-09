@@ -70,6 +70,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     'apps.core',
     'apps.users',
+    'apps.content',
 ]
 
 # The account model is the project's own, not django.contrib.auth's User.
