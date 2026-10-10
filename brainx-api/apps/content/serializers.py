@@ -122,3 +122,24 @@ class LessonSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = ('id', 'position', 'is_deleted', 'updated_at')
+
+
+class ReorderSerializer(serializers.Serializer):
+    """The request contract of a reorder: the children's new order.
+
+    The list must be an exact permutation of the container's direct children;
+    the view enforces that, because only it knows the container's current set.
+    `allow_empty` is deliberate: an empty container reorders to the empty
+    order, and the view rejects an empty list whenever children exist.
+    """
+
+    order = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=True,
+    )
+
+
+class LessonMoveSerializer(serializers.Serializer):
+    """The request contract of a Lesson move: the target Chapter."""
+
+    chapter = serializers.UUIDField()

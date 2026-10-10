@@ -1,18 +1,20 @@
-"""The create and update endpoints of the content tree.
+"""The create, update, reorder and move endpoints of the content tree.
 
 Each endpoint is Publisher-only and acts on exactly one level. The parent is
 resolved from the URL rather than the body, so a node can never be created
 under a parent other than the path names, and an unknown parent id is a 404
 before any row is written. `position` is assigned by the server on create (the
-next free slot under the parent); explicit ordering is Story 2.4's. An update
-is a `PATCH` on the row's own UUID and writes only the fields the body carries,
-so a descriptive edit never touches `position` and never moves the row to a new
-parent. The write itself - row, actor stamp and all - belongs to `mutate`, so a
-view only validates, resolves and looks the row up; it never persists a content
-row itself.
+next free slot under the parent); explicit ordering is this story's, through
+the reorder endpoints, which take a container's whole ordered child list, and
+the Lesson move endpoint, which relocates a single Lesson to another Chapter.
+An update is a `PATCH` on the row's own UUID and writes only the fields the
+body carries, so a descriptive edit never touches `position` and never moves
+the row to a new parent. The write itself - row, actor stamp and all - belongs
+to `mutate` (and the reorder/move helpers built on it), so a view only
+validates, resolves and looks the row up; it never persists a content row
+itself.
 """
 
-from django.db.models import Max
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
@@ -23,12 +25,14 @@ from rest_framework.views import APIView
 from apps.core.permissions import IsPublisher
 
 from .models import Chapter, Course, Lesson, Module
-from .mutations import mutate
+from .mutations import move_lesson, mutate, next_position, reorder_children
 from .serializers import (
     ChapterSerializer,
     CourseSerializer,
+    LessonMoveSerializer,
     LessonSerializer,
     ModuleSerializer,
+    ReorderSerializer,
 )
 
 # The five-key envelope every rejection uses, described locally so each
@@ -47,16 +51,10 @@ ENVELOPE_RESPONSE = inline_serializer(
 )
 
 
-def next_position(queryset):
-    """The next free position among the rows `queryset` selects.
-
-    The client never sends a position on create, and Story 2.4 owns explicit
-    ordering, so appending at the end is the least surprising default. It also
-    keeps the per-parent unique constraint satisfied without the caller having
-    to count the siblings first.
-    """
-    current = queryset.aggregate(highest=Max('position'))['highest']
-    return (current or 0) + 1
+def is_exact_permutation(order, children):
+    """True when `order` lists every `children` id exactly once."""
+    ids = {child.pk for child in children}
+    return len(order) == len(children) and set(order) == ids
 
 
 class CourseCreateView(APIView):
@@ -114,7 +112,9 @@ class ModuleCreateView(APIView):
             data={
                 **serializer.validated_data,
                 'course': course,
-                'position': next_position(Module.objects.filter(course=course)),
+                'position': next_position(
+                    Module.objects.filter(course=course)
+                ),
             },
         )
         return Response(
@@ -314,3 +314,148 @@ class LessonUpdateView(APIView):
             data=serializer.validated_data,
         )
         return Response(LessonSerializer(lesson).data)
+
+
+class CourseModulesReorderView(APIView):
+    """Set the order of a Course's Modules by listing them in order.
+
+    The body must name every Module of the Course exactly once; anything else
+    is a 400 naming `order`. The container is locked and the Modules are
+    renumbered to 1..N in one transaction through `mutate`; the response lists
+    the Modules in the new order.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=ReorderSerializer,
+        responses={
+            200: ModuleSerializer(many=True),
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def put(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        serializer = ReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = serializer.validated_data['order']
+        children = list(Module.objects.filter(course=course))
+        if not is_exact_permutation(order, children):
+            raise serializers.ValidationError(
+                {'order': ['must list every Module of the Course exactly once']}
+            )
+        reordered = reorder_children(
+            actor=request.user,
+            container=course,
+            children=children,
+            order=order,
+        )
+        return Response(ModuleSerializer(reordered, many=True).data)
+
+
+class ModuleChaptersReorderView(APIView):
+    """Set the order of a Module's Chapters by listing them in order."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=ReorderSerializer,
+        responses={
+            200: ChapterSerializer(many=True),
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def put(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        serializer = ReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = serializer.validated_data['order']
+        children = list(Chapter.objects.filter(module=module))
+        if not is_exact_permutation(order, children):
+            raise serializers.ValidationError(
+                {'order': ['must list every Chapter of the Module exactly once']}
+            )
+        reordered = reorder_children(
+            actor=request.user,
+            container=module,
+            children=children,
+            order=order,
+        )
+        return Response(ChapterSerializer(reordered, many=True).data)
+
+
+class ChapterLessonsReorderView(APIView):
+    """Set the order of a Chapter's Lessons by listing them in order."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=ReorderSerializer,
+        responses={
+            200: LessonSerializer(many=True),
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def put(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        serializer = ReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = serializer.validated_data['order']
+        children = list(Lesson.objects.filter(chapter=chapter))
+        if not is_exact_permutation(order, children):
+            raise serializers.ValidationError(
+                {'order': ['must list every Lesson of the Chapter exactly once']}
+            )
+        reordered = reorder_children(
+            actor=request.user,
+            container=chapter,
+            children=children,
+            order=order,
+        )
+        return Response(LessonSerializer(reordered, many=True).data)
+
+
+class LessonMoveView(APIView):
+    """Move a Lesson to a different Chapter, appended at its end.
+
+    The target Chapter comes from the body; it must exist (404 otherwise) and
+    differ from the Lesson's current Chapter (400 otherwise). The move keeps
+    the Lesson's UUID, appends it at the target Chapter's next position in one
+    locked transaction, and leaves the source Chapter sparse.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=LessonMoveSerializer,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        serializer = LessonMoveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target_id = serializer.validated_data['chapter']
+        if target_id == lesson.chapter_id:
+            raise serializers.ValidationError(
+                {'chapter': ['must name a different Chapter']}
+            )
+        target = get_object_or_404(Chapter, pk=target_id)
+        moved = move_lesson(
+            actor=request.user, lesson=lesson, target_chapter=target
+        )
+        return Response(LessonSerializer(moved).data)

@@ -3,10 +3,10 @@
 Every content row enters the database through `mutate`, and every later change
 to one goes back through it, and nothing else does: a view validates input and
 hands the acting user over - it has resolved the parent and the position for a
-create, and the row itself for an update - but never calls `save()` on a
-content row itself, and no code calls `queryset.update()` on one. The actor is
-an explicit argument that views fill from `request.user`; it is never read from
-a payload, and `last_modified_by` is read-only in every serializer, so a caller
+create, and the row itself for an update - but never calls `save()` on a content
+row itself, and no code calls `queryset.update()` on one. The actor is an
+explicit argument that views fill from `request.user`; it is never read from a
+payload, and `last_modified_by` is read-only in every serializer, so a caller
 cannot choose whose name a row carries.
 
 Stories 2.3-2.5 (edit, reorder, move, remove, restore) route through this same
@@ -15,6 +15,9 @@ the `search_document` rebuild rather than writing around it.
 """
 
 from django.db import transaction
+from django.db.models import Max
+
+from .models import Chapter, Lesson
 
 
 def mutate(*, actor, model, data, instance=None):
@@ -25,9 +28,11 @@ def mutate(*, actor, model, data, instance=None):
     a new row is inserted. With an `instance`, `data` is partial validated
     input and only the fields it names are written: the save is scoped with
     `update_fields`, so the stamp and `updated_at` are refreshed while every
-    column the body did not name keeps its value. Every server-owned field
-    (`position`, `is_deleted`, the parent link) is absent from `data` because
-    the serializers declare it read-only, so an update cannot reach it.
+    column the body did not name keeps its value. The serializers declare every
+    server-owned field (`position`, `is_deleted`, the parent link) read-only, so
+    a client-supplied update cannot reach one; the reorder and move helpers are
+    the only code that passes such a field to this port, and they do so
+    deliberately.
 
     Either way the row change, the `last_modified_by` stamp and the ancestor
     recomputation all happen inside a single `transaction.atomic()`, so an error
@@ -68,3 +73,85 @@ def _recompute_ancestors(instance):
     container-visibility computation lands here; nothing is recomputed while
     no visibility column exists.
     """
+
+
+def next_position(queryset):
+    """The next free position among the rows `queryset` selects.
+
+    The client never sends a position on create or move; ordering is set
+    through the reorder and move helpers, so appending at the end is the least
+    surprising default. It also keeps the per-parent unique constraint
+    satisfied without the caller having to count the siblings first.
+    """
+    current = queryset.aggregate(highest=Max('position'))['highest']
+    return (current or 0) + 1
+
+
+def reorder_children(*, actor, container, children, order):
+    """Write `container`'s direct children in `order`, renumbered to 1..N.
+
+    `children` is the container's complete set of direct children and `order`
+    a permutation of their ids, both validated by the view. The reorder runs
+    in one transaction under a row lock on the container. Because `position`
+    is unique per container, a single pass over a permutation can collide (a
+    swap is two rows meeting on the same slot), so the children are first moved
+    to a band strictly above the container's current maximum and then
+    renumbered to 1..N. Every change goes through `mutate`, so each row is
+    re-stamped with `actor` and the whole reorder commits or rolls back as one.
+    Returns the children in their new order, positions already applied.
+    """
+    with transaction.atomic():
+        type(container).objects.select_for_update().get(pk=container.pk)
+        by_id = {child.pk: child for child in children}
+        ordered = [by_id[child_id] for child_id in order]
+
+        if [child.position for child in ordered] == list(
+            range(1, len(ordered) + 1)
+        ):
+            return ordered
+
+        high = max((child.position for child in children), default=0) + 1
+        for index, child in enumerate(ordered):
+            if child.position != high + index:
+                mutate(
+                    actor=actor,
+                    model=type(child),
+                    instance=child,
+                    data={'position': high + index},
+                )
+        for index, child in enumerate(ordered):
+            target = index + 1
+            if child.position != target:
+                mutate(
+                    actor=actor,
+                    model=type(child),
+                    instance=child,
+                    data={'position': target},
+                )
+        return ordered
+
+
+def move_lesson(*, actor, lesson, target_chapter):
+    """Move a Lesson to the end of `target_chapter`, keeping its identity.
+
+    Runs in one transaction under a row lock on the target Chapter and on the
+    Lesson itself. The Lesson is appended at the target's next position while
+    the source Chapter is left sparse (AD-7 permits sparse positions); the row
+    change and the `last_modified_by` stamp go through `mutate` like any other
+    write, so the move commits or rolls back as one.
+    """
+    with transaction.atomic():
+        Chapter.objects.select_for_update().get(pk=target_chapter.pk)
+        locked = Lesson.objects.select_for_update().get(pk=lesson.pk)
+        mutate(
+            actor=actor,
+            model=Lesson,
+            instance=locked,
+            data={
+                'chapter': target_chapter,
+                'position': next_position(
+                    Lesson.objects.filter(chapter=target_chapter)
+                ),
+            },
+        )
+        return locked

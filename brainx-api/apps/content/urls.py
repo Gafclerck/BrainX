@@ -2,11 +2,15 @@ from django.urls import path
 
 from .views import (
     ChapterCreateView,
+    ChapterLessonsReorderView,
     ChapterUpdateView,
     CourseCreateView,
+    CourseModulesReorderView,
     CourseUpdateView,
     LessonCreateView,
+    LessonMoveView,
     LessonUpdateView,
+    ModuleChaptersReorderView,
     ModuleCreateView,
     ModuleUpdateView,
 )
@@ -52,5 +56,25 @@ urlpatterns = [
         'lessons/<uuid:lesson_id>/',
         LessonUpdateView.as_view(),
         name='lesson-update',
+    ),
+    path(
+        'courses/<uuid:course_id>/modules/order/',
+        CourseModulesReorderView.as_view(),
+        name='module-reorder',
+    ),
+    path(
+        'modules/<uuid:module_id>/chapters/order/',
+        ModuleChaptersReorderView.as_view(),
+        name='chapter-reorder',
+    ),
+    path(
+        'chapters/<uuid:chapter_id>/lessons/order/',
+        ChapterLessonsReorderView.as_view(),
+        name='lesson-reorder',
+    ),
+    path(
+        'lessons/<uuid:lesson_id>/move/',
+        LessonMoveView.as_view(),
+        name='lesson-move',
     ),
 ]

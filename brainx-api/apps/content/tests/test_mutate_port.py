@@ -163,6 +163,56 @@ class SingleWritePathTests(ContentEndpointTestCase):
         self.assertEqual(Chapter.objects.count(), 1)
         self.assertEqual(Lesson.objects.count(), 0)
 
+    def test_a_reorder_and_a_move_fail_when_the_port_is_unavailable(self):
+        module2 = Module.objects.create(
+            course=self.course,
+            name='Module 2',
+            position=2,
+            last_modified_by=self.publisher,
+        )
+        chapter2 = Chapter.objects.create(
+            module=module2,
+            name='Chapter 2',
+            position=1,
+            last_modified_by=self.publisher,
+        )
+        lesson = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Lesson',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 1),
+            position=1,
+            last_modified_by=self.publisher,
+        )
+        cases = (
+            (
+                'put',
+                reverse('module-reorder', args=[self.course.pk]),
+                {'order': [str(module2.pk), str(self.module.pk)]},
+            ),
+            (
+                'patch',
+                reverse('lesson-move', args=[lesson.pk]),
+                {'chapter': str(chapter2.pk)},
+            ),
+        )
+
+        for method, url, payload in cases:
+            with self.subTest(url=url):
+                with mock.patch(
+                    'apps.content.mutations.mutate',
+                    side_effect=RuntimeError('mutate is unavailable'),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        getattr(self.publisher_client, method)(
+                            url, payload, format='json'
+                        )
+
+        module2.refresh_from_db()
+        lesson.refresh_from_db()
+        self.assertEqual(module2.position, 2)
+        self.assertEqual(lesson.chapter_id, self.chapter.pk)
+
     def test_no_view_persists_a_row_without_the_port(self):
         # Each view is handed a valid but unsaved row in place of the port's
         # real result. If a view wrote a content row itself, a row would exist
