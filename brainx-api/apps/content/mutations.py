@@ -17,7 +17,48 @@ the `search_document` rebuild rather than writing around it.
 from django.db import transaction
 from django.db.models import Max
 
-from .models import Chapter, Lesson
+from .models import Chapter, Course, Lesson, Module
+
+# The direct-children relation of each level, keyed by model. Lesson is absent
+# because it is the leaf: an entry here is what "has descendants" means.
+_CHILD_RELATION = {
+    Course: 'modules',
+    Module: 'chapters',
+    Chapter: 'lessons',
+}
+
+# The stable identifier of each level, used to name a row in a removal preview.
+LEVEL_NAMES = {
+    Course: 'course',
+    Module: 'module',
+    Chapter: 'chapter',
+    Lesson: 'lesson',
+}
+
+
+def direct_children(container):
+    """Every direct child of `container`, soft-deleted rows included."""
+    relation = _CHILD_RELATION.get(type(container))
+    if relation is None:
+        return []
+    return list(getattr(container, relation).all())
+
+
+def _subtree(node):
+    """`node` and every descendant, depth-first, soft-deleted rows included."""
+    yield node
+    for child in direct_children(node):
+        yield from _subtree(child)
+
+
+def removal_targets(node):
+    """The live rows removing `node` would newly hide, the node first.
+
+    A row already carrying the removal flag is skipped, so a removal over a
+    partly deleted subtree neither re-stamps nor resurfaces it.
+    """
+    return [row for row in _subtree(node) if not row.is_deleted]
+
 
 
 def mutate(*, actor, model, data, instance=None):
@@ -30,9 +71,9 @@ def mutate(*, actor, model, data, instance=None):
     `update_fields`, so the stamp and `updated_at` are refreshed while every
     column the body did not name keeps its value. The serializers declare every
     server-owned field (`position`, `is_deleted`, the parent link) read-only, so
-    a client-supplied update cannot reach one; the reorder and move helpers are
-    the only code that passes such a field to this port, and they do so
-    deliberately.
+    a client-supplied update cannot reach one; the reorder, move, removal and
+    restoration helpers are the only code that passes such a field to this
+    port, and they do so deliberately.
 
     Either way the row change, the `last_modified_by` stamp and the ancestor
     recomputation all happen inside a single `transaction.atomic()`, so an error
@@ -88,29 +129,35 @@ def next_position(queryset):
 
 
 def reorder_children(*, actor, container, children, order):
-    """Write `container`'s direct children in `order`, renumbered to 1..N.
+    """Write `container`'s live direct children in `order`, renumbered.
 
-    `children` is the container's complete set of direct children and `order`
-    a permutation of their ids, both validated by the view. The reorder runs
-    in one transaction under a row lock on the container. Because `position`
-    is unique per container, a single pass over a permutation can collide (a
-    swap is two rows meeting on the same slot), so the children are first moved
-    to a band strictly above the container's current maximum and then
-    renumbered to 1..N. Every change goes through `mutate`, so each row is
-    re-stamped with `actor` and the whole reorder commits or rolls back as one.
-    Returns the children in their new order, positions already applied.
+    `children` is the container's complete set of live direct children and
+    `order` a permutation of their ids, both validated by the view; soft-deleted
+    siblings are part of neither. The reorder runs in one transaction under a
+    row lock on the container. Because `position` is unique per container across
+    deleted rows too, the target band starts above the highest soft-deleted
+    position (at 1 when there is none, which is Story 2.4's behaviour) and the
+    move band starts above every row in the container, so neither pass can
+    collide with a deleted slot. Every change goes through `mutate`, so each row
+    is re-stamped with `actor` and the whole reorder commits or rolls back as
+    one. Returns the children in their new order, positions already applied.
     """
     with transaction.atomic():
         type(container).objects.select_for_update().get(pk=container.pk)
+        siblings = direct_children(container)
         by_id = {child.pk: child for child in children}
         ordered = [by_id[child_id] for child_id in order]
 
-        if [child.position for child in ordered] == list(
-            range(1, len(ordered) + 1)
-        ):
+        deleted_positions = [
+            sibling.position for sibling in siblings if sibling.is_deleted
+        ]
+        band_start = max(deleted_positions, default=0) + 1
+        targets = [band_start + index for index in range(len(ordered))]
+
+        if [child.position for child in ordered] == targets:
             return ordered
 
-        high = max((child.position for child in children), default=0) + 1
+        high = max((sibling.position for sibling in siblings), default=0) + 1
         for index, child in enumerate(ordered):
             if child.position != high + index:
                 mutate(
@@ -120,7 +167,7 @@ def reorder_children(*, actor, container, children, order):
                     data={'position': high + index},
                 )
         for index, child in enumerate(ordered):
-            target = index + 1
+            target = band_start + index
             if child.position != target:
                 mutate(
                     actor=actor,
@@ -129,6 +176,48 @@ def reorder_children(*, actor, container, children, order):
                     data={'position': target},
                 )
         return ordered
+
+
+def remove(*, actor, model, node):
+    """Soft-delete `node` and every live descendant, stamped with `actor`.
+
+    Runs in one transaction under a row lock on the addressed node. Each
+    affected row is written through `mutate`, so the whole cascade is
+    re-stamped with the acting Publisher and commits or rolls back as one.
+    Rows already carrying the flag are skipped. Returns the addressed node.
+    """
+    with transaction.atomic():
+        locked = model.objects.select_for_update().get(pk=node.pk)
+        for row in removal_targets(locked):
+            mutate(
+                actor=actor,
+                model=type(row),
+                instance=row,
+                data={'is_deleted': True},
+            )
+        return locked
+
+
+def restore(*, actor, model, node):
+    """Clear the removal flag on `node` alone, stamped with `actor`.
+
+    The soft-deleted row is reached through `with_deleted()`, the only selector
+    of soft-deleted rows. Restoration is node-only: descendants stay deleted
+    until restored themselves. A node that is already live is returned
+    unchanged.
+    """
+    with transaction.atomic():
+        locked = model.objects.select_for_update().get(pk=node.pk)
+        if not locked.is_deleted:
+            return locked
+        deleted = model.objects.with_deleted().get(pk=node.pk)
+        mutate(
+            actor=actor,
+            model=model,
+            instance=deleted,
+            data={'is_deleted': False},
+        )
+        return deleted
 
 
 def move_lesson(*, actor, lesson, target_chapter):

@@ -21,6 +21,21 @@ from django.db import models
 from apps.core.models import TimeStampedModel, UUIDModel
 
 
+class ContentQuerySet(models.QuerySet):
+    """The set operations the content tree's own read and restore paths use.
+
+    `with_deleted()` is the narrow selector of soft-deleted rows that the
+    restore path (Story 2.5) deliberately uses. The manager a content model
+    exposes is this queryset without that filter, so an ordinary read still
+    sees every row; hiding soft-deleted rows from Students belongs to the
+    named read ports of Story 2.6.
+    """
+
+    def with_deleted(self):
+        """The soft-deleted rows alone - the restore path's selector."""
+        return self.filter(is_deleted=True)
+
+
 class ContentNode(UUIDModel, TimeStampedModel):
     """Abstract base for the three container levels.
 
@@ -42,6 +57,8 @@ class ContentNode(UUIDModel, TimeStampedModel):
         on_delete=models.PROTECT,
         related_name='%(app_label)s_%(class)s_last_modified_by',
     )
+
+    objects = ContentQuerySet.as_manager()
 
     class Meta:
         abstract = True
@@ -133,6 +150,8 @@ class Lesson(UUIDModel, TimeStampedModel):
         on_delete=models.PROTECT,
         related_name='%(app_label)s_%(class)s_last_modified_by',
     )
+
+    objects = ContentQuerySet.as_manager()
 
     class Meta:
         ordering = ('position', 'id')

@@ -124,6 +124,27 @@ class LessonSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'position', 'is_deleted', 'updated_at')
 
 
+class RemovalPreviewItemSerializer(serializers.Serializer):
+    """One row a removal would newly hide, named so the Publisher can judge it."""
+
+    level = serializers.ChoiceField(
+        choices=('course', 'module', 'chapter', 'lesson')
+    )
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    position = serializers.IntegerField()
+
+
+class RemovalPreviewSerializer(serializers.Serializer):
+    """What a removal would hide: per-level counts and the rows themselves.
+
+    The dry run is advisory: it writes nothing and the commit needs no token.
+    """
+
+    would_remove = serializers.DictField(child=serializers.IntegerField())
+    items = RemovalPreviewItemSerializer(many=True)
+
+
 class ReorderSerializer(serializers.Serializer):
     """The request contract of a reorder: the children's new order.
 

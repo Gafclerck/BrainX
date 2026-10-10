@@ -1,6 +1,7 @@
 """The Publisher-only reorder and Lesson move endpoints (Story 2.4)."""
 
 import uuid
+from datetime import date
 from unittest import mock
 
 from django.conf import settings
@@ -565,3 +566,164 @@ class ReorderSchemaTests(TestCase):
             ]['content']['application/json']['schema']['$ref'],
             '#/components/schemas/PatchedLessonMove',
         )
+
+
+class ReorderWithSoftDeletedChildTests(ContentEndpointTestCase):
+    """A reorder permutes and renumbers live children only.
+
+    A soft-deleted sibling holds a slot that the live band must step over, since
+    `(container, position)` is unique across deleted rows too.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # The base Module is moved to the deleted side of every case.
+        mutations.mutate(
+            actor=self.publisher,
+            model=Module,
+            instance=self.module,
+            data={'is_deleted': True},
+        )
+        self.deleted_module = self.module
+        self.live_a = Module.objects.create(
+            course=self.course,
+            name='Live A',
+            position=2,
+            last_modified_by=self.publisher,
+        )
+        self.live_b = Module.objects.create(
+            course=self.course,
+            name='Live B',
+            position=3,
+            last_modified_by=self.publisher,
+        )
+
+    def reorder(self, order):
+        return self.publisher_client.put(
+            reverse('module-reorder', args=[self.course.pk]),
+            {'order': order},
+            format='json',
+        )
+
+    def test_live_children_are_renumbered_above_the_deleted_slot(self):
+        self.deleted_module.refresh_from_db()
+        updated_before = self.deleted_module.updated_at
+        stamp_before = self.deleted_module.last_modified_by_id
+
+        response = self.reorder([str(self.live_b.pk), str(self.live_a.pk)])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row['position'] for row in response.json()], [2, 3]
+        )
+        self.live_a.refresh_from_db()
+        self.live_b.refresh_from_db()
+        self.assertEqual(self.live_b.position, 2)
+        self.assertEqual(self.live_a.position, 3)
+        # The deleted row keeps its slot and is not re-stamped.
+        self.deleted_module.refresh_from_db()
+        self.assertEqual(self.deleted_module.position, 1)
+        self.assertTrue(self.deleted_module.is_deleted)
+        self.assertEqual(self.deleted_module.updated_at, updated_before)
+        self.assertEqual(self.deleted_module.last_modified_by_id, stamp_before)
+
+    def test_the_order_lists_only_the_live_children(self):
+        response = self.reorder(
+            [str(self.live_a.pk), str(self.live_b.pk)]
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row['position'] for row in response.json()], [2, 3]
+        )
+
+    def test_listing_a_soft_deleted_child_is_rejected(self):
+        response = self.reorder(
+            [str(self.live_a.pk), str(self.deleted_module.pk)]
+        )
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('order', body['errors'])
+
+    def test_lessons_are_renumbered_above_a_deleted_lesson(self):
+        deleted = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Deleted',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 1),
+            position=1,
+            is_deleted=True,
+            last_modified_by=self.publisher,
+        )
+        lesson_a = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Live A',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 2),
+            position=2,
+            last_modified_by=self.publisher,
+        )
+        lesson_b = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Live B',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 3),
+            position=3,
+            last_modified_by=self.publisher,
+        )
+
+        response = self.publisher_client.put(
+            reverse('lesson-reorder', args=[self.chapter.pk]),
+            {'order': [str(lesson_b.pk), str(lesson_a.pk)]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        lesson_a.refresh_from_db()
+        lesson_b.refresh_from_db()
+        deleted.refresh_from_db()
+        self.assertEqual(lesson_b.position, 2)
+        self.assertEqual(lesson_a.position, 3)
+        self.assertEqual(deleted.position, 1)
+        self.assertTrue(deleted.is_deleted)
+
+    def test_chapters_are_renumbered_above_a_deleted_chapter(self):
+        mutations.mutate(
+            actor=self.publisher,
+            model=Chapter,
+            instance=self.chapter,
+            data={'is_deleted': True},
+        )
+        self.chapter.refresh_from_db()
+        updated_before = self.chapter.updated_at
+        stamp_before = self.chapter.last_modified_by_id
+
+        live_a = Chapter.objects.create(
+            module=self.module,
+            name='Live A',
+            position=2,
+            last_modified_by=self.publisher,
+        )
+        live_b = Chapter.objects.create(
+            module=self.module,
+            name='Live B',
+            position=3,
+            last_modified_by=self.publisher,
+        )
+
+        response = self.publisher_client.put(
+            reverse('chapter-reorder', args=[self.module.pk]),
+            {'order': [str(live_b.pk), str(live_a.pk)]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row['position'] for row in response.json()], [2, 3])
+        live_a.refresh_from_db()
+        live_b.refresh_from_db()
+        self.assertEqual(live_b.position, 2)
+        self.assertEqual(live_a.position, 3)
+        # The deleted Chapter keeps its slot, flag and stamp.
+        self.chapter.refresh_from_db()
+        self.assertEqual(self.chapter.position, 1)
+        self.assertTrue(self.chapter.is_deleted)
+        self.assertEqual(self.chapter.updated_at, updated_before)
+        self.assertEqual(self.chapter.last_modified_by_id, stamp_before)

@@ -3,15 +3,23 @@ from django.urls import path
 from .views import (
     ChapterCreateView,
     ChapterLessonsReorderView,
+    ChapterRemovalPreviewView,
+    ChapterRestoreView,
     ChapterUpdateView,
     CourseCreateView,
     CourseModulesReorderView,
+    CourseRemovalPreviewView,
+    CourseRestoreView,
     CourseUpdateView,
     LessonCreateView,
     LessonMoveView,
+    LessonRemovalPreviewView,
+    LessonRestoreView,
     LessonUpdateView,
     ModuleChaptersReorderView,
     ModuleCreateView,
+    ModuleRemovalPreviewView,
+    ModuleRestoreView,
     ModuleUpdateView,
 )
 
@@ -28,6 +36,16 @@ urlpatterns = [
         name='course-update',
     ),
     path(
+        'courses/<uuid:course_id>/removal-preview/',
+        CourseRemovalPreviewView.as_view(),
+        name='course-removal-preview',
+    ),
+    path(
+        'courses/<uuid:course_id>/restore/',
+        CourseRestoreView.as_view(),
+        name='course-restore',
+    ),
+    path(
         'courses/<uuid:course_id>/modules/',
         ModuleCreateView.as_view(),
         name='module-create',
@@ -36,6 +54,16 @@ urlpatterns = [
         'modules/<uuid:module_id>/',
         ModuleUpdateView.as_view(),
         name='module-update',
+    ),
+    path(
+        'modules/<uuid:module_id>/removal-preview/',
+        ModuleRemovalPreviewView.as_view(),
+        name='module-removal-preview',
+    ),
+    path(
+        'modules/<uuid:module_id>/restore/',
+        ModuleRestoreView.as_view(),
+        name='module-restore',
     ),
     path(
         'modules/<uuid:module_id>/chapters/',
@@ -48,6 +76,16 @@ urlpatterns = [
         name='chapter-update',
     ),
     path(
+        'chapters/<uuid:chapter_id>/removal-preview/',
+        ChapterRemovalPreviewView.as_view(),
+        name='chapter-removal-preview',
+    ),
+    path(
+        'chapters/<uuid:chapter_id>/restore/',
+        ChapterRestoreView.as_view(),
+        name='chapter-restore',
+    ),
+    path(
         'chapters/<uuid:chapter_id>/lessons/',
         LessonCreateView.as_view(),
         name='lesson-create',
@@ -56,6 +94,16 @@ urlpatterns = [
         'lessons/<uuid:lesson_id>/',
         LessonUpdateView.as_view(),
         name='lesson-update',
+    ),
+    path(
+        'lessons/<uuid:lesson_id>/removal-preview/',
+        LessonRemovalPreviewView.as_view(),
+        name='lesson-removal-preview',
+    ),
+    path(
+        'lessons/<uuid:lesson_id>/restore/',
+        LessonRestoreView.as_view(),
+        name='lesson-restore',
     ),
     path(
         'courses/<uuid:course_id>/modules/order/',

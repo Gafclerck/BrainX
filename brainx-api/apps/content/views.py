@@ -25,13 +25,23 @@ from rest_framework.views import APIView
 from apps.core.permissions import IsPublisher
 
 from .models import Chapter, Course, Lesson, Module
-from .mutations import move_lesson, mutate, next_position, reorder_children
+from .mutations import (
+    LEVEL_NAMES,
+    move_lesson,
+    mutate,
+    next_position,
+    removal_targets,
+    remove,
+    reorder_children,
+    restore,
+)
 from .serializers import (
     ChapterSerializer,
     CourseSerializer,
     LessonMoveSerializer,
     LessonSerializer,
     ModuleSerializer,
+    RemovalPreviewSerializer,
     ReorderSerializer,
 )
 
@@ -55,6 +65,27 @@ def is_exact_permutation(order, children):
     """True when `order` lists every `children` id exactly once."""
     ids = {child.pk for child in children}
     return len(order) == len(children) and set(order) == ids
+
+
+def build_removal_preview(node):
+    """The rows removing `node` would newly hide, as counts plus named rows."""
+    targets = removal_targets(node)
+    would_remove = {name: 0 for name in LEVEL_NAMES.values()}
+    items = []
+    for row in targets:
+        level = LEVEL_NAMES[type(row)]
+        would_remove[level] += 1
+        items.append(
+            {
+                'level': level,
+                'id': row.pk,
+                'name': row.name if hasattr(row, 'name') else row.title,
+                'position': row.position,
+            }
+        )
+    would_remove['total'] = len(targets)
+    payload = {'would_remove': would_remove, 'items': items}
+    return RemovalPreviewSerializer(payload).data
 
 
 class CourseCreateView(APIView):
@@ -224,6 +255,21 @@ class CourseUpdateView(APIView):
         )
         return Response(CourseSerializer(course).data)
 
+    @extend_schema(
+        request=None,
+        responses={
+            200: CourseSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def delete(self, request, course_id):
+        """Soft-remove the Course and every live descendant beneath it."""
+        course = get_object_or_404(Course, pk=course_id)
+        removed = remove(actor=request.user, model=Course, node=course)
+        return Response(CourseSerializer(removed).data)
+
 
 class ModuleUpdateView(APIView):
     """Edit or rename a Module, addressed by its own UUID."""
@@ -251,6 +297,21 @@ class ModuleUpdateView(APIView):
             data=serializer.validated_data,
         )
         return Response(ModuleSerializer(module).data)
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: ModuleSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def delete(self, request, module_id):
+        """Soft-remove the Module and every live descendant beneath it."""
+        module = get_object_or_404(Module, pk=module_id)
+        removed = remove(actor=request.user, model=Module, node=module)
+        return Response(ModuleSerializer(removed).data)
 
 
 class ChapterUpdateView(APIView):
@@ -281,6 +342,21 @@ class ChapterUpdateView(APIView):
             data=serializer.validated_data,
         )
         return Response(ChapterSerializer(chapter).data)
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: ChapterSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def delete(self, request, chapter_id):
+        """Soft-remove the Chapter and every live descendant beneath it."""
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        removed = remove(actor=request.user, model=Chapter, node=chapter)
+        return Response(ChapterSerializer(removed).data)
 
 
 class LessonUpdateView(APIView):
@@ -315,6 +391,21 @@ class LessonUpdateView(APIView):
         )
         return Response(LessonSerializer(lesson).data)
 
+    @extend_schema(
+        request=None,
+        responses={
+            200: LessonSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def delete(self, request, lesson_id):
+        """Soft-remove the Lesson."""
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        removed = remove(actor=request.user, model=Lesson, node=lesson)
+        return Response(LessonSerializer(removed).data)
+
 
 class CourseModulesReorderView(APIView):
     """Set the order of a Course's Modules by listing them in order.
@@ -342,7 +433,7 @@ class CourseModulesReorderView(APIView):
         serializer = ReorderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         order = serializer.validated_data['order']
-        children = list(Module.objects.filter(course=course))
+        children = list(Module.objects.filter(course=course, is_deleted=False))
         if not is_exact_permutation(order, children):
             raise serializers.ValidationError(
                 {'order': ['must list every Module of the Course exactly once']}
@@ -376,7 +467,7 @@ class ModuleChaptersReorderView(APIView):
         serializer = ReorderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         order = serializer.validated_data['order']
-        children = list(Chapter.objects.filter(module=module))
+        children = list(Chapter.objects.filter(module=module, is_deleted=False))
         if not is_exact_permutation(order, children):
             raise serializers.ValidationError(
                 {'order': ['must list every Chapter of the Module exactly once']}
@@ -410,7 +501,7 @@ class ChapterLessonsReorderView(APIView):
         serializer = ReorderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         order = serializer.validated_data['order']
-        children = list(Lesson.objects.filter(chapter=chapter))
+        children = list(Lesson.objects.filter(chapter=chapter, is_deleted=False))
         if not is_exact_permutation(order, children):
             raise serializers.ValidationError(
                 {'order': ['must list every Lesson of the Chapter exactly once']}
@@ -459,3 +550,155 @@ class LessonMoveView(APIView):
             actor=request.user, lesson=lesson, target_chapter=target
         )
         return Response(LessonSerializer(moved).data)
+
+
+class CourseRemovalPreviewView(APIView):
+    """Preview what removing a Course would hide. Writes nothing."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: RemovalPreviewSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        return Response(build_removal_preview(course))
+
+
+class ModuleRemovalPreviewView(APIView):
+    """Preview what removing a Module would hide. Writes nothing."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: RemovalPreviewSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        return Response(build_removal_preview(module))
+
+
+class ChapterRemovalPreviewView(APIView):
+    """Preview what removing a Chapter would hide. Writes nothing."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: RemovalPreviewSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        return Response(build_removal_preview(chapter))
+
+
+class LessonRemovalPreviewView(APIView):
+    """Preview what removing a Lesson would hide. Writes nothing."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: RemovalPreviewSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        return Response(build_removal_preview(lesson))
+
+
+class CourseRestoreView(APIView):
+    """Restore a soft-deleted Course, and only it."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: CourseSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        restored = restore(actor=request.user, model=Course, node=course)
+        return Response(CourseSerializer(restored).data)
+
+
+class ModuleRestoreView(APIView):
+    """Restore a soft-deleted Module, and only it."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: ModuleSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        restored = restore(actor=request.user, model=Module, node=module)
+        return Response(ModuleSerializer(restored).data)
+
+
+class ChapterRestoreView(APIView):
+    """Restore a soft-deleted Chapter, and only it."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: ChapterSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        restored = restore(actor=request.user, model=Chapter, node=chapter)
+        return Response(ChapterSerializer(restored).data)
+
+
+class LessonRestoreView(APIView):
+    """Restore a soft-deleted Lesson, and only it."""
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: LessonSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        restored = restore(actor=request.user, model=Lesson, node=lesson)
+        return Response(LessonSerializer(restored).data)

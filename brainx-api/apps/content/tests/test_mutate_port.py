@@ -213,6 +213,43 @@ class SingleWritePathTests(ContentEndpointTestCase):
         self.assertEqual(module2.position, 2)
         self.assertEqual(lesson.chapter_id, self.chapter.pk)
 
+    def test_a_removal_and_a_restore_fail_when_the_port_is_unavailable(self):
+        live = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Live',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 1),
+            position=1,
+            last_modified_by=self.publisher,
+        )
+        deleted = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Deleted',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 2),
+            position=2,
+            is_deleted=True,
+            last_modified_by=self.publisher,
+        )
+
+        with mock.patch(
+            'apps.content.mutations.mutate',
+            side_effect=RuntimeError('mutate is unavailable'),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.publisher_client.delete(
+                    reverse('lesson-update', args=[live.pk])
+                )
+            with self.assertRaises(RuntimeError):
+                self.publisher_client.post(
+                    reverse('lesson-restore', args=[deleted.pk])
+                )
+
+        live.refresh_from_db()
+        deleted.refresh_from_db()
+        self.assertFalse(live.is_deleted)
+        self.assertTrue(deleted.is_deleted)
+
     def test_no_view_persists_a_row_without_the_port(self):
         # Each view is handed a valid but unsaved row in place of the port's
         # real result. If a view wrote a content row itself, a row would exist
@@ -342,6 +379,24 @@ class NoQuerysetUpdateTests(SimpleTestCase):
         for module in (views, mutations):
             with self.subTest(module=module.__name__):
                 self.assertEqual(self.calls_update(module), [])
+
+    def test_the_removal_helpers_delegate_every_write(self):
+        tree = ast.parse(Path(mutations.__file__).read_text(encoding='utf-8'))
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for name in ('remove', 'restore', 'reorder_children'):
+            with self.subTest(function=name):
+                called = {
+                    node.func.attr
+                    for node in ast.walk(functions[name])
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                }
+                self.assertNotIn('save', called)
+                self.assertNotIn('update', called)
 
 
 class MigrationBackfillTests(TransactionTestCase):
