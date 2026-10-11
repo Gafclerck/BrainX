@@ -1,12 +1,16 @@
-"""The create, update, reorder and move endpoints of the content tree.
+"""The create, list, update, reorder and move endpoints of the content tree.
 
-Each endpoint is Publisher-only and acts on exactly one level. The parent is
-resolved from the URL rather than the body, so a node can never be created
-under a parent other than the path names, and an unknown parent id is a 404
-before any row is written. `position` is assigned by the server on create (the
-next free slot under the parent); explicit ordering is this story's, through
-the reorder endpoints, which take a container's whole ordered child list, and
-the Lesson move endpoint, which relocates a single Lesson to another Chapter.
+Each endpoint is Publisher-only and acts on exactly one level. The four
+collection routes answer a `POST` with a create and a `GET` with the Publisher
+listing, which reads through `manageable()` (AD-2) so it includes rows a Student
+cannot see; the listing is page-number paginated by the project default. The
+parent is resolved from the URL rather than the body, so a node can never be
+created under a parent other than the path names, and an unknown parent id is a
+404 before any row is written. `position` is assigned by the server on create
+(the next free slot under the parent); explicit ordering is this story's,
+through the reorder endpoints, which take a container's whole ordered child
+list, and the Lesson move endpoint, which relocates a single Lesson to another
+Chapter.
 An update is a `PATCH` on the row's own UUID and writes only the fields the
 body carries, so a descriptive edit never touches `position` and never moves
 the row to a new parent. The write itself - row, actor stamp and all - belongs
@@ -18,6 +22,7 @@ itself.
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
+from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -88,10 +93,40 @@ def build_removal_preview(node):
     return RemovalPreviewSerializer(payload).data
 
 
-class CourseCreateView(APIView):
-    """Create a Course. The top level has no parent to resolve."""
+def list_response(view, queryset, serializer_class):
+    """A Publisher listing read through `manageable()`, paged by the default.
+
+    `queryset` is expected to be the output of `manageable()`, so soft-deleted
+    and unpublished rows are present. `view` supplies the project's page-number
+    paginator (20 per page, no `page_size` parameter); the response carries the
+    usual `count`/`next`/`previous`/`results` frame.
+    """
+    page = view.paginate_queryset(queryset)
+    serializer = serializer_class(
+        page, many=True, context={'request': view.request}
+    )
+    return view.get_paginated_response(serializer.data)
+
+
+class CourseCreateView(GenericAPIView):
+    """Create a Course, or list every Course. The top level has no parent."""
 
     permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: CourseSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request):
+        """List every Course, soft-deleted rows included."""
+        return list_response(
+            self,
+            Course.objects.manageable().select_related('last_modified_by'),
+            CourseSerializer,
+        )
 
     @extend_schema(
         request=CourseSerializer,
@@ -118,10 +153,29 @@ class CourseCreateView(APIView):
         )
 
 
-class ModuleCreateView(APIView):
-    """Create a Module under the Course named by the URL."""
+class ModuleCreateView(GenericAPIView):
+    """Create a Module under the Course named by the URL, or list them."""
 
     permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: ModuleSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, course_id):
+        """List the Course's Modules, soft-deleted rows included."""
+        course = get_object_or_404(Course.objects.manageable(), pk=course_id)
+        return list_response(
+            self,
+            Module.objects.manageable()
+            .select_related('last_modified_by')
+            .filter(course=course),
+            ModuleSerializer,
+        )
 
     @extend_schema(
         request=ModuleSerializer,
@@ -153,10 +207,29 @@ class ModuleCreateView(APIView):
         )
 
 
-class ChapterCreateView(APIView):
-    """Create a Chapter under the Module named by the URL."""
+class ChapterCreateView(GenericAPIView):
+    """Create a Chapter under the Module named by the URL, or list them."""
 
     permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: ChapterSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, module_id):
+        """List the Module's Chapters, soft-deleted rows included."""
+        module = get_object_or_404(Module.objects.manageable(), pk=module_id)
+        return list_response(
+            self,
+            Chapter.objects.manageable()
+            .select_related('last_modified_by')
+            .filter(module=module),
+            ChapterSerializer,
+        )
 
     @extend_schema(
         request=ChapterSerializer,
@@ -188,10 +261,31 @@ class ChapterCreateView(APIView):
         )
 
 
-class LessonCreateView(APIView):
-    """Create a Lesson under the Chapter named by the URL."""
+class LessonCreateView(GenericAPIView):
+    """Create a Lesson under the Chapter named by the URL, or list them."""
 
     permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: LessonSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, chapter_id):
+        """List the Chapter's Lessons, soft-deleted rows included."""
+        chapter = get_object_or_404(
+            Chapter.objects.manageable(), pk=chapter_id
+        )
+        return list_response(
+            self,
+            Lesson.objects.manageable()
+            .select_related('last_modified_by')
+            .filter(chapter=chapter),
+            LessonSerializer,
+        )
 
     @extend_schema(
         request=LessonSerializer,

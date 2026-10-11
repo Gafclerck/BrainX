@@ -22,18 +22,43 @@ from apps.core.models import TimeStampedModel, UUIDModel
 
 
 class ContentQuerySet(models.QuerySet):
-    """The set operations the content tree's own read and restore paths use.
+    """The two named read ports of the content tree (AD-2).
 
-    `with_deleted()` is the narrow selector of soft-deleted rows that the
-    restore path (Story 2.5) deliberately uses. The manager a content model
-    exposes is this queryset without that filter, so an ordinary read still
-    sees every row; hiding soft-deleted rows from Students belongs to the
-    named read ports of Story 2.6.
+    `visible()` is the Student port and the only Student entry point;
+    `manageable()` is the Publisher port and is reached only behind
+    `IsPublisher`. `with_deleted()` returns the soft-deleted rows alone as the
+    restore path's selector, and is not a third port.
+
+    The manager a content model exposes is this queryset without either port's
+    filter, so an ordinary read still sees every row; a read path names a port
+    when it needs the set that port defines.
     """
 
+    def visible(self):
+        """The Student port: live rows only.
+
+        Applies `is_deleted=False`. The `is_published=True` clause lands here
+        when Epic 4 introduces that axis; this story must not invent the
+        column, so every live row is visible until then.
+        """
+        return self.filter(is_deleted=False)
+
+    def manageable(self):
+        """The Publisher port: every row, soft-deleted rows included.
+
+        Reached only behind `IsPublisher`. The default manager is already
+        unfiltered, so this names the existing behaviour; the write paths keep
+        using the manager until they opt in.
+        """
+        return self.all()
+
     def with_deleted(self):
-        """The soft-deleted rows alone - the restore path's selector."""
-        return self.filter(is_deleted=True)
+        """The soft-deleted rows alone - the restore path's selector.
+
+        A sub-case of `manageable()`, which also selects these rows as part of
+        every row; this narrows that set to the deleted ones (Story 2.5).
+        """
+        return self.manageable().filter(is_deleted=True)
 
 
 class ContentNode(UUIDModel, TimeStampedModel):

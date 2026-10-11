@@ -221,6 +221,12 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
     'DEFAULT_PARSER_CLASSES': ['rest_framework.parsers.JSONParser'],
+    # Page-number pagination, fixed at 20 items (AR-24, NFR-3). The default
+    # `PageNumberPagination` exposes no `page_size` query parameter, so a
+    # client cannot ask for a variable page; `id` is the final tiebreak on
+    # every content ordering, which keeps a page stable across requests.
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     # One error envelope for every rejection: {type, title, status, detail, errors}
     'EXCEPTION_HANDLER': 'apps.core.exceptions.brainx_exception_handler',
