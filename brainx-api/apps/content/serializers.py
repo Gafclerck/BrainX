@@ -25,7 +25,7 @@ from rest_framework import serializers
 
 from apps.users.models import User
 
-from .models import Chapter, Course, Lesson, Module
+from .models import Chapter, Course, Lesson, Module, Resource
 
 
 class LastModifiedBySerializer(serializers.ModelSerializer):
@@ -122,6 +122,65 @@ class LessonSerializer(serializers.ModelSerializer):
             'updated_at',
         )
         read_only_fields = ('id', 'position', 'is_deleted', 'updated_at')
+
+
+class ResourceSerializer(serializers.ModelSerializer):
+    """Create or update a Resource; its Lesson comes from the URL, not a field.
+
+    One contract serves the attach (POST) and the metadata update (PATCH). The
+    parent link is never a field, so a Resource can only ever be created under
+    the Lesson the path names and an update cannot move it under another.
+    `type` carries the full four-value set so the read output is honest, but
+    the views reject a write whose `type` is `document` or `image` with a 400
+    naming `type`, because the file upload is Story 3.2's; `file` is read-only
+    for the same reason and is always null in this story's responses. `url` is
+    a plain field: stored and returned verbatim, validated at write by the
+    http(s) rule (`validate_http_url` on the model) and in the database by the
+    CHECK constraint. `is_deleted`, `last_modified_by` and `updated_at` are
+    server-owned, read-only like every other level's.
+    """
+
+    last_modified_by = LastModifiedBySerializer(read_only=True)
+
+    def validate(self, attrs):
+        # A URL-carrying type must have a URL, or the payload CHECK constraint
+        # would reject the row on write - here it is refused as a 400 naming
+        # `url` instead of a database error. On a partial update the existing
+        # row's URL counts, so editing only the title of a video Resource does
+        # not force the address to be re-sent.
+        if attrs.get('type') in ('video', 'external_link') and not attrs.get(
+            'url', getattr(self.instance, 'url', None)
+        ):
+            raise serializers.ValidationError(
+                {'url': ['a video or external_link Resource must carry a URL']}
+            )
+        # `type` is write-once: the per-type CHECK constraint would make a
+        # document-to-video transition a database error, and this story keeps
+        # the discriminator in the creation payload. Re-sending the row's own
+        # type is harmless and allowed.
+        if (
+            self.instance is not None
+            and attrs.get('type') not in (None, self.instance.type)
+        ):
+            raise serializers.ValidationError(
+                {'type': ['a Resource type cannot be changed']}
+            )
+        return attrs
+
+    class Meta:
+        model = Resource
+        fields = (
+            'id',
+            'type',
+            'title',
+            'note',
+            'file',
+            'url',
+            'is_deleted',
+            'last_modified_by',
+            'updated_at',
+        )
+        read_only_fields = ('id', 'file', 'is_deleted', 'updated_at')
 
 
 class RemovalPreviewItemSerializer(serializers.Serializer):

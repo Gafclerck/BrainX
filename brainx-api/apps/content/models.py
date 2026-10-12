@@ -1,4 +1,4 @@
-"""The four-level content tree: Course > Module > Chapter > Lesson (AD-1).
+"""The four-level content tree plus the material a Lesson carries (AD-1, Epic 3).
 
 Course, Module and Chapter are the same kind of node - a named container that
 holds an ordered position and a removal flag - so they share one abstract base.
@@ -8,7 +8,9 @@ flag it needs alongside its metadata.
 
 Containment is a real non-null foreign key, which is what makes an orphan node
 impossible at the database rather than only at the API. Identifiers come from
-`UUIDModel`, so no level is ever addressed by an integer or a slug.
+`UUIDModel`, so no level is ever addressed by an integer or a slug. Resource is
+the leaf level's material: one row per attached item, keyed to a Lesson only,
+discriminated by `type` and pinned to its payload by the database.
 
 Every row also records the account that last changed it (Story 2.2). The stamp
 lives on the row, never as a single author field shared by the tree, so a
@@ -16,9 +18,27 @@ second Publisher is a permission change rather than a data migration.
 """
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.core.models import TimeStampedModel, UUIDModel
+
+
+def validate_http_url(value):
+    """Reject a URL that does not begin http:// or https://, case-insensitively.
+
+    The `resource_url_is_http` CHECK constraint enforces the same rule in the
+    database, so an invalid URL is refused however it was written; this
+    validator is the model-level half of the same contract. Empty values are
+    skipped, because the payload CHECK constraint decides which type may carry
+    a URL at all - a document or image row must not need one.
+    """
+    if not value:
+        return
+    if not str(value).lower().startswith(('http://', 'https://')):
+        raise ValidationError(
+            'Enter a URL beginning with http:// or https:// (case-insensitive).'
+        )
 
 
 class ContentQuerySet(models.QuerySet):
@@ -187,6 +207,89 @@ class Lesson(UUIDModel, TimeStampedModel):
                 fields=('chapter', 'position'),
                 name='unique_lesson_position_per_chapter',
             )
+        ]
+
+    def __str__(self):
+        return self.title
+
+
+class Resource(UUIDModel, TimeStampedModel):
+    """The material a Lesson carries, one typed row per attached item (Epic 3).
+
+    `type` is the closed Glossary set - `document`, `image`, `video`,
+    `external_link` - and decides which payload the row may carry: a document
+    or image is a file, a video or external link is a URL. Two CHECK
+    constraints make the mismatch a database error (Story 3.1): one ties the
+    payload present to the type, the other requires a stored URL to begin
+    http(s):// case-insensitively, so a `javascript:` or `data:` address is
+    refused however it was written. `validate_http_url` enforces the same rule
+    at model validation.
+
+    The row keys to a Lesson only, by a real non-null FK, and carries the same
+    soft-removal flag and actor stamp as the tree levels. `is_deleted` ships
+    because Resource is on the removal axis (AR-8), but nothing sets it until
+    Story 3.5. `file` exists so the CHECK constraint and Story 3.2 share one
+    table; this story never stores one. `url` is a plain field stored and
+    returned verbatim, never interpolated into markup. Rows order by `id` -
+    there is no `position`, so no reorder route exists.
+    """
+
+    class Type(models.TextChoices):
+        DOCUMENT = 'document', 'Document'
+        IMAGE = 'image', 'Image'
+        VIDEO = 'video', 'Video'
+        EXTERNAL_LINK = 'external_link', 'External link'
+
+    lesson = models.ForeignKey(
+        Lesson,
+        on_delete=models.CASCADE,
+        related_name='resources',
+    )
+    type = models.CharField(max_length=32, choices=Type.choices)
+    title = models.CharField(max_length=255)
+    note = models.TextField(blank=True, default='')
+    file = models.FileField(upload_to='resources/%Y/%m/', null=True, blank=True)
+    url = models.CharField(
+        max_length=2048,
+        null=True,
+        blank=True,
+        validators=[validate_http_url],
+    )
+    is_deleted = models.BooleanField(default=False)
+    # PROTECT: an account that has touched content cannot be deleted, so the
+    # audit trail is never cascaded away.
+    last_modified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='%(app_label)s_%(class)s_last_modified_by',
+    )
+
+    objects = ContentQuerySet.as_manager()
+
+    class Meta:
+        ordering = ('id',)
+        constraints = [
+            models.CheckConstraint(
+                name='resource_payload_matches_type',
+                condition=(
+                    models.Q(type__in=('document', 'image'))
+                    & ~(models.Q(file__isnull=True) | models.Q(file=''))
+                    & (models.Q(url__isnull=True) | models.Q(url=''))
+                )
+                | (
+                    models.Q(type__in=('video', 'external_link'))
+                    & (models.Q(file__isnull=True) | models.Q(file=''))
+                    & ~(models.Q(url__isnull=True) | models.Q(url=''))
+                ),
+            ),
+            models.CheckConstraint(
+                name='resource_url_is_http',
+                condition=(
+                    models.Q(url__isnull=True)
+                    | models.Q(url='')
+                    | models.Q(url__iregex=r'^https?://')
+                ),
+            ),
         ]
 
     def __str__(self):

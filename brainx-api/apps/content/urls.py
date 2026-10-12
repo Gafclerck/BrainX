@@ -14,6 +14,7 @@ from .views import (
     LessonCreateView,
     LessonMoveView,
     LessonRemovalPreviewView,
+    LessonResourcesView,
     LessonRestoreView,
     LessonUpdateView,
     ModuleChaptersReorderView,
@@ -21,6 +22,7 @@ from .views import (
     ModuleRemovalPreviewView,
     ModuleRestoreView,
     ModuleUpdateView,
+    ResourceUpdateView,
 )
 
 # Flat by default; a child nests one level under its immediate parent, because
@@ -104,6 +106,16 @@ urlpatterns = [
         'lessons/<uuid:lesson_id>/restore/',
         LessonRestoreView.as_view(),
         name='lesson-restore',
+    ),
+    path(
+        'lessons/<uuid:lesson_id>/resources/',
+        LessonResourcesView.as_view(),
+        name='resource-create',
+    ),
+    path(
+        'resources/<uuid:resource_id>/',
+        ResourceUpdateView.as_view(),
+        name='resource-update',
     ),
     path(
         'courses/<uuid:course_id>/modules/order/',

@@ -29,7 +29,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import IsPublisher
 
-from .models import Chapter, Course, Lesson, Module
+from .models import Chapter, Course, Lesson, Module, Resource
 from .mutations import (
     LEVEL_NAMES,
     move_lesson,
@@ -48,6 +48,7 @@ from .serializers import (
     ModuleSerializer,
     RemovalPreviewSerializer,
     ReorderSerializer,
+    ResourceSerializer,
 )
 
 # The five-key envelope every rejection uses, described locally so each
@@ -70,6 +71,22 @@ def is_exact_permutation(order, children):
     """True when `order` lists every `children` id exactly once."""
     ids = {child.pk for child in children}
     return len(order) == len(children) and set(order) == ids
+
+
+def reject_file_resource_write(payload):
+    """Reject a Resource write whose `type` is `document` or `image`.
+
+    Runs in the view before serializer validation so the rejection names
+    `type` whatever else the body carries, because the file upload and its
+    limits are Story 3.2's (Q1). A body that omits `type` - a metadata PATCH -
+    is left alone. A `type` shaped so oddly the tuple membership cannot read
+    it falls through to the serializer, which rejects it naming `type` too.
+    """
+    if payload.get('type') in ('document', 'image'):
+        raise serializers.ValidationError(
+            {'type': ['attach a video or an external_link - document and '
+                      'image upload is Story 3.2']}
+        )
 
 
 def build_removal_preview(node):
@@ -318,6 +335,105 @@ class LessonCreateView(GenericAPIView):
         return Response(
             LessonSerializer(lesson).data, status=status.HTTP_201_CREATED
         )
+
+
+class LessonResourcesView(GenericAPIView):
+    """Attach a Resource to the Lesson named by the URL, or list its Resources.
+
+    The parent is resolved from the URL, so a Resource can never be attached
+    under another Lesson than the path names, and an unknown Lesson id is a
+    404 before any row is written. The attach surface is the URL-bearing
+    types - `video` and `external_link`; a write whose `type` is `document`
+    or `image` is rejected with a 400 naming `type`. The write goes through
+    `mutate` like every other content row, so the acting Publisher is stamped
+    and `is_deleted` stays server-owned. The listing reads through
+    `manageable()` like every other Publisher listing, and Resources order by
+    `id`.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: ResourceSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        """List the Lesson's Resources, soft-deleted rows included."""
+        lesson = get_object_or_404(Lesson.objects.manageable(), pk=lesson_id)
+        return list_response(
+            self,
+            Resource.objects.manageable()
+            .select_related('last_modified_by')
+            .filter(lesson=lesson),
+            ResourceSerializer,
+        )
+
+    @extend_schema(
+        request=ResourceSerializer,
+        responses={
+            201: ResourceSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        reject_file_resource_write(request.data)
+        serializer = ResourceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        resource = mutate(
+            actor=request.user,
+            model=Resource,
+            data={**serializer.validated_data, 'lesson': lesson},
+        )
+        return Response(
+            ResourceSerializer(resource).data, status=status.HTTP_201_CREATED
+        )
+
+
+class ResourceUpdateView(APIView):
+    """Edit a Resource's metadata, addressed by its own UUID.
+
+    A partial update leaves an omitted field alone. `type`, `title`, `note`
+    and `url` are editable here, still under the story's gates: a write whose
+    `type` is `document` or `image` is still rejected 400 naming `type`, and
+    `url` still has to be an http(s) address, because the database CHECK
+    constraints make a payload that contradicts its type an error however the
+    row was written. The write goes through `mutate`, never a direct save.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=ResourceSerializer,
+        responses={
+            200: ResourceSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, resource_id):
+        resource = get_object_or_404(Resource, pk=resource_id)
+        reject_file_resource_write(request.data)
+        serializer = ResourceSerializer(
+            resource, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        resource = mutate(
+            actor=request.user,
+            model=Resource,
+            instance=resource,
+            data=serializer.validated_data,
+        )
+        return Response(ResourceSerializer(resource).data)
 
 
 class CourseUpdateView(APIView):
