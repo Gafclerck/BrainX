@@ -48,7 +48,9 @@ class ContentQuerySet(models.QuerySet):
 
         Reached only behind `IsPublisher`. The default manager is already
         unfiltered, so this names the existing behaviour; the write paths keep
-        using the manager until they opt in.
+        using the manager until they opt in. It does not clear a filter already
+        on the queryset, so "every row" means every row of the set it is
+        called on.
         """
         return self.all()
 

@@ -97,7 +97,7 @@ def list_response(view, queryset, serializer_class):
     """A Publisher listing read through `manageable()`, paged by the default.
 
     `queryset` is expected to be the output of `manageable()`, so soft-deleted
-    and unpublished rows are present. `view` supplies the project's page-number
+    rows are present. `view` supplies the project's page-number
     paginator (20 per page, no `page_size` parameter); the response carries the
     usual `count`/`next`/`previous`/`results` frame.
     """
@@ -118,6 +118,9 @@ class CourseCreateView(GenericAPIView):
             200: CourseSerializer(many=True),
             401: ENVELOPE_RESPONSE,
             403: ENVELOPE_RESPONSE,
+            # The page parameter is the only 404 source here: there is no
+            # parent to resolve, but an invalid or out-of-range page is not.
+            404: ENVELOPE_RESPONSE,
         },
     )
     def get(self, request):

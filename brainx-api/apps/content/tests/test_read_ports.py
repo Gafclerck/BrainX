@@ -207,7 +207,9 @@ class PublisherListingTests(ReadPortTestCase):
             self.deleted_chapter.pk,
             self.deleted_lesson.pk,
         )
-        for url, deleted_id in zip(self.listing_urls(), deleted_ids):
+        for url, deleted_id in zip(
+            self.listing_urls(), deleted_ids, strict=True
+        ):
             with self.subTest(url=url):
                 response = self.publisher_client.get(url)
                 identifiers = {
@@ -365,30 +367,39 @@ class PaginationBehaviourTests(ReadPortTestCase):
         for url, model, scoped in self.listing_specs():
             with self.subTest(model=model.__name__):
                 total = scoped.count()
-                self.assertEqual(total, 21)
+                self.assertGreater(total, 20)
 
                 first = self.publisher_client.get(url).json()
                 self.assertEqual(first['count'], total)
                 self.assertEqual(len(first['results']), 20)
                 self.assertIsNotNone(first['next'])
+                first_ids = {row['id'] for row in first['results']}
 
                 second = self.publisher_client.get(url, {'page': 2}).json()
                 self.assertEqual(len(second['results']), total - 20)
                 self.assertIsNone(second['next'])
+                second_ids = {row['id'] for row in second['results']}
+
+                # The two pages must be disjoint and together cover the set,
+                # so a duplicated or dropped row across the boundary fails.
+                self.assertFalse(first_ids & second_ids)
+                self.assertEqual(len(first_ids | second_ids), total)
 
     def test_a_page_size_parameter_cannot_change_the_page(self):
-        Course.objects.create(
-            name='Second',
-            subject='X',
-            position=2,
-            last_modified_by=self.publisher,
-        )
+        # More rows than one page, so ignoring `page_size` (fixed at 20) is
+        # distinguishable from pagination being absent altogether.
+        for position in range(3, 26):
+            Course.objects.create(
+                name=f'Course {position}',
+                subject='X',
+                position=position,
+                last_modified_by=self.publisher,
+            )
         response = self.publisher_client.get(
             self.listing_urls()[0], {'page_size': 1}
         )
-        self.assertEqual(
-            len(response.json()['results']), Course.objects.count()
-        )
+        self.assertEqual(len(response.json()['results']), 20)
+        self.assertGreater(Course.objects.count(), 20)
 
     def test_an_invalid_page_is_a_not_found_envelope(self):
         for bad_page in ('0', '999', 'abc'):
