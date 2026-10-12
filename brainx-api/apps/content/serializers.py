@@ -146,13 +146,24 @@ class ResourceSerializer(serializers.ModelSerializer):
         # A URL-carrying type must have a URL, or the payload CHECK constraint
         # would reject the row on write - here it is refused as a 400 naming
         # `url` instead of a database error. On a partial update the existing
-        # row's URL counts, so editing only the title of a video Resource does
-        # not force the address to be re-sent.
-        if attrs.get('type') in ('video', 'external_link') and not attrs.get(
+        # row's URL counts, and so does its type: editing only the title of a
+        # video Resource is fine, but clearing its `url` is refused here as a
+        # 400 rather than surfacing the database constraint as a 500. The
+        # mirror holds too: a file type must not gain a URL, or the same
+        # constraint would trip.
+        resource_type = attrs.get('type', getattr(self.instance, 'type', None))
+        if resource_type in ('video', 'external_link') and not attrs.get(
             'url', getattr(self.instance, 'url', None)
         ):
             raise serializers.ValidationError(
                 {'url': ['a video or external_link Resource must carry a URL']}
+            )
+        if (
+            resource_type in ('document', 'image')
+            and attrs.get('url') not in (None, '')
+        ):
+            raise serializers.ValidationError(
+                {'url': ['a document or image Resource cannot carry a URL']}
             )
         # `type` is write-once: the per-type CHECK constraint would make a
         # document-to-video transition a database error, and this story keeps

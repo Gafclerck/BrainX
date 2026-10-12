@@ -79,10 +79,13 @@ def reject_file_resource_write(payload):
     Runs in the view before serializer validation so the rejection names
     `type` whatever else the body carries, because the file upload and its
     limits are Story 3.2's (Q1). A body that omits `type` - a metadata PATCH -
-    is left alone. A `type` shaped so oddly the tuple membership cannot read
-    it falls through to the serializer, which rejects it naming `type` too.
+    is left alone. A body that is not an object, or a `type` shaped so oddly
+    the tuple membership cannot read it, falls through to the serializer,
+    which rejects it with a 400 naming `type` (or the shape error) too.
     """
-    if payload.get('type') in ('document', 'image'):
+    if isinstance(payload, dict) and payload.get('type') in (
+        'document', 'image'
+    ):
         raise serializers.ValidationError(
             {'type': ['attach a video or an external_link - document and '
                       'image upload is Story 3.2']}

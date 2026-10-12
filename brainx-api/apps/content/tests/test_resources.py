@@ -292,6 +292,31 @@ class AttachTests(ResourceEndpointTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['count'], 2)
 
+    def test_the_listing_is_scoped_to_the_path_lesson(self):
+        other_lesson = Lesson.objects.create(
+            chapter=self.chapter,
+            title='Parallel',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 2),
+            position=2,
+            last_modified_by=self.publisher,
+        )
+        self.publisher_client.post(
+            self.resources_url(), VIDEO_PAYLOAD, format='json'
+        )
+        self.publisher_client.post(
+            self.resources_url(other_lesson), VIDEO_PAYLOAD, format='json'
+        )
+
+        response = self.publisher_client.get(self.resources_url())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        # Both rows exist; the listing shows only the path Lesson's one.
+        self.assertEqual(Resource.objects.count(), 2)
+        self.assertEqual(body['count'], 1)
+        self.assertEqual(body['results'][0]['title'], 'Intro video')
+
     def test_the_attach_views_write_through_the_port(self):
         with mock.patch(
             'apps.content.views.mutate',
@@ -381,6 +406,21 @@ class DocumentImageWriteTests(ResourceEndpointTestCase):
         self.assertIn('type', body['errors'])
         self.assertEqual(Resource.objects.count(), 0)
 
+    def test_a_non_object_body_is_a_400_not_a_500(self):
+        # The pre-serializer `type` guard must not reach into a body that is
+        # JSON but not an object and crash; DRF's own shape/required errors or
+        # the serializer's shape error answer it as a 400 either way.
+        for payload in (None, [], 'video'):
+            with self.subTest(body=payload):
+                response = self.publisher_client.post(
+                    self.resources_url(), payload, format='json'
+                )
+                envelope = assert_envelope(
+                    self, response, 'validation_error', 400
+                )
+                self.assertTrue(envelope['errors'])
+        self.assertEqual(Resource.objects.count(), 0)
+
 
 class UrlValidationTests(ResourceEndpointTestCase):
     def setUp(self):
@@ -419,6 +459,43 @@ class UrlValidationTests(ResourceEndpointTestCase):
                 self.assertIn('url', body['errors'])
         self.resource.refresh_from_db()
         self.assertEqual(self.resource.url, 'https://videos.example.com/intro')
+
+    def test_clearing_the_url_of_a_url_type_is_rejected_and_named(self):
+        # Without this, clearing the address would trip the database CHECK
+        # constraint on save and surface as a 500 instead of the 400 naming
+        # `url` every other violation gets.
+        for cleared in ('', None):
+            with self.subTest(url=cleared):
+                response = self.publisher_client.patch(
+                    self.resource_url(self.resource), {'url': cleared},
+                    format='json',
+                )
+                body = assert_envelope(
+                    self, response, 'validation_error', 400
+                )
+                self.assertIn('url', body['errors'])
+        self.resource.refresh_from_db()
+        self.assertEqual(self.resource.url, 'https://videos.example.com/intro')
+
+    def test_a_url_on_a_file_type_is_rejected_and_named(self):
+        document = Resource.objects.create(
+            lesson=self.lesson,
+            type='document',
+            title='Deck',
+            file='notes.pdf',
+            last_modified_by=self.publisher,
+        )
+
+        response = self.publisher_client.patch(
+            self.resource_url(document),
+            {'url': 'https://files.example.com/deck'},
+            format='json',
+        )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('url', body['errors'])
+        document.refresh_from_db()
+        self.assertIsNone(document.url)
 
 
 class MetadataUpdateTests(ResourceEndpointTestCase):
