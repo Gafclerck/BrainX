@@ -26,6 +26,14 @@ The deployment contract the code enforces or assumes. Keep it in sync with
 - **Managed Redis.** The channel layer points at a managed Redis
   (`CHANNEL_REDIS_URL`, `channels_redis`), with `socket_timeout: None` on every
   host for the redis-py 8.x blocking-read workaround.
+- **Upload caps.** The edge is the only pre-parse bound: it must reject a
+  request body over 50 MB. In process, `DATA_UPLOAD_MAX_MEMORY_SIZE` (50 MB)
+  caps the non-file body and `FILE_UPLOAD_MAX_MEMORY_SIZE` (2.5 MB, Django's
+  default) only decides when an upload spools from memory to a temp file -
+  neither rejects a file. The Resource serializer is the authoritative per-file
+  cap, checking the 50 MB ceiling and the per-type extension allowlist once the
+  body has been read. Stored documents and images cannot be fetched back
+  through the API in this version; authenticated retrieval is a later story.
 - **Migrations at release.** Migrations are applied during release, never at
   build: the process that serves traffic is not the process that migrates.
 - **Secret hygiene.** `SECRET_KEY` has no default and is read from the

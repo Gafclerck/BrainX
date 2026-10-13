@@ -23,6 +23,7 @@ from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -73,23 +74,35 @@ def is_exact_permutation(order, children):
     return len(order) == len(children) and set(order) == ids
 
 
-def reject_file_resource_write(payload):
-    """Reject a Resource write whose `type` is `document` or `image`.
+def resource_write_parsers():
+    """The parsers a Resource write action accepts.
 
-    Runs in the view before serializer validation so the rejection names
-    `type` whatever else the body carries, because the file upload and its
-    limits are Story 3.2's (Q1). A body that omits `type` - a metadata PATCH -
-    is left alone. A body that is not an object, or a `type` shaped so oddly
-    the tuple membership cannot read it, falls through to the serializer,
-    which rejects it with a 400 naming `type` (or the shape error) too.
+    The project's default parser list stays JSON-only; only the two Resource
+    write actions add a multipart form so a file can ride alongside the fields,
+    and JSON keeps working there for the URL-bearing types.
     """
-    if isinstance(payload, dict) and payload.get('type') in (
-        'document', 'image'
-    ):
-        raise serializers.ValidationError(
-            {'type': ['attach a video or an external_link - document and '
-                      'image upload is Story 3.2']}
-        )
+    return [JSONParser(), MultiPartParser(), FormParser()]
+
+
+class MultipartWriteMixin:
+    """Adds the multipart parsers to the named write actions only.
+
+    `get_parsers` runs inside `initialize_request`, before DRF assigns
+    `self.request`, so the method is stashed there - which also lets the schema
+    generator, which builds a request the same way, see the right parsers per
+    action. A GET or any action not named keeps the project's JSON-only default.
+    """
+
+    multipart_actions = ()
+
+    def initialize_request(self, request, *args, **kwargs):
+        self._http_method = request.method
+        return super().initialize_request(request, *args, **kwargs)
+
+    def get_parsers(self):
+        if getattr(self, '_http_method', None) in self.multipart_actions:
+            return resource_write_parsers()
+        return super().get_parsers()
 
 
 def build_removal_preview(node):
@@ -340,21 +353,22 @@ class LessonCreateView(GenericAPIView):
         )
 
 
-class LessonResourcesView(GenericAPIView):
+class LessonResourcesView(MultipartWriteMixin, GenericAPIView):
     """Attach a Resource to the Lesson named by the URL, or list its Resources.
 
     The parent is resolved from the URL, so a Resource can never be attached
     under another Lesson than the path names, and an unknown Lesson id is a
-    404 before any row is written. The attach surface is the URL-bearing
-    types - `video` and `external_link`; a write whose `type` is `document`
-    or `image` is rejected with a 400 naming `type`. The write goes through
-    `mutate` like every other content row, so the acting Publisher is stamped
-    and `is_deleted` stays server-owned. The listing reads through
-    `manageable()` like every other Publisher listing, and Resources order by
-    `id`.
+    404 before any row is written. Both payload shapes are accepted here: a
+    `video` or `external_link` arrives as JSON with a `url`, a `document` or
+    `image` arrives as multipart with a `file` that the serializer checks
+    against the settings ceiling and allowlist. The write goes through `mutate`
+    like every other content row, so the acting Publisher is stamped and
+    `is_deleted` stays server-owned. The listing reads through `manageable()`
+    like every other Publisher listing, and Resources order by `id`.
     """
 
     permission_classes = [IsAuthenticated, IsPublisher]
+    multipart_actions = ('POST',)
 
     @extend_schema(
         responses={
@@ -387,7 +401,6 @@ class LessonResourcesView(GenericAPIView):
     )
     def post(self, request, lesson_id):
         lesson = get_object_or_404(Lesson, pk=lesson_id)
-        reject_file_resource_write(request.data)
         serializer = ResourceSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         resource = mutate(
@@ -400,18 +413,19 @@ class LessonResourcesView(GenericAPIView):
         )
 
 
-class ResourceUpdateView(APIView):
+class ResourceUpdateView(MultipartWriteMixin, APIView):
     """Edit a Resource's metadata, addressed by its own UUID.
 
-    A partial update leaves an omitted field alone. `type`, `title`, `note`
-    and `url` are editable here, still under the story's gates: a write whose
-    `type` is `document` or `image` is still rejected 400 naming `type`, and
-    `url` still has to be an http(s) address, because the database CHECK
-    constraints make a payload that contradicts its type an error however the
-    row was written. The write goes through `mutate`, never a direct save.
+    A partial update leaves an omitted field alone. `title`, `note` and `url`
+    are editable here, and `url` still has to be an http(s) address, because
+    the database CHECK constraints make a payload that contradicts its type an
+    error however the row was written. The update is metadata-only: unlike the
+    create action it accepts no new file, and a body carrying one is a 400
+    naming `file`. The write goes through `mutate`, never a direct save.
     """
 
     permission_classes = [IsAuthenticated, IsPublisher]
+    multipart_actions = ('PATCH',)
 
     @extend_schema(
         request=ResourceSerializer,
@@ -425,7 +439,6 @@ class ResourceUpdateView(APIView):
     )
     def patch(self, request, resource_id):
         resource = get_object_or_404(Resource, pk=resource_id)
-        reject_file_resource_write(request.data)
         serializer = ResourceSerializer(
             resource, data=request.data, partial=True
         )

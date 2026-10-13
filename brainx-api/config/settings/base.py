@@ -207,6 +207,24 @@ else:
         'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
     }
 
+# Resource uploads (Story 3.2). One ceiling and one per-type extension allowlist,
+# read by the Resource serializer; no endpoint hardcodes a limit or an extension.
+# The extension is a convenience filter, not a claim the stored bytes are safe.
+RESOURCE_FILE_MAX_BYTES = 50 * 1024 * 1024
+RESOURCE_FILE_EXTENSIONS = {
+    'document': ('.pdf',),
+    'image': ('.png', '.jpg', '.jpeg', '.webp'),
+}
+
+# Upload enforcement is layered, and only the last layer rejects a file.
+# DATA_UPLOAD_MAX_MEMORY_SIZE bounds the non-file part of a request body;
+# FILE_UPLOAD_MAX_MEMORY_SIZE (Django's default) is the memory-vs-tempfile
+# spool threshold and caps nothing - past it an upload streams to a temp file.
+# The serializer's per-file check is the authoritative 50 MB cap, and the edge
+# body cap is recorded in the README's operational envelope.
+DATA_UPLOAD_MAX_MEMORY_SIZE = RESOURCE_FILE_MAX_BYTES
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2.5 * 1024 * 1024
+
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 CORS_ALLOW_CREDENTIALS = True

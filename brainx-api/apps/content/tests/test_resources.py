@@ -1,21 +1,25 @@
-"""The Resource model, the attach endpoint and its gates (Story 3.1).
+"""The Resource model, the write endpoints and their gates (Stories 3.1-3.2).
 
 A Resource is the material a Lesson carries: one typed row (`document`,
 `image`, `video`, `external_link`) keyed to a Lesson only, whose payload is
-pinned to its type by two database CHECK constraints. This story ships the
-URL-bearing attach surface (`video` and `external_link`) only; a `document`
-or `image` write is a 400 naming `type`, because the file upload is Story
-3.2's. Every write goes through `mutate`, so the acting Publisher is stamped.
+pinned to its type by two database CHECK constraints. The URL-bearing types
+(`video`, `external_link`) arrive as JSON; the file types (`document`, `image`)
+arrive as multipart on the create action, with the file checked against the
+settings ceiling and per-type extension allowlist. Every write goes through
+`mutate`, so the acting Publisher is stamped.
 """
 
+import os
+import tempfile
 import uuid
 from datetime import date
 from unittest import mock
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, models, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
 
@@ -207,7 +211,9 @@ class AttachTests(ResourceEndpointTestCase):
         self.assertEqual(body['type'], 'video')
         self.assertEqual(body['title'], 'Intro video')
         self.assertEqual(body['note'], 'Watch first')
-        self.assertIsNone(body['file'])
+        # `file` is write-only: it is never serialized, so no storage URL
+        # leaves the API.
+        self.assertNotIn('file', body)
         self.assertFalse(body['is_deleted'])
         self.assertEqual(
             body['last_modified_by'],
@@ -356,60 +362,369 @@ class AttachTests(ResourceEndpointTestCase):
         assert_envelope(self, response, 'not_found', 404)
 
 
-class DocumentImageWriteTests(ResourceEndpointTestCase):
-    """The file types are Story 3.2's surface: 400 naming `type` (Q1, AC 4)."""
+def uploaded(name, content=b'file-bytes'):
+    """A file part for a multipart request; only its name and size matter."""
+    return SimpleUploadedFile(name, content)
 
-    def test_a_document_or_image_write_is_rejected_and_names_type(self):
-        for resource_type in ('document', 'image'):
-            with self.subTest(type=resource_type):
+
+class ResourceUploadTests(ResourceEndpointTestCase):
+    """The file-bearing types upload through the create action (Story 3.2).
+
+    A `document` or `image` write carries a `file` on a multipart request; the
+    serializer requires it, checks it against the single settings ceiling and
+    per-type extension allowlist, and refuses a file on an update. The URL
+    types keep working as JSON (AC 1-4, 7-8).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Save uploads to a throwaway directory and reset Django's cached
+        # default storage, so no test writes into the checkout's media/ folder.
+        cls._uploads = tempfile.TemporaryDirectory()
+        cls.enterClassContext(
+            override_settings(
+                STORAGES={
+                    'default': {
+                        'BACKEND': (
+                            'django.core.files.storage.FileSystemStorage'
+                        ),
+                        'OPTIONS': {'location': cls._uploads.name},
+                    },
+                    'staticfiles': {
+                        'BACKEND': (
+                            'django.contrib.staticfiles.storage.'
+                            'StaticFilesStorage'
+                        ),
+                    },
+                }
+            )
+        )
+        cls.addClassCleanup(cls._uploads.cleanup)
+
+    def test_a_publisher_uploads_a_document(self):
+        response = self.publisher_client.post(
+            self.resources_url(),
+            {'type': 'document', 'title': 'Deck', 'file': uploaded('notes.pdf')},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body['type'], 'document')
+        self.assertEqual(body['title'], 'Deck')
+        self.assertIsNone(body['url'])
+        self.assertNotIn('file', body)
+        self.assertEqual(
+            body['last_modified_by'],
+            {'id': str(self.publisher.id), 'email': self.publisher.email},
+        )
+
+        row = Resource.objects.get(pk=body['id'])
+        self.assertEqual(row.lesson, self.lesson)
+        self.assertEqual(row.last_modified_by, self.publisher)
+        self.assertTrue(row.file.name.endswith('.pdf'))
+        # upload_to='resources/%Y/%m/' keeps every file under resources/.
+        self.assertTrue(row.file.name.startswith('resources/'))
+
+    def test_every_allowed_extension_is_accepted_for_its_type(self):
+        cases = (
+            ('document', 'notes.pdf'),
+            ('image', 'photo.png'),
+            ('image', 'photo.jpg'),
+            ('image', 'photo.jpeg'),
+            ('image', 'photo.webp'),
+        )
+        for resource_type, name in cases:
+            with self.subTest(type=resource_type, name=name):
                 response = self.publisher_client.post(
                     self.resources_url(),
-                    {'type': resource_type, 'title': 'File'},
-                    format='json',
+                    {'type': resource_type, 'title': name,
+                     'file': uploaded(name)},
+                    format='multipart',
                 )
-                body = assert_envelope(
-                    self, response, 'validation_error', 400
-                )
-                self.assertIn('type', body['errors'])
-                self.assertEqual(Resource.objects.count(), 0)
+                self.assertEqual(response.status_code, 201)
+                row = Resource.objects.get(pk=response.json()['id'])
+                extension = '.' + name.rsplit('.', 1)[-1]
+                self.assertTrue(row.file.name.lower().endswith(extension))
+                self.assertTrue(row.file.name.startswith('resources/'))
 
-    def test_an_update_to_document_or_image_is_rejected_and_names_type(self):
-        resource = Resource.objects.create(
+    def test_the_ceiling_and_allowlist_are_defined_once_in_settings(self):
+        self.assertEqual(settings.RESOURCE_FILE_MAX_BYTES, 50 * 1024 * 1024)
+        self.assertEqual(
+            settings.RESOURCE_FILE_EXTENSIONS['document'], ('.pdf',)
+        )
+        self.assertEqual(
+            set(settings.RESOURCE_FILE_EXTENSIONS['image']),
+            {'.png', '.jpg', '.jpeg', '.webp'},
+        )
+        # The request-body ceiling rides the file ceiling, and the spool
+        # threshold keeps Django's default; the README documents both.
+        self.assertEqual(
+            settings.DATA_UPLOAD_MAX_MEMORY_SIZE,
+            settings.RESOURCE_FILE_MAX_BYTES,
+        )
+        self.assertEqual(
+            settings.FILE_UPLOAD_MAX_MEMORY_SIZE, 2.5 * 1024 * 1024
+        )
+
+    def test_a_file_over_the_ceiling_is_rejected_and_named(self):
+        # The bound is read from settings, so an 8-byte ceiling exercises the
+        # same code path a 50 MB file would, without allocating one.
+        with override_settings(RESOURCE_FILE_MAX_BYTES=8):
+            response = self.publisher_client.post(
+                self.resources_url(),
+                {'type': 'document', 'title': 'Deck',
+                 'file': uploaded('notes.pdf', b'0123456789')},
+                format='multipart',
+            )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('file', body['errors'])
+        self.assertEqual(Resource.objects.count(), 0)
+
+    def test_a_file_outside_its_type_allowlist_is_rejected_and_named(self):
+        for resource_type, name in (
+            ('document', 'notes.docx'),
+            ('document', 'photo.png'),
+            ('image', 'photo.gif'),
+        ):
+            with self.subTest(type=resource_type, name=name):
+                response = self.publisher_client.post(
+                    self.resources_url(),
+                    {'type': resource_type, 'title': 'File',
+                     'file': uploaded(name)},
+                    format='multipart',
+                )
+                body = assert_envelope(self, response, 'validation_error', 400)
+                self.assertIn('file', body['errors'])
+        self.assertEqual(Resource.objects.count(), 0)
+
+    def test_a_file_exactly_at_the_ceiling_is_accepted(self):
+        # The boundary belongs to the accepted side: only a size *over* the
+        # ceiling is rejected, so the check stays a strict `>`.
+        with override_settings(RESOURCE_FILE_MAX_BYTES=8):
+            response = self.publisher_client.post(
+                self.resources_url(),
+                {'type': 'document', 'title': 'Deck',
+                 'file': uploaded('notes.pdf', b'12345678')},
+                format='multipart',
+            )
+
+        self.assertEqual(response.status_code, 201)
+        row = Resource.objects.get(pk=response.json()['id'])
+        self.assertEqual(row.file.size, 8)
+
+    def test_extension_matching_edges(self):
+        # The allowlist matches the lowercased filename extension: an uppercase
+        # suffix passes, a bare name and a trailing-dot name do not.
+        for name, expected in (
+            ('NOTES.PDF', 201),
+            ('notes', 400),
+            ('notes.', 400),
+        ):
+            with self.subTest(name=name):
+                response = self.publisher_client.post(
+                    self.resources_url(),
+                    {'type': 'document', 'title': 'Deck',
+                     'file': uploaded(name)},
+                    format='multipart',
+                )
+                self.assertEqual(response.status_code, expected)
+                if expected == 400:
+                    body = assert_envelope(
+                        self, response, 'validation_error', 400
+                    )
+                    self.assertIn('file', body['errors'])
+        self.assertEqual(Resource.objects.count(), 1)
+
+    def test_the_oversize_message_reports_bytes_below_one_mib(self):
+        # Below 1 MiB the ceiling is rendered in bytes, not as a misleading
+        # "0 MB".
+        with override_settings(RESOURCE_FILE_MAX_BYTES=8):
+            response = self.publisher_client.post(
+                self.resources_url(),
+                {'type': 'document', 'title': 'Deck',
+                 'file': uploaded('notes.pdf', b'0123456789')},
+                format='multipart',
+            )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertEqual(
+            body['errors']['file'], ['a file may not exceed 8 bytes']
+        )
+
+    def test_the_allowlist_message_is_grammatical_for_an_image(self):
+        response = self.publisher_client.post(
+            self.resources_url(),
+            {'type': 'image', 'title': 'Photo', 'file': uploaded('photo.gif')},
+            format='multipart',
+        )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertEqual(
+            body['errors']['file'],
+            ['an image file must end in .png or .jpg or .jpeg or .webp'],
+        )
+
+    def test_an_update_cannot_change_a_resources_type(self):
+        # The discriminator is write-once, and it is decided before the
+        # per-type payload rules, so changing a row to or from a file-bearing
+        # type is a 400 naming `type`, never `file` or `url`.
+        video = Resource.objects.create(
             lesson=self.lesson,
             type='video',
             title='Intro video',
             url='https://videos.example.com/intro',
             last_modified_by=self.publisher,
         )
-        for resource_type in ('document', 'image'):
-            with self.subTest(type=resource_type):
+        for new_type in ('document', 'image'):
+            with self.subTest(type=new_type):
                 response = self.publisher_client.patch(
-                    self.resource_url(resource),
-                    {'type': resource_type},
+                    self.resource_url(video), {'type': new_type},
                     format='json',
                 )
-                body = assert_envelope(
-                    self, response, 'validation_error', 400
-                )
-                self.assertIn('type', body['errors'])
+                body = assert_envelope(self, response, 'validation_error', 400)
+                self.assertEqual(body['errors'], {'type': ['a Resource type '
+                                                          'cannot be changed']})
+        video.refresh_from_db()
+        self.assertEqual(video.type, 'video')
 
-    def test_a_document_payload_with_a_file_field_is_still_rejected(self):
-        # `file` is read-only in the serializer, so even a body that smuggles
-        # one is refused on `type` before any row is written.
-        response = self.publisher_client.post(
-            self.resources_url(),
-            {'type': 'document', 'title': 'File', 'file': 'notes.pdf'},
-            format='json',
+        document = Resource.objects.create(
+            lesson=self.lesson,
+            type='document',
+            title='Deck',
+            file='notes.pdf',
+            last_modified_by=self.publisher,
+        )
+        response = self.publisher_client.patch(
+            self.resource_url(document), {'type': 'video'}, format='json',
+        )
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('type', body['errors'])
+        document.refresh_from_db()
+        self.assertEqual(document.type, 'document')
+
+    def test_a_rejected_upload_writes_nothing_to_storage(self):
+        # The storage directory predates and outlives the request, so the
+        # before/after snapshot proves the 400 saved no bytes to it.
+        before = self._stored_files()
+        with override_settings(RESOURCE_FILE_MAX_BYTES=8):
+            response = self.publisher_client.post(
+                self.resources_url(),
+                {'type': 'document', 'title': 'Deck',
+                 'file': uploaded('notes.pdf', b'0123456789')},
+                format='multipart',
+            )
+        assert_envelope(self, response, 'validation_error', 400)
+        self.assertEqual(self._stored_files(), before)
+
+    def _stored_files(self):
+        found = []
+        for root, _dirs, files in os.walk(self._uploads.name):
+            found.extend(os.path.join(root, name) for name in files)
+        return sorted(found)
+
+    def test_a_file_type_without_a_file_is_rejected_and_named(self):
+        for resource_type in ('document', 'image'):
+            for fmt in ('multipart', 'json'):
+                with self.subTest(type=resource_type, format=fmt):
+                    response = self.publisher_client.post(
+                        self.resources_url(),
+                        {'type': resource_type, 'title': 'File'},
+                        format=fmt,
+                    )
+                    body = assert_envelope(
+                        self, response, 'validation_error', 400
+                    )
+                    self.assertIn('file', body['errors'])
+        self.assertEqual(Resource.objects.count(), 0)
+
+    def test_a_url_type_carrying_a_file_is_rejected_and_named(self):
+        for resource_type in ('video', 'external_link'):
+            with self.subTest(type=resource_type):
+                response = self.publisher_client.post(
+                    self.resources_url(),
+                    {'type': resource_type, 'title': 'X',
+                     'url': 'https://example.com/x',
+                     'file': uploaded('notes.pdf')},
+                    format='multipart',
+                )
+                body = assert_envelope(self, response, 'validation_error', 400)
+                self.assertIn('file', body['errors'])
+        self.assertEqual(Resource.objects.count(), 0)
+
+    def test_an_update_cannot_carry_a_file(self):
+        document = Resource.objects.create(
+            lesson=self.lesson,
+            type='document',
+            title='Deck',
+            file='notes.pdf',
+            last_modified_by=self.publisher,
+        )
+
+        response = self.publisher_client.patch(
+            self.resource_url(document),
+            {'title': 'Renamed', 'file': uploaded('other.pdf')},
+            format='multipart',
         )
 
         body = assert_envelope(self, response, 'validation_error', 400)
-        self.assertIn('type', body['errors'])
+        self.assertIn('file', body['errors'])
+        document.refresh_from_db()
+        self.assertEqual(document.title, 'Deck')
+
+    def test_an_update_carrying_a_file_in_json_is_rejected_and_named(self):
+        document = Resource.objects.create(
+            lesson=self.lesson,
+            type='document',
+            title='Deck',
+            file='notes.pdf',
+            last_modified_by=self.publisher,
+        )
+
+        response = self.publisher_client.patch(
+            self.resource_url(document), {'file': 'ghost.pdf'}, format='json'
+        )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('file', body['errors'])
+        document.refresh_from_db()
+        self.assertEqual(document.file.name, 'notes.pdf')
+
+    def test_a_json_url_write_still_works_as_in_story_3_1(self):
+        response = self.publisher_client.post(
+            self.resources_url(), VIDEO_PAYLOAD, format='json'
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body['url'], VIDEO_PAYLOAD['url'])
+        self.assertNotIn('file', body)
+
+    def test_a_student_cannot_upload(self):
+        response = self.student_client.post(
+            self.resources_url(),
+            {'type': 'document', 'title': 'Deck', 'file': uploaded('notes.pdf')},
+            format='multipart',
+        )
+
+        assert_envelope(self, response, 'permission_denied', 403)
+        self.assertEqual(Resource.objects.count(), 0)
+
+    def test_an_anonymous_caller_cannot_upload(self):
+        response = self.anonymous_client.post(
+            self.resources_url(),
+            {'type': 'document', 'title': 'Deck', 'file': uploaded('notes.pdf')},
+            format='multipart',
+        )
+
+        assert_envelope(self, response, 'unauthenticated', 401)
         self.assertEqual(Resource.objects.count(), 0)
 
     def test_a_non_object_body_is_a_400_not_a_500(self):
-        # The pre-serializer `type` guard must not reach into a body that is
-        # JSON but not an object and crash; DRF's own shape/required errors or
-        # the serializer's shape error answer it as a 400 either way.
+        # A JSON body that is not an object must be refused by the serializer's
+        # shape or required errors, never crash the view with a 500.
         for payload in (None, [], 'video'):
             with self.subTest(body=payload):
                 response = self.publisher_client.post(
@@ -586,7 +901,6 @@ class MetadataUpdateTests(ResourceEndpointTestCase):
             {
                 'title': 'Renamed',
                 'id': str(uuid.uuid4()),
-                'file': 'ghost.pdf',
                 'is_deleted': True,
                 'lesson': str(self.chapter.pk),
                 'last_modified_by': str(self.student.id),
@@ -598,7 +912,8 @@ class MetadataUpdateTests(ResourceEndpointTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body['id'], str(original_id))
-        self.assertIsNone(body['file'])
+        # `file` is write-only, so the response never carries it either.
+        self.assertNotIn('file', body)
         self.assertFalse(body['is_deleted'])
         self.assertEqual(
             body['last_modified_by']['email'], 'publisher@example.com'
@@ -654,12 +969,14 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
         resources = paths[f'{settings.API_PREFIX}/lessons/{{lesson_id}}/resources/']
         self.assertIn('get', resources)
         self.assertIn('post', resources)
+        content = resources['post']['requestBody']['content']
         self.assertEqual(
-            resources['post']['requestBody']['content']['application/json'][
-                'schema'
-            ]['$ref'],
+            content['application/json']['schema']['$ref'],
             '#/components/schemas/Resource',
         )
+        # The create action accepts a file, so the same body is documented as
+        # multipart alongside the JSON the URL types use.
+        self.assertIn('multipart/form-data', content)
 
         detail = paths[f'{settings.API_PREFIX}/resources/{{resource_id}}/']
         self.assertIn('patch', detail)
@@ -668,10 +985,15 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
         schema = SchemaGenerator().get_schema(request=None, public=True)
         component = schema['components']['schemas']['Resource']
         properties = component['properties']
-        for name in ('id', 'file', 'is_deleted', 'updated_at'):
+        for name in ('id', 'is_deleted', 'updated_at'):
             with self.subTest(name=name):
                 self.assertIs(properties[name]['readOnly'], True)
         self.assertIs(properties['last_modified_by']['readOnly'], True)
+
+    def test_the_schema_marks_the_file_write_only(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        component = schema['components']['schemas']['Resource']
+        self.assertIs(component['properties']['file']['writeOnly'], True)
 
     def test_the_schema_lists_all_four_type_choices(self):
         schema = SchemaGenerator().get_schema(request=None, public=True)
@@ -683,3 +1005,27 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
         self.assertEqual(
             set(enum), {'document', 'image', 'video', 'external_link'}
         )
+
+    def test_non_resource_writes_do_not_accept_multipart(self):
+        # The multipart parser is scoped to the Resource write actions; any
+        # other write surfaces JSON only in the schema.
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        content = schema['paths'][f'{settings.API_PREFIX}/courses/']['post'][
+            'requestBody'
+        ]['content']
+        self.assertIn('application/json', content)
+        self.assertNotIn('multipart/form-data', content)
+
+    def test_the_default_parser_classes_stay_json_only(self):
+        self.assertEqual(
+            settings.REST_FRAMEWORK['DEFAULT_PARSER_CLASSES'],
+            ['rest_framework.parsers.JSONParser'],
+        )
+
+    def test_a_multipart_body_to_a_json_only_action_is_a_415(self):
+        response = self.publisher_client.post(
+            reverse('course-create'),
+            {'name': 'Physics', 'subject': 'Mechanics'},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 415)

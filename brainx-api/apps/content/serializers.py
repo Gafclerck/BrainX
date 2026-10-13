@@ -21,6 +21,9 @@ Lesson the model-required fields stay required when one is supplied, so a blank
 value is a 400 rather than a silent empty write.
 """
 
+from pathlib import Path
+
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.users.models import User
@@ -130,10 +133,14 @@ class ResourceSerializer(serializers.ModelSerializer):
     One contract serves the attach (POST) and the metadata update (PATCH). The
     parent link is never a field, so a Resource can only ever be created under
     the Lesson the path names and an update cannot move it under another.
-    `type` carries the full four-value set so the read output is honest, but
-    the views reject a write whose `type` is `document` or `image` with a 400
-    naming `type`, because the file upload is Story 3.2's; `file` is read-only
-    for the same reason and is always null in this story's responses. `url` is
+    `type` carries the full four-value set so the read output is honest, and it
+    decides the payload: a `document` or `image` must carry a `file` and may not
+    carry a `url`, a `video` or `external_link` must carry a `url` and may not
+    carry a `file`. A file is accepted on create only - `PATCH` is
+    metadata-only, so an update carrying one is refused naming `file` - and it
+    is checked here against the single ceiling and per-type extension allowlist
+    in settings, the last of the three upload layers. `file` is write-only: it
+    is stored but never serialized, so no storage URL leaves the API. `url` is
     a plain field: stored and returned verbatim, validated at write by the
     http(s) rule (`validate_http_url` on the model) and in the database by the
     CHECK constraint. `is_deleted`, `last_modified_by` and `updated_at` are
@@ -143,32 +150,20 @@ class ResourceSerializer(serializers.ModelSerializer):
     last_modified_by = LastModifiedBySerializer(read_only=True)
 
     def validate(self, attrs):
-        # A URL-carrying type must have a URL, or the payload CHECK constraint
-        # would reject the row on write - here it is refused as a 400 naming
-        # `url` instead of a database error. On a partial update the existing
-        # row's URL counts, and so does its type: editing only the title of a
-        # video Resource is fine, but clearing its `url` is refused here as a
-        # 400 rather than surfacing the database constraint as a 500. The
-        # mirror holds too: a file type must not gain a URL, or the same
-        # constraint would trip.
+        # The per-type payload rules mirror the database CHECK constraints so a
+        # contradiction is a 400 naming the offending field rather than a 500
+        # from the constraint. On a partial update the existing row's type and
+        # url count, so editing only a video's title is fine while clearing its
+        # url is refused.
         resource_type = attrs.get('type', getattr(self.instance, 'type', None))
-        if resource_type in ('video', 'external_link') and not attrs.get(
-            'url', getattr(self.instance, 'url', None)
-        ):
-            raise serializers.ValidationError(
-                {'url': ['a video or external_link Resource must carry a URL']}
-            )
-        if (
-            resource_type in ('document', 'image')
-            and attrs.get('url') not in (None, '')
-        ):
-            raise serializers.ValidationError(
-                {'url': ['a document or image Resource cannot carry a URL']}
-            )
-        # `type` is write-once: the per-type CHECK constraint would make a
-        # document-to-video transition a database error, and this story keeps
-        # the discriminator in the creation payload. Re-sending the row's own
-        # type is harmless and allowed.
+        file = attrs.get('file')
+
+        # `type` is write-once, and it is checked before the per-type payload
+        # rules so a change to or from a file-bearing type names `type` rather
+        # than the payload field the old row and the new type disagree on: the
+        # per-type CHECK constraint would make the transition a database error,
+        # and the discriminator stays in the creation payload. Re-sending the
+        # row's own type is harmless and allowed.
         if (
             self.instance is not None
             and attrs.get('type') not in (None, self.instance.type)
@@ -176,7 +171,68 @@ class ResourceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'type': ['a Resource type cannot be changed']}
             )
+
+        # A file is create-only: an update carrying one - even a null that would
+        # clear it - is refused naming `file`, before the per-type rules below.
+        if self.instance is not None and 'file' in attrs:
+            raise serializers.ValidationError(
+                {'file': ['a file can only be attached when the Resource is '
+                          'created']}
+            )
+
+        if resource_type in ('document', 'image'):
+            # The row's existing file counts on a metadata update, so only a
+            # creation or an explicit file is checked.
+            if file is None and not getattr(self.instance, 'file', None):
+                raise serializers.ValidationError(
+                    {'file': ['a document or image Resource must carry a file']}
+                )
+            if file is not None:
+                self._check_file(file, resource_type)
+            # A file type must not gain a URL, or the same CHECK constraint
+            # would trip.
+            if attrs.get('url') not in (None, ''):
+                raise serializers.ValidationError(
+                    {'url': ['a document or image Resource cannot carry a URL']}
+                )
+        elif file is not None:
+            raise serializers.ValidationError(
+                {'file': ['a video or external_link Resource cannot carry a '
+                          'file']}
+            )
+
+        if resource_type in ('video', 'external_link') and not attrs.get(
+            'url', getattr(self.instance, 'url', None)
+        ):
+            raise serializers.ValidationError(
+                {'url': ['a video or external_link Resource must carry a URL']}
+            )
         return attrs
+
+    def _check_file(self, file, resource_type):
+        """The per-file ceiling and extension allowlist, both read from settings.
+
+        Naming the field in the raised error is what makes it a 400 under
+        `errors.file` like every other per-field violation. The extension is the
+        lowercased filename suffix: a convenience filter, not content sniffing.
+        """
+        max_bytes = settings.RESOURCE_FILE_MAX_BYTES
+        if file.size > max_bytes:
+            limit = (
+                f'{max_bytes} bytes'
+                if max_bytes < 1024 * 1024
+                else f'{max_bytes // (1024 * 1024)} MB'
+            )
+            raise serializers.ValidationError(
+                {'file': [f'a file may not exceed {limit}']}
+            )
+        allowed = settings.RESOURCE_FILE_EXTENSIONS[resource_type]
+        if Path(file.name).suffix.lower() not in allowed:
+            article = 'an' if resource_type[0] in 'aeiou' else 'a'
+            raise serializers.ValidationError(
+                {'file': [f'{article} {resource_type} file must end in '
+                          + ' or '.join(allowed)]}
+            )
 
     class Meta:
         model = Resource
@@ -191,7 +247,10 @@ class ResourceSerializer(serializers.ModelSerializer):
             'last_modified_by',
             'updated_at',
         )
-        read_only_fields = ('id', 'file', 'is_deleted', 'updated_at')
+        read_only_fields = ('id', 'is_deleted', 'updated_at')
+        # Write-only: a file is accepted on create but never serialized, so no
+        # storage URL is exposed before Story 3.3's authenticated retrieval.
+        extra_kwargs = {'file': {'write_only': True}}
 
 
 class RemovalPreviewItemSerializer(serializers.Serializer):
