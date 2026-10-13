@@ -61,3 +61,33 @@ The deployment contract the code enforces or assumes. Keep it in sync with
 - Everything else under `API_PREFIX` requires JWT authentication.
 - The Django admin is not mounted and `django.contrib.admin` is not installed.
   Unmatched routes and `/admin/` return the project's five-key 404 envelope.
+
+## Resource types
+
+A Resource is discriminated by `type`, and the type decides the payload shape:
+a `file` for the file types or a `url` for the URL types. Within the URL types,
+`type` carries only the intent - `video` versus `external_link`. The line BrainX
+draws is between what it stores and what it only points at.
+
+- `video` is an external embed only. BrainX never uploads, stores, transcodes
+  or streams video bytes; the Resource carries a `url` and its metadata
+  (`title`, `note`), never bytes or a `file`. That URL is a plain JSON field -
+  stored and returned verbatim, never interpolated into markup. There is no
+  offline or download affordance for a `video`: a documented limitation, not a
+  gap. If the host is unavailable the Lesson still opens; the client shows its
+  own unavailable state.
+- `external_link` stores a URL verbatim too and is distinct from `video` by
+  `type` alone (`type` is the only discriminator). That a reader opens the new
+  destination is the SPA's behaviour, not an API contract.
+- Both URL types require a `url` (a missing or cleared one is a `400` naming
+  `url`) and accept only `http://` or `https://` addresses, enforced by the
+  `validate_http_url` write validator and the `resource_url_is_http` database
+  CHECK; they refuse a `file` on create or update with a `400` naming `file`.
+- The API does not crawl or validate reachability, and never gates, defers or
+  fails a Lesson response on whether the host answers - reachability is not a
+  server concern.
+- The unavailable-video state and any network-filter behaviour are the SPA's
+  responsibility, not the API's.
+
+A `document` or `image` Resource is the opposite case: a file BrainX stores,
+retrievable through the signed-URL route above.

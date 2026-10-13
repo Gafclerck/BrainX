@@ -10,6 +10,7 @@ settings ceiling and per-type extension allowlist. Every write goes through
 """
 
 import os
+import socket
 import tempfile
 import uuid
 from datetime import date
@@ -926,6 +927,160 @@ class MetadataUpdateTests(ResourceEndpointTestCase):
         self.assertEqual(self.resource.pk, original_id)
         self.assertEqual(self.resource.lesson, self.lesson)
         self.assertFalse(self.resource.is_deleted)
+
+
+class UrlTypeOutsideTests(ResourceEndpointTestCase):
+    """The URL types point outside BrainX and are never reached (Story 3.4).
+
+    A `video` or `external_link` Resource is a pointer and nothing more: its
+    URL is stored, listed and returned verbatim as a plain JSON field, and the
+    API never reaches for the host it names - it neither crawls nor gates a
+    Lesson on reachability. A `file` on a URL type is refused on create and on
+    update. Scheme rejection and the retrieval 404 for URL types are already
+    pinned in `UrlValidationTests` and `ResourceRetrievalTests`.
+    """
+
+    def test_the_listing_returns_a_stored_url_verbatim(self):
+        self.publisher_client.post(
+            self.resources_url(), VIDEO_PAYLOAD, format='json'
+        )
+
+        response = self.publisher_client.get(self.resources_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['count'], 1)
+        resource = response.json()['results'][0]
+        self.assertEqual(resource['url'], VIDEO_PAYLOAD['url'])
+        self.assertEqual(resource['type'], 'video')
+        self.assertNotIn('file', resource)
+
+    def test_a_metadata_edit_leaves_the_url_verbatim(self):
+        resource = Resource.objects.create(
+            lesson=self.lesson,
+            type='external_link',
+            title='Syllabus',
+            url='https://curriculum.example.com/syllabus.pdf',
+            last_modified_by=self.publisher,
+        )
+
+        response = self.publisher_client.patch(
+            self.resource_url(resource), {'title': 'Renamed'}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['title'], 'Renamed')
+        self.assertEqual(
+            body['url'], 'https://curriculum.example.com/syllabus.pdf'
+        )
+        self.assertNotIn('file', body)
+        resource.refresh_from_db()
+        self.assertEqual(
+            resource.url, 'https://curriculum.example.com/syllabus.pdf'
+        )
+
+    def test_an_unreachable_host_is_accepted_without_a_reachability_check(self):
+        # `.invalid` is reserved by RFC 2606 and never resolves. Turning a
+        # lookup of it into a failure means the requests below succeed only
+        # because the API never reaches for the host it stores.
+        url = 'https://videos.example.invalid/intro'
+        real_getaddrinfo = socket.getaddrinfo
+
+        def refuse_invalid_host(host, *args, **kwargs):
+            if str(host).endswith('.invalid'):
+                raise AssertionError('the API resolved an external host')
+            return real_getaddrinfo(host, *args, **kwargs)
+
+        with mock.patch(
+            'socket.getaddrinfo', side_effect=refuse_invalid_host
+        ):
+            attached = {}
+            for resource_type in ('video', 'external_link'):
+                with self.subTest(type=resource_type):
+                    attach = self.publisher_client.post(
+                        self.resources_url(),
+                        {**VIDEO_PAYLOAD, 'type': resource_type, 'url': url},
+                        format='json',
+                    )
+                    self.assertEqual(attach.status_code, 201)
+                    self.assertEqual(attach.json()['url'], url)
+                    self.assertNotIn('file', attach.json())
+                    attached[resource_type] = attach.json()['id']
+
+            listing = self.publisher_client.get(self.resources_url())
+            self.assertEqual(listing.status_code, 200)
+            body = listing.json()
+            self.assertEqual(body['count'], 2)
+            self.assertEqual(
+                {resource['type'] for resource in body['results']},
+                {'video', 'external_link'},
+            )
+            for resource in body['results']:
+                self.assertEqual(resource['url'], url)
+
+            for resource_type, resource_id in attached.items():
+                with self.subTest(type=resource_type):
+                    resource = Resource.objects.get(pk=resource_id)
+                    edit = self.publisher_client.patch(
+                        self.resource_url(resource), {'title': 'Renamed'},
+                        format='json',
+                    )
+                    self.assertEqual(edit.status_code, 200)
+                    self.assertEqual(edit.json()['url'], url)
+
+    def test_a_file_on_a_url_type_is_refused_on_create(self):
+        for resource_type in ('video', 'external_link'):
+            with self.subTest(type=resource_type):
+                response = self.publisher_client.post(
+                    self.resources_url(),
+                    {'type': resource_type, 'title': 'X',
+                     'url': 'https://example.com/x',
+                     'file': uploaded('clip.mp4')},
+                    format='multipart',
+                )
+                body = assert_envelope(self, response, 'validation_error', 400)
+                self.assertIn('file', body['errors'])
+        self.assertEqual(Resource.objects.count(), 0)
+
+    def test_a_file_on_a_url_type_is_refused_on_update(self):
+        for resource_type in ('video', 'external_link'):
+            with self.subTest(type=resource_type):
+                resource = Resource.objects.create(
+                    lesson=self.lesson,
+                    type=resource_type,
+                    title='Intro video',
+                    url='https://videos.example.com/intro',
+                    last_modified_by=self.publisher,
+                )
+
+                response = self.publisher_client.patch(
+                    self.resource_url(resource),
+                    {'title': 'Renamed', 'file': uploaded('clip.mp4')},
+                    format='multipart',
+                )
+
+                body = assert_envelope(
+                    self, response, 'validation_error', 400
+                )
+                self.assertIn('file', body['errors'])
+                resource.refresh_from_db()
+                self.assertEqual(resource.title, 'Intro video')
+                self.assertEqual(
+                    resource.url, 'https://videos.example.com/intro'
+                )
+
+    def test_a_refused_scheme_leaves_the_table_untouched(self):
+        # The scheme rule itself is pinned in `UrlValidationTests`; what this
+        # adds is that a refused write, whatever the scheme, leaves no row.
+        for bad in bad_urls():
+            with self.subTest(url=bad):
+                response = self.publisher_client.post(
+                    self.resources_url(),
+                    {'type': 'video', 'title': 'X', 'url': bad},
+                    format='json',
+                )
+                assert_envelope(self, response, 'validation_error', 400)
+        self.assertEqual(Resource.objects.count(), 0)
 
 
 class AuthorizationTests(ResourceEndpointTestCase):
