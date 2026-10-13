@@ -32,8 +32,7 @@ The deployment contract the code enforces or assumes. Keep it in sync with
   default) only decides when an upload spools from memory to a temp file -
   neither rejects a file. The Resource serializer is the authoritative per-file
   cap, checking the 50 MB ceiling and the per-type extension allowlist once the
-  body has been read. Stored documents and images cannot be fetched back
-  through the API in this version; authenticated retrieval is a later story.
+  body has been read.
 - **Migrations at release.** Migrations are applied during release, never at
   build: the process that serves traffic is not the process that migrates.
 - **Secret hygiene.** `SECRET_KEY` has no default and is read from the
@@ -49,6 +48,16 @@ The deployment contract the code enforces or assumes. Keep it in sync with
   Swagger UI; intentionally served anonymously per project configuration
   (see `config/urls.py` and `SPECTACULAR_SETTINGS`) to describe the contract
   without requiring credentials.
+- `GET /api/v1/resources/<resource_id>/retrieval/` - a verified Student's
+  retrieval of one stored document or image. Resolves the Resource and its
+  parent Lesson through the Student port (`visible()`), so a hidden or missing
+  row is a `404`; `video`/`external_link` are `404` too. Returns a 3600 s
+  object-scoped URL plus the server-derived `content_type` and `filename`
+  (`slugify(title)` + stored extension), and applies `inline` or `attachment`
+  from the `disposition` query parameter (default `inline`); any other value is
+  a `400` naming `disposition`. Under S3 the Content-Type/Content-Disposition
+  overrides ride on the signed URL; local development storage returns a plain
+  URL. No file bytes pass through the API.
 - Everything else under `API_PREFIX` requires JWT authentication.
 - The Django admin is not mounted and `django.contrib.admin` is not installed.
   Unmatched routes and `/admin/` return the project's five-key 404 envelope.

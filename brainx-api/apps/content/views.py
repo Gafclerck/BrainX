@@ -19,8 +19,14 @@ validates, resolves and looks the row up; it never persists a content row
 itself.
 """
 
+from django.conf import settings
+from django.http import Http404
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    extend_schema,
+    inline_serializer,
+)
 from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -28,8 +34,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsPublisher
+from apps.core.permissions import IsPublisher, IsVerifiedAccount
 
+from .delivery import build_signed_url, derive_content_type, derive_filename
 from .models import Chapter, Course, Lesson, Module, Resource
 from .mutations import (
     LEVEL_NAMES,
@@ -49,6 +56,7 @@ from .serializers import (
     ModuleSerializer,
     RemovalPreviewSerializer,
     ReorderSerializer,
+    ResourceRetrievalSerializer,
     ResourceSerializer,
 )
 
@@ -931,3 +939,60 @@ class LessonRestoreView(APIView):
         lesson = get_object_or_404(Lesson, pk=lesson_id)
         restored = restore(actor=request.user, model=Lesson, node=lesson)
         return Response(LessonSerializer(restored).data)
+
+
+class ResourceRetrievalView(APIView):
+    """Retrieve a signed URL for a document or image Resource.
+
+    The read gate is `[IsAuthenticated, IsVerifiedAccount]`. The Resource and
+    its parent Lesson are resolved through `visible()` so a hidden or missing
+    row is 404 (never an existence oracle). Only `document` and `image` types
+    are served; video/external_link are treated as nonexistent (404).
+    """
+
+    permission_classes = [IsAuthenticated, IsVerifiedAccount]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='disposition',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                enum=['inline', 'attachment'],
+                default='inline',
+            )
+        ],
+        responses={
+            200: ResourceRetrievalSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, resource_id):
+        disposition = request.query_params.get('disposition', 'inline')
+        if disposition not in ('inline', 'attachment'):
+            raise serializers.ValidationError(
+                {'disposition': ['disposition must be inline or attachment']}
+            )
+
+        resource = get_object_or_404(Resource.objects.visible(), pk=resource_id)
+        # The parent Lesson is resolved through its own Student port too, so a
+        # soft-deleted (and, once Epic 4 widens `visible()`, an unpublished)
+        # Lesson hides its Resources with the same 404 as a nonexistent id.
+        get_object_or_404(Lesson.objects.visible(), pk=resource.lesson_id)
+
+        if resource.type not in ('document', 'image') or not resource.file:
+            raise Http404
+
+        payload = {
+            'url': build_signed_url(resource, disposition=disposition),
+            'expires_in': settings.RESOURCE_URL_TTL_SECONDS,
+            'content_type': derive_content_type(resource),
+            'disposition': disposition,
+            'filename': derive_filename(resource),
+        }
+        # The signed URL is a short-lived credential; keep it out of caches.
+        return Response(payload, headers={'Cache-Control': 'no-store'})

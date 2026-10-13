@@ -25,9 +25,10 @@ from drf_spectacular.generators import SchemaGenerator
 
 from apps.users.models import User
 
+from ..delivery import build_signed_url
 from ..models import Chapter, Course, Lesson, Module, Resource
 from .helpers import assert_envelope
-from .test_create_endpoints import ContentEndpointTestCase
+from .test_create_endpoints import PASSWORD, ContentEndpointTestCase, client_for
 
 VIDEO_PAYLOAD = {
     'type': 'video',
@@ -197,6 +198,9 @@ class ResourceEndpointTestCase(ContentEndpointTestCase):
     def resource_url(self, resource):
         return reverse('resource-update', args=[resource.pk])
 
+    def retrieve_url(self, resource):
+        return reverse('resource-retrieve', args=[resource.pk])
+
 
 class AttachTests(ResourceEndpointTestCase):
     def test_a_publisher_attaches_a_video_resource(self):
@@ -211,8 +215,8 @@ class AttachTests(ResourceEndpointTestCase):
         self.assertEqual(body['type'], 'video')
         self.assertEqual(body['title'], 'Intro video')
         self.assertEqual(body['note'], 'Watch first')
-        # `file` is write-only: it is never serialized, so no storage URL
-        # leaves the API.
+        # `file` is write-only: it is never serialized, so the write response
+        # carries no storage URL. (Retrieval, which does return one, is 3.3.)
         self.assertNotIn('file', body)
         self.assertFalse(body['is_deleted'])
         self.assertEqual(
@@ -957,7 +961,7 @@ class AuthorizationTests(ResourceEndpointTestCase):
 
 class RoutingAndSchemaTests(ContentEndpointTestCase):
     def test_the_routes_live_under_the_api_prefix(self):
-        for name in ('resource-create', 'resource-update'):
+        for name in ('resource-create', 'resource-update', 'resource-retrieve'):
             with self.subTest(name=name):
                 url = reverse(name, args=[uuid.uuid4()])
                 self.assertTrue(url.startswith(settings.API_PREFIX + '/'))
@@ -1029,3 +1033,278 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
             format='multipart',
         )
         self.assertEqual(response.status_code, 415)
+
+
+class FakeSigningStorage:
+    """A storage double for the S3 branch: records every url() call."""
+
+    def __init__(self):
+        self.calls = []
+
+    def url(self, name, *, expire=None, parameters=None):
+        self.calls.append(
+            {'name': name, 'expire': expire, 'parameters': parameters}
+        )
+        return f'https://cdn.example.com/{name}?X-Amz-Signature=abc'
+
+
+class ResourceRetrievalTests(ResourceEndpointTestCase):
+    """The Student retrieval action (Story 3.3).
+
+    A verified Student asks for one file-bearing Resource and gets an
+    object-scoped URL plus the server-derived delivery answers: `content_type`
+    from the per-type extension map, `filename` from `slugify(title)` plus the
+    stored extension, and the disposition from the query parameter. Hidden,
+    missing and non-file rows are all the same 404; local storage returns a
+    plain URL while the S3 path signs with the response overrides baked in.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._uploads = tempfile.TemporaryDirectory()
+        cls.enterClassContext(
+            override_settings(
+                STORAGES={
+                    'default': {
+                        'BACKEND': (
+                            'django.core.files.storage.FileSystemStorage'
+                        ),
+                        'OPTIONS': {'location': cls._uploads.name},
+                    },
+                    'staticfiles': {
+                        'BACKEND': (
+                            'django.contrib.staticfiles.storage.'
+                            'StaticFilesStorage'
+                        ),
+                    },
+                }
+            )
+        )
+        cls.addClassCleanup(cls._uploads.cleanup)
+
+    def setUp(self):
+        super().setUp()
+        self.verified = User.objects.create_user(
+            email='verified@example.com',
+            password=PASSWORD,
+            is_email_verified=True,
+        )
+        self.verified_client = client_for(self.verified)
+
+    def file_resource(
+        self, resource_type='document', title='Deck', name='notes.pdf'
+    ):
+        return Resource.objects.create(
+            lesson=self.lesson,
+            type=resource_type,
+            title=title,
+            file=name,
+            last_modified_by=self.publisher,
+        )
+
+    def test_a_verified_student_retrieves_a_document_inline(self):
+        resource = self.file_resource()
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['content_type'], 'application/pdf')
+        self.assertEqual(body['disposition'], 'inline')
+        self.assertEqual(body['filename'], 'deck.pdf')
+        self.assertEqual(body['expires_in'], 3600)
+        self.assertIn('notes.pdf', body['url'])
+
+    def test_an_image_derives_type_and_name_from_the_stored_extension(self):
+        resource = self.file_resource('image', 'My Photo!', 'photo.PNG')
+
+        response = self.verified_client.get(
+            self.retrieve_url(resource), {'disposition': 'attachment'}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['content_type'], 'image/png')
+        self.assertEqual(body['disposition'], 'attachment')
+        self.assertEqual(body['filename'], 'my-photo.png')
+
+    def test_the_content_type_map_pins_the_allowlisted_extensions(self):
+        # The delivery map is a second source of extension truth next to the
+        # upload allowlist; pin its values and tie its keys to the allowlist so
+        # either side cannot drift silently.
+        self.assertEqual(
+            settings.RESOURCE_CONTENT_TYPES,
+            {
+                'document': {'.pdf': 'application/pdf'},
+                'image': {
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.webp': 'image/webp',
+                },
+            },
+        )
+        allowlist = settings.RESOURCE_FILE_EXTENSIONS
+        for resource_type, extensions in allowlist.items():
+            with self.subTest(type=resource_type):
+                self.assertEqual(
+                    set(settings.RESOURCE_CONTENT_TYPES[resource_type]),
+                    set(extensions),
+                )
+
+    def test_an_unknown_extension_falls_back_to_octet_stream(self):
+        resource = self.file_resource(name='notes.txt')
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()['content_type'], 'application/octet-stream'
+        )
+
+    def test_a_title_with_no_slug_characters_falls_back_to_resource(self):
+        resource = self.file_resource(title='!!!')
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['filename'], 'resource.pdf')
+
+    def test_build_signed_url_is_empty_without_a_file(self):
+        resource = Resource(
+            lesson=self.lesson,
+            type='video',
+            title='Clip',
+            url='https://videos.example.com/x',
+            last_modified_by=self.publisher,
+        )
+
+        self.assertEqual(build_signed_url(resource), '')
+
+    def test_an_unknown_disposition_is_a_400_naming_it(self):
+        resource = self.file_resource()
+
+        response = self.verified_client.get(
+            self.retrieve_url(resource), {'disposition': 'open_in_new'}
+        )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('disposition', body['errors'])
+
+    def test_the_s3_url_is_signed_with_the_delivery_overrides(self):
+        # The S3 branch belongs here, on the helper it exercises: the view
+        # re-fetches its own row, so swapping the storage on a test instance
+        # could never reach it. With an S3-like storage recording the call,
+        # the URL is signed for the TTL and carries the response overrides.
+        resource = Resource(
+            lesson=self.lesson,
+            type='document',
+            title='Deck',
+            file='resources/2026/09/notes.pdf',
+            last_modified_by=self.publisher,
+        )
+        storage = FakeSigningStorage()
+        resource.file.storage = storage
+
+        with override_settings(STORAGE_BACKEND='s3'):
+            signed = build_signed_url(resource)
+
+        self.assertEqual(
+            signed,
+            'https://cdn.example.com/resources/2026/09/notes.pdf'
+            '?X-Amz-Signature=abc',
+        )
+        call = storage.calls[0]
+        self.assertEqual(call['name'], 'resources/2026/09/notes.pdf')
+        self.assertEqual(call['expire'], 3600)
+        self.assertEqual(
+            call['parameters'],
+            {
+                'ResponseContentType': 'application/pdf',
+                'ResponseContentDisposition': 'inline; filename="deck.pdf"',
+            },
+        )
+
+        # AC 2: a non-default disposition reaches the signed URL, not just the
+        # JSON body. The endpoint forwards the query parameter here.
+        storage.calls.clear()
+        with override_settings(STORAGE_BACKEND='s3'):
+            build_signed_url(resource, disposition='attachment')
+        self.assertEqual(
+            storage.calls[0]['parameters']['ResponseContentDisposition'],
+            'attachment; filename="deck.pdf"',
+        )
+
+    def test_a_soft_deleted_resource_is_404(self):
+        resource = self.file_resource()
+        resource.is_deleted = True
+        resource.save(update_fields=['is_deleted'])
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_a_soft_deleted_parent_lesson_is_404(self):
+        resource = self.file_resource()
+        self.lesson.is_deleted = True
+        self.lesson.save(update_fields=['is_deleted'])
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_a_url_type_resource_is_404(self):
+        resource = Resource.objects.create(
+            lesson=self.lesson,
+            type='video',
+            title='Clip',
+            url='https://videos.example.com/x',
+            last_modified_by=self.publisher,
+        )
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_an_unknown_resource_is_404(self):
+        response = self.verified_client.get(
+            reverse('resource-retrieve', args=[uuid.uuid4()])
+        )
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_an_unverified_student_cannot_retrieve(self):
+        resource = self.file_resource()
+
+        response = self.student_client.get(self.retrieve_url(resource))
+
+        assert_envelope(self, response, 'permission_denied', 403)
+
+    def test_an_anonymous_caller_cannot_retrieve(self):
+        resource = self.file_resource()
+
+        response = self.anonymous_client.get(self.retrieve_url(resource))
+
+        assert_envelope(self, response, 'unauthenticated', 401)
+
+    def test_the_schema_documents_the_retrieval_operation(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        operation = schema['paths'][
+            f'{settings.API_PREFIX}/resources/{{resource_id}}/retrieval/'
+        ]['get']
+
+        self.assertEqual(
+            operation['responses']['200']['content']['application/json'][
+                'schema'
+            ]['$ref'],
+            '#/components/schemas/ResourceRetrieval',
+        )
+        disposition = next(
+            parameter
+            for parameter in operation['parameters']
+            if parameter['name'] == 'disposition'
+        )
+        self.assertEqual(
+            set(disposition['schema']['enum']), {'inline', 'attachment'}
+        )

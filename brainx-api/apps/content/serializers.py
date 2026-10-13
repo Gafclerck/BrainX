@@ -293,3 +293,13 @@ class LessonMoveSerializer(serializers.Serializer):
     """The request contract of a Lesson move: the target Chapter."""
 
     chapter = serializers.UUIDField()
+
+
+class ResourceRetrievalSerializer(serializers.Serializer):
+    """Response serializer for the retrieval endpoint (Story 3.3)."""
+
+    url = serializers.CharField()
+    expires_in = serializers.IntegerField()
+    content_type = serializers.CharField()
+    disposition = serializers.CharField()
+    filename = serializers.CharField()

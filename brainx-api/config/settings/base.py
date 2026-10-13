@@ -216,6 +216,18 @@ RESOURCE_FILE_EXTENSIONS = {
     'image': ('.png', '.jpg', '.jpeg', '.webp'),
 }
 
+# Resource delivery (Story 3.3). URL expiry and content-type mapping for signed URLs.
+RESOURCE_URL_TTL_SECONDS = 3600
+RESOURCE_CONTENT_TYPES = {
+    'document': {'.pdf': 'application/pdf'},
+    'image': {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+    },
+}
+
 # Upload enforcement is layered, and only the last layer rejects a file.
 # DATA_UPLOAD_MAX_MEMORY_SIZE bounds the non-file part of a request body;
 # FILE_UPLOAD_MAX_MEMORY_SIZE (Django's default) is the memory-vs-tempfile
