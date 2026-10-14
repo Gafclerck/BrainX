@@ -27,7 +27,7 @@ from drf_spectacular.generators import SchemaGenerator
 from apps.users.models import User
 
 from ..delivery import build_signed_url
-from ..models import Chapter, Course, Lesson, Module, Resource
+from ..models import Chapter, ContentQuerySet, Course, Lesson, Module, Resource
 from .helpers import assert_envelope
 from .test_create_endpoints import PASSWORD, ContentEndpointTestCase, client_for
 
@@ -201,6 +201,20 @@ class ResourceEndpointTestCase(ContentEndpointTestCase):
 
     def retrieve_url(self, resource):
         return reverse('resource-retrieve', args=[resource.pk])
+
+    def restore_url(self, resource):
+        return reverse('resource-restore', args=[resource.pk])
+
+    def url_resource(self, **overrides):
+        fields = {
+            'lesson': self.lesson,
+            'type': 'video',
+            'title': 'Intro video',
+            'url': 'https://videos.example.com/intro',
+            'last_modified_by': self.publisher,
+        }
+        fields.update(overrides)
+        return Resource.objects.create(**fields)
 
 
 class AttachTests(ResourceEndpointTestCase):
@@ -1409,6 +1423,33 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
 
         assert_envelope(self, response, 'not_found', 404)
 
+    def test_a_removal_revokes_retrieval_until_it_is_restored(self):
+        # End to end over the surface Story 3.5 adds: the Publisher's removal
+        # hides the file from the Student, and the restore brings it back.
+        resource = self.file_resource()
+
+        self.publisher_client.delete(self.resource_url(resource))
+        removed = assert_envelope(
+            self,
+            self.verified_client.get(self.retrieve_url(resource)),
+            'not_found',
+            404,
+        )
+        # A removed Resource is indistinguishable from a nonexistent id.
+        nonexistent = assert_envelope(
+            self,
+            self.verified_client.get(
+                reverse('resource-retrieve', args=[uuid.uuid4()])
+            ),
+            'not_found',
+            404,
+        )
+        self.assertEqual(removed, nonexistent)
+
+        self.publisher_client.post(self.restore_url(resource))
+        response = self.verified_client.get(self.retrieve_url(resource))
+        self.assertEqual(response.status_code, 200)
+
     def test_a_url_type_resource_is_404(self):
         resource = Resource.objects.create(
             lesson=self.lesson,
@@ -1463,3 +1504,353 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
         self.assertEqual(
             set(disposition['schema']['enum']), {'inline', 'attachment'}
         )
+
+
+class ResourceRemovalTests(ResourceEndpointTestCase):
+    """The Publisher removal surface (Story 3.5).
+
+    A `DELETE` on the Resource detail route soft-sets `is_deleted` through the
+    one write port and re-stamps the acting Publisher, for both payload shapes.
+    It is idempotent, keeps the stored object, and touches that row alone.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # A removal must not touch storage, so upload to a throwaway directory
+        # and assert the object survives.
+        cls._uploads = tempfile.TemporaryDirectory()
+        cls.enterClassContext(
+            override_settings(
+                STORAGES={
+                    'default': {
+                        'BACKEND': (
+                            'django.core.files.storage.FileSystemStorage'
+                        ),
+                        'OPTIONS': {'location': cls._uploads.name},
+                    },
+                    'staticfiles': {
+                        'BACKEND': (
+                            'django.contrib.staticfiles.storage.'
+                            'StaticFilesStorage'
+                        ),
+                    },
+                }
+            )
+        )
+        cls.addClassCleanup(cls._uploads.cleanup)
+
+    def test_a_publisher_removes_a_url_resource(self):
+        resource = self.url_resource()
+
+        response = self.publisher_client.delete(self.resource_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body['is_deleted'])
+        self.assertEqual(body['id'], str(resource.id))
+        self.assertEqual(body['type'], 'video')
+        self.assertEqual(body['title'], 'Intro video')
+        self.assertEqual(body['url'], 'https://videos.example.com/intro')
+        self.assertIsNotNone(body['updated_at'])
+        resource.refresh_from_db()
+        self.assertTrue(resource.is_deleted)
+        self.assertEqual(resource.last_modified_by, self.publisher)
+
+    def test_removal_covers_every_resource_type(self):
+        url_types = (
+            ('video', 'https://videos.example.com/intro'),
+            ('external_link', 'https://example.com/deck'),
+        )
+        for resource_type, url in url_types:
+            with self.subTest(type=resource_type):
+                resource = self.url_resource(type=resource_type, url=url)
+                response = self.publisher_client.delete(
+                    self.resource_url(resource)
+                )
+                self.assertEqual(response.status_code, 200)
+                resource.refresh_from_db()
+                self.assertTrue(resource.is_deleted)
+
+        file_types = (
+            ('document', 'notes.pdf'),
+            ('image', 'diagram.png'),
+        )
+        for resource_type, name in file_types:
+            with self.subTest(type=resource_type):
+                response = self.publisher_client.post(
+                    self.resources_url(),
+                    {
+                        'type': resource_type,
+                        'title': 'Attachment',
+                        'file': uploaded(name),
+                    },
+                    format='multipart',
+                )
+                resource = Resource.objects.get(pk=response.json()['id'])
+                removal = self.publisher_client.delete(
+                    self.resource_url(resource)
+                )
+                self.assertEqual(removal.status_code, 200)
+                resource.refresh_from_db()
+                self.assertTrue(resource.is_deleted)
+
+    def test_removal_leaves_a_sibling_resource_alone(self):
+        removed = self.url_resource()
+        sibling = self.url_resource(title='Sibling')
+
+        self.publisher_client.delete(self.resource_url(removed))
+
+        sibling.refresh_from_db()
+        self.assertFalse(sibling.is_deleted)
+
+    def test_removing_an_already_removed_resource_is_a_no_op(self):
+        resource = self.url_resource()
+        self.publisher_client.delete(self.resource_url(resource))
+        resource.refresh_from_db()
+        updated_before = resource.updated_at
+        stamp_before = resource.last_modified_by_id
+
+        response = self.publisher_client.delete(self.resource_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        resource.refresh_from_db()
+        self.assertTrue(resource.is_deleted)
+        self.assertEqual(resource.updated_at, updated_before)
+        self.assertEqual(resource.last_modified_by_id, stamp_before)
+
+    def test_removal_keeps_the_stored_object(self):
+        response = self.publisher_client.post(
+            self.resources_url(),
+            {'type': 'document', 'title': 'Deck',
+             'file': uploaded('notes.pdf')},
+            format='multipart',
+        )
+        resource = Resource.objects.get(pk=response.json()['id'])
+        storage = resource.file.storage
+        name = resource.file.name
+        self.assertTrue(storage.exists(name))
+
+        with mock.patch(
+            'django.core.files.storage.FileSystemStorage.delete'
+        ) as storage_delete:
+            self.publisher_client.delete(self.resource_url(resource))
+
+        storage_delete.assert_not_called()
+        resource.refresh_from_db()
+        self.assertTrue(resource.is_deleted)
+        self.assertTrue(storage.exists(name))
+
+    def test_removal_writes_through_the_port_only(self):
+        resource = self.url_resource()
+
+        with mock.patch(
+            'apps.content.mutations.mutate',
+            side_effect=RuntimeError('mutate is unavailable'),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.publisher_client.delete(self.resource_url(resource))
+
+        resource.refresh_from_db()
+        self.assertFalse(resource.is_deleted)
+
+    def test_removal_hands_the_acting_publisher_to_the_port(self):
+        resource = self.url_resource()
+        phantom = Resource(
+            lesson=self.lesson,
+            type='video',
+            title='Intro video',
+            url='https://videos.example.com/intro',
+            last_modified_by=self.publisher,
+        )
+
+        with mock.patch(
+            'apps.content.views.remove', return_value=phantom
+        ) as port:
+            response = self.publisher_client.delete(self.resource_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(port.call_args.kwargs['actor'], self.publisher)
+        self.assertEqual(port.call_args.kwargs['model'], Resource)
+        self.assertEqual(port.call_args.kwargs['node'].pk, resource.pk)
+
+    def test_a_second_publisher_re_stamps_the_removal(self):
+        second = User.objects.create_user(
+            email='second@example.com',
+            password=PASSWORD,
+            is_publisher=True,
+            is_email_verified=True,
+        )
+        resource = self.url_resource()
+
+        response = client_for(second).delete(self.resource_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        resource.refresh_from_db()
+        self.assertEqual(resource.last_modified_by, second)
+        self.assertEqual(
+            response.json()['last_modified_by']['email'], second.email
+        )
+
+    def test_an_unknown_resource_is_404(self):
+        response = self.publisher_client.delete(
+            reverse('resource-update', args=[uuid.uuid4()])
+        )
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_the_schema_documents_the_removal_operation(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        detail = schema['paths'][
+            f'{settings.API_PREFIX}/resources/{{resource_id}}/'
+        ]
+
+        self.assertIn('delete', detail)
+
+    def test_the_removal_and_restore_routes_live_under_the_api_prefix(self):
+        for name in ('resource-update', 'resource-restore'):
+            with self.subTest(name=name):
+                url = reverse(name, args=[uuid.uuid4()])
+                self.assertTrue(url.startswith(settings.API_PREFIX + '/'))
+
+    def test_a_non_uuid_segment_is_not_a_route(self):
+        response = self.publisher_client.delete(
+            f'{settings.API_PREFIX}/resources/not-a-uuid/restore/'
+        )
+
+        assert_envelope(self, response, 'not_found', 404)
+
+
+class ResourceRestoreTests(ResourceEndpointTestCase):
+    """The Publisher restore surface (Story 3.5).
+
+    A `POST` to the restore route clears the flag on that row alone, reaching
+    it through the write port's `with_deleted()` selector. A Resource that is
+    already live is returned unchanged.
+    """
+
+    def test_a_publisher_restores_a_removed_resource(self):
+        resource = self.url_resource()
+        self.publisher_client.delete(self.resource_url(resource))
+
+        response = self.publisher_client.post(self.restore_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['is_deleted'])
+        resource.refresh_from_db()
+        self.assertFalse(resource.is_deleted)
+        self.assertEqual(resource.last_modified_by, self.publisher)
+
+    def test_a_second_publisher_re_stamps_the_restore(self):
+        second = User.objects.create_user(
+            email='second@example.com',
+            password=PASSWORD,
+            is_publisher=True,
+            is_email_verified=True,
+        )
+        resource = self.url_resource()
+        self.publisher_client.delete(self.resource_url(resource))
+
+        response = client_for(second).post(self.restore_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        resource.refresh_from_db()
+        self.assertEqual(resource.last_modified_by, second)
+        self.assertEqual(
+            response.json()['last_modified_by']['email'], second.email
+        )
+
+    def test_restore_leaves_a_removed_sibling_alone(self):
+        first = self.url_resource()
+        second = self.url_resource(title='Sibling')
+        self.publisher_client.delete(self.resource_url(first))
+        self.publisher_client.delete(self.resource_url(second))
+
+        self.publisher_client.post(self.restore_url(first))
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.is_deleted)
+        self.assertTrue(second.is_deleted)
+
+    def test_restore_reads_the_soft_deleted_row_through_with_deleted(self):
+        resource = self.url_resource()
+        self.publisher_client.delete(self.resource_url(resource))
+        original = ContentQuerySet.with_deleted
+        calls = []
+
+        def spy(queryset):
+            calls.append(queryset)
+            return original(queryset)
+
+        with mock.patch.object(ContentQuerySet, 'with_deleted', spy):
+            response = self.publisher_client.post(self.restore_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(calls)
+
+    def test_a_removed_row_is_reachable_through_with_deleted(self):
+        resource = self.url_resource()
+        self.publisher_client.delete(self.resource_url(resource))
+        self.assertTrue(
+            Resource.objects.with_deleted().filter(pk=resource.pk).exists()
+        )
+
+        self.publisher_client.post(self.restore_url(resource))
+
+        self.assertFalse(
+            Resource.objects.with_deleted().filter(pk=resource.pk).exists()
+        )
+        self.assertTrue(
+            Resource.objects.filter(pk=resource.pk, is_deleted=False).exists()
+        )
+
+    def test_restoring_a_live_resource_is_a_no_op(self):
+        resource = self.url_resource()
+        resource.refresh_from_db()
+        updated_before = resource.updated_at
+        stamp_before = resource.last_modified_by_id
+
+        response = self.publisher_client.post(self.restore_url(resource))
+
+        self.assertEqual(response.status_code, 200)
+        resource.refresh_from_db()
+        self.assertFalse(resource.is_deleted)
+        self.assertEqual(resource.updated_at, updated_before)
+        self.assertEqual(resource.last_modified_by_id, stamp_before)
+
+    def test_restoring_an_unknown_resource_is_404(self):
+        response = self.publisher_client.post(
+            reverse('resource-restore', args=[uuid.uuid4()])
+        )
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_the_schema_documents_the_restore_operation(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        restore = schema['paths'][
+            f'{settings.API_PREFIX}/resources/{{resource_id}}/restore/'
+        ]
+
+        self.assertIn('post', restore)
+
+
+class ResourceRemovalAuthorizationTests(ResourceEndpointTestCase):
+    def request_specs(self):
+        resource = self.url_resource()
+        return [
+            ('delete', self.resource_url(resource)),
+            ('post', self.restore_url(resource)),
+        ]
+
+    def test_a_student_cannot_remove_or_restore(self):
+        for method, url in self.request_specs():
+            with self.subTest(method=method):
+                response = getattr(self.student_client, method)(url)
+                assert_envelope(self, response, 'permission_denied', 403)
+
+    def test_an_anonymous_caller_cannot_remove_or_restore(self):
+        for method, url in self.request_specs():
+            with self.subTest(method=method):
+                response = getattr(self.anonymous_client, method)(url)
+                assert_envelope(self, response, 'unauthenticated', 401)

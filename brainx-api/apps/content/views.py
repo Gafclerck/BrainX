@@ -429,7 +429,9 @@ class ResourceUpdateView(MultipartWriteMixin, APIView):
     the database CHECK constraints make a payload that contradicts its type an
     error however the row was written. The update is metadata-only: unlike the
     create action it accepts no new file, and a body carrying one is a 400
-    naming `file`. The write goes through `mutate`, never a direct save.
+    naming `file`. The write goes through `mutate`, never a direct save. The
+    same route removes the Resource: `delete` soft-sets `is_deleted` through the
+    write port, and nothing is deleted from storage.
     """
 
     permission_classes = [IsAuthenticated, IsPublisher]
@@ -458,6 +460,46 @@ class ResourceUpdateView(MultipartWriteMixin, APIView):
             data=serializer.validated_data,
         )
         return Response(ResourceSerializer(resource).data)
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: ResourceSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def delete(self, request, resource_id):
+        """Soft-remove the Resource; nothing is deleted from storage."""
+        resource = get_object_or_404(Resource, pk=resource_id)
+        removed = remove(actor=request.user, model=Resource, node=resource)
+        return Response(ResourceSerializer(removed).data)
+
+
+class ResourceRestoreView(APIView):
+    """Restore a soft-deleted Resource, and only it.
+
+    A Resource is a leaf, so restoring it clears exactly its own flag. The
+    write port re-reads the row through its `with_deleted()` selector, and a
+    Resource that is already live is returned unchanged.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: ResourceSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, resource_id):
+        resource = get_object_or_404(Resource, pk=resource_id)
+        restored = restore(actor=request.user, model=Resource, node=resource)
+        return Response(ResourceSerializer(restored).data)
 
 
 class CourseUpdateView(APIView):

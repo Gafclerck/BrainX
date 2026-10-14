@@ -23,6 +23,7 @@ from .views import (
     ModuleRestoreView,
     ModuleUpdateView,
     ResourceRetrievalView,
+    ResourceRestoreView,
     ResourceUpdateView,
 )
 
@@ -122,6 +123,11 @@ urlpatterns = [
         'resources/<uuid:resource_id>/retrieval/',
         ResourceRetrievalView.as_view(),
         name='resource-retrieve',
+    ),
+    path(
+        'resources/<uuid:resource_id>/restore/',
+        ResourceRestoreView.as_view(),
+        name='resource-restore',
     ),
     path(
         'courses/<uuid:course_id>/modules/order/',

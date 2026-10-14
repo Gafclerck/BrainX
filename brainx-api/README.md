@@ -58,6 +58,13 @@ The deployment contract the code enforces or assumes. Keep it in sync with
   a `400` naming `disposition`. Under S3 the Content-Type/Content-Disposition
   overrides ride on the signed URL; local development storage returns a plain
   URL. No file bytes pass through the API.
+- `DELETE /api/v1/resources/<resource_id>/` and
+  `POST /api/v1/resources/<resource_id>/restore/` - the Publisher's soft
+  removal and its reversal, Publisher-only (`403` for a Student, `401`
+  anonymous). Removal hides the Resource from every Student read path and
+  revokes retrieval with the `404` a nonexistent id gives; restore clears the
+  flag on that row alone. Either route on an unknown id is a `404`. Both are
+  soft; Resource types records what that means for storage.
 - Everything else under `API_PREFIX` requires JWT authentication.
 - The Django admin is not mounted and `django.contrib.admin` is not installed.
   Unmatched routes and `/admin/` return the project's five-key 404 envelope.
@@ -91,3 +98,10 @@ draws is between what it stores and what it only points at.
 
 A `document` or `image` Resource is the opposite case: a file BrainX stores,
 retrievable through the signed-URL route above.
+
+Any Resource can be soft-removed by the Publisher and restored. `is_deleted`
+lives on the Resource and is set and cleared only through the write port, so a
+removed Resource is never issued a signed URL and never reaches a Student read
+path; a restore clears that row alone. Removal is soft for every type and never
+a hard delete: for a `document` or `image`, no object is removed from storage,
+so the stored file is retained for a restore or an out-of-band recovery.
