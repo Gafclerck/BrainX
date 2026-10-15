@@ -40,6 +40,7 @@ from .delivery import build_signed_url, derive_content_type, derive_filename
 from .models import Chapter, Course, Lesson, Module, Resource
 from .mutations import (
     LEVEL_NAMES,
+    bulk_publish,
     move_lesson,
     mutate,
     next_position,
@@ -50,7 +51,9 @@ from .mutations import (
 )
 from .publication import lesson_missing_metadata
 from .serializers import (
+    BulkPublishCommitSerializer,
     BulkPublishPreviewSerializer,
+    BulkPublishResultSerializer,
     ChapterSerializer,
     CourseSerializer,
     LessonMoveSerializer,
@@ -1074,6 +1077,93 @@ class ModuleBulkPublishPreviewView(APIView):
             chapter__module=module, is_deleted=False
         )
         return Response(build_bulk_publish_preview(lessons))
+
+
+class ChapterBulkPublishView(APIView):
+    """Commit the bulk publish of a Chapter's live Lessons.
+
+    The body echoes Story 4.3's preview (`would_change` and `blocked`). The
+    commit re-derives the Chapter's live descendant Lessons and recomputes the
+    enumeration under the Chapter row lock; when it differs from the echoed one,
+    nothing is written and the answer is 409. Otherwise every ready Lesson is
+    published through the write port, one row at a time, and the response
+    carries the count actually written and the blocked work list under
+    `errors`. `changed` is the count written, not the previewed count.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=BulkPublishCommitSerializer,
+        responses={
+            200: BulkPublishResultSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+            409: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        serializer = BulkPublishCommitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = bulk_publish(
+            actor=request.user,
+            container=chapter,
+            previewed=serializer.validated_data,
+        )
+        return Response(
+            BulkPublishResultSerializer(
+                {
+                    'changed': result['changed'],
+                    'errors': {'blocked': result['blocked']},
+                }
+            ).data
+        )
+
+
+class ModuleBulkPublishView(APIView):
+    """Commit the bulk publish of a Module's whole live subtree.
+
+    The candidate set spans every Chapter beneath the Module, exactly as the
+    Module preview computes it. The commit re-derives that set and recomputes
+    the enumeration under the Module row lock; when it differs from the echoed
+    Story 4.3 preview it writes nothing and answers 409. Otherwise every ready
+    Lesson under every Chapter is published through the write port, one row at
+    a time, and the response carries the count written and the blocked list.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=BulkPublishCommitSerializer,
+        responses={
+            200: BulkPublishResultSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+            409: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        serializer = BulkPublishCommitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = bulk_publish(
+            actor=request.user,
+            container=module,
+            previewed=serializer.validated_data,
+        )
+        return Response(
+            BulkPublishResultSerializer(
+                {
+                    'changed': result['changed'],
+                    'errors': {'blocked': result['blocked']},
+                }
+            ).data
+        )
 
 
 class CourseRestoreView(APIView):

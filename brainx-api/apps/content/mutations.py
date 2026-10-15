@@ -17,7 +17,10 @@ the `search_document` rebuild rather than writing around it.
 from django.db import transaction
 from django.db.models import Max
 
+from apps.core.exceptions import Conflict
+
 from .models import Chapter, Course, Lesson, Module
+from .publication import lesson_missing_metadata
 
 # The direct-children relation of each level, keyed by model. Lesson is absent
 # because it is the leaf: an entry here is what "has descendants" means.
@@ -176,6 +179,96 @@ def reorder_children(*, actor, container, children, order):
                     data={'position': target},
                 )
         return ordered
+
+
+def _live_descendant_lessons(container):
+    """Every live descendant Lesson of an addressed Chapter or Module.
+
+    A Chapter's candidates are its own Lessons; a Module's span every Chapter
+    beneath it. The removal flag is the only filter - publication is orthogonal
+    to removal, so a removed Lesson is never a candidate and is neither
+    published nor resurrected. The queryset is materialized because the caller
+    recomputes the enumeration before writing any row.
+    """
+    if isinstance(container, Chapter):
+        return list(Lesson.objects.filter(chapter=container, is_deleted=False))
+    return list(
+        Lesson.objects.filter(chapter__module=container, is_deleted=False)
+    )
+
+
+def _bulk_publish_enumeration(lessons):
+    """Recompute what a bulk publish would flip and what it would skip.
+
+    The split `build_bulk_publish_preview` renders for the 4.3 preview, kept
+    here so the commit can recompute it under the container lock on the live
+    candidate set: an unpublished Lesson that passes the publishable rule is
+    counted in `would_change`, one that fails it is named under `blocked`.
+    Returns `(would_change, blocked)`, the blocked entries as `{id, missing}`.
+    """
+    would_change = 0
+    blocked = []
+    for lesson in lessons:
+        missing = list(lesson_missing_metadata(lesson))
+        if missing:
+            blocked.append({'id': lesson.pk, 'missing': missing})
+        elif not lesson.is_published:
+            would_change += 1
+    return would_change, blocked
+
+
+def _blocked_signature(entries):
+    """The comparable identity of a `blocked` list: its `(id, missing)` pairs."""
+    return {(str(entry['id']), tuple(entry['missing'])) for entry in entries}
+
+
+def bulk_publish(*, actor, container, previewed):
+    """Commit a bulk publish over `container`'s live descendant Lessons.
+
+    `previewed` is the enumeration Story 4.3 returned and the client echoed -
+    `would_change` and `blocked` - not an instruction to trust. The commit
+    re-derives the candidates and recomputes the enumeration in one transaction
+    under a row lock on the addressed Chapter or Module, then compares: the
+    counts must match and every `blocked` entry must agree by `id` and
+    `missing`. Another Publisher may have published, edited, moved or removed a
+    descendant between preview and commit, so a mismatch writes nothing and
+    raises `Conflict` (409) rather than allowing a silent partial write.
+
+    When the sets agree, every unpublished, complete candidate is published
+    through `mutate`, one row at a time, so each is stamped with the acting
+    Publisher and the whole commit commits or rolls back as one. An
+    already-published candidate is left untouched and is not re-stamped, a
+    removed Lesson is not a candidate at all, and only `is_published` is
+    written - no per-Lesson metadata changes. Returns the count actually
+    written and the recomputed `blocked` work list.
+    """
+    with transaction.atomic():
+        locked = type(container).objects.select_for_update().get(
+            pk=container.pk
+        )
+        lessons = _live_descendant_lessons(locked)
+        would_change, blocked = _bulk_publish_enumeration(lessons)
+        if (
+            would_change != previewed['would_change']
+            or _blocked_signature(blocked)
+            != _blocked_signature(previewed['blocked'])
+        ):
+            raise Conflict(
+                'The live Lesson set changed since the preview; nothing was '
+                'published.'
+            )
+        changed = 0
+        for lesson in lessons:
+            if lesson.is_published or lesson_missing_metadata(lesson):
+                continue
+            mutate(
+                actor=actor,
+                model=Lesson,
+                instance=lesson,
+                data={'is_published': True},
+            )
+            changed += 1
+        return {'changed': changed, 'blocked': blocked}
 
 
 def remove(*, actor, model, node):

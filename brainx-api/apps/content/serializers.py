@@ -310,6 +310,35 @@ class BulkPublishPreviewSerializer(serializers.Serializer):
     blocked = BulkPublishBlockedItemSerializer(many=True)
 
 
+class BulkPublishCommitSerializer(serializers.Serializer):
+    """The request contract of a bulk publish commit: the echoed 4.3 preview.
+
+    `would_change` and `blocked` must reproduce what the preview returned; the
+    commit recomputes the enumeration under the container lock and answers 409
+    when the two no longer agree, so the body is the client's statement of what
+    it saw, not an instruction. `blocked` reuses the preview's item shape so the
+    request and the preview cannot drift apart.
+    """
+
+    would_change = serializers.IntegerField()
+    blocked = BulkPublishBlockedItemSerializer(many=True)
+
+
+class BulkPublishResultSerializer(serializers.Serializer):
+    """The 200 body of a bulk publish commit.
+
+    `changed` is the count actually written, not the previewed count, and
+    `errors.blocked` is the reserved bulk-publication work list of incomplete
+    candidates. `blocked` sits under `errors` here, unlike the 4.3 preview which
+    carries it at the top level.
+    """
+
+    changed = serializers.IntegerField()
+    errors = serializers.DictField(
+        child=serializers.ListField(child=BulkPublishBlockedItemSerializer())
+    )
+
+
 class ReorderSerializer(serializers.Serializer):
     """The request contract of a reorder: the children's new order.
 
