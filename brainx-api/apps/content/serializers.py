@@ -285,6 +285,31 @@ class RemovalPreviewSerializer(serializers.Serializer):
     items = RemovalPreviewItemSerializer(many=True)
 
 
+class BulkPublishBlockedItemSerializer(serializers.Serializer):
+    """One incomplete Lesson a bulk publish would skip, with its missing fields.
+
+    `id` names the Lesson and `missing` lists the required metadata fields it
+    lacks, in the canonical order the publishable rule reports them, so the
+    Publisher can turn the preview into a work list.
+    """
+
+    id = serializers.UUIDField()
+    missing = serializers.ListField(child=serializers.CharField())
+
+
+class BulkPublishPreviewSerializer(serializers.Serializer):
+    """What a bulk publish would change: the count that will flip and the blocked.
+
+    The dry run is advisory and side-effect free: it writes nothing and takes
+    no request body. `would_change` counts only unpublished Lessons that pass
+    the publishable rule; `blocked` names every candidate that fails it.
+    `blocked` is reserved for bulk publication and appears nowhere else.
+    """
+
+    would_change = serializers.IntegerField()
+    blocked = BulkPublishBlockedItemSerializer(many=True)
+
+
 class ReorderSerializer(serializers.Serializer):
     """The request contract of a reorder: the children's new order.
 

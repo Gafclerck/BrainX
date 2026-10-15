@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    ChapterBulkPublishPreviewView,
     ChapterCreateView,
     ChapterLessonsReorderView,
     ChapterRemovalPreviewView,
@@ -19,6 +20,7 @@ from .views import (
     LessonRestoreView,
     LessonUnpublishView,
     LessonUpdateView,
+    ModuleBulkPublishPreviewView,
     ModuleChaptersReorderView,
     ModuleCreateView,
     ModuleRemovalPreviewView,
@@ -67,6 +69,11 @@ urlpatterns = [
         name='module-removal-preview',
     ),
     path(
+        'modules/<uuid:module_id>/bulk-publish/preview/',
+        ModuleBulkPublishPreviewView.as_view(),
+        name='module-bulk-publish-preview',
+    ),
+    path(
         'modules/<uuid:module_id>/restore/',
         ModuleRestoreView.as_view(),
         name='module-restore',
@@ -85,6 +92,11 @@ urlpatterns = [
         'chapters/<uuid:chapter_id>/removal-preview/',
         ChapterRemovalPreviewView.as_view(),
         name='chapter-removal-preview',
+    ),
+    path(
+        'chapters/<uuid:chapter_id>/bulk-publish/preview/',
+        ChapterBulkPublishPreviewView.as_view(),
+        name='chapter-bulk-publish-preview',
     ),
     path(
         'chapters/<uuid:chapter_id>/restore/',

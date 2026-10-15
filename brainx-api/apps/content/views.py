@@ -50,6 +50,7 @@ from .mutations import (
 )
 from .publication import lesson_missing_metadata
 from .serializers import (
+    BulkPublishPreviewSerializer,
     ChapterSerializer,
     CourseSerializer,
     LessonMoveSerializer,
@@ -133,6 +134,31 @@ def build_removal_preview(node):
     would_remove['total'] = len(targets)
     payload = {'would_remove': would_remove, 'items': items}
     return RemovalPreviewSerializer(payload).data
+
+
+def build_bulk_publish_preview(lessons):
+    """What a bulk publish would flip and what it would skip, as a dry run.
+
+    `lessons` is the candidate set - every live descendant Lesson of the
+    addressed container. A Lesson that fails the publishable rule is named under
+    `blocked` with its missing fields; a Lesson that passes but is already
+    published changes nothing and is counted in neither figure. Only an
+    unpublished, complete Lesson is counted in `would_change`, so the count is
+    what the commit would actually write rather than the size of the subtree.
+    The computation only reads: no row is written and `mutate` is not called.
+    """
+    would_change = 0
+    blocked = []
+    for lesson in lessons:
+        # `lesson_missing_metadata` returns fields in the canonical required
+        # order, so the missing list stays stable and matches the rule.
+        missing = list(lesson_missing_metadata(lesson))
+        if missing:
+            blocked.append({'id': lesson.pk, 'missing': missing})
+        elif not lesson.is_published:
+            would_change += 1
+    payload = {'would_change': would_change, 'blocked': blocked}
+    return BulkPublishPreviewSerializer(payload).data
 
 
 def list_response(view, queryset, serializer_class):
@@ -997,6 +1023,57 @@ class LessonRemovalPreviewView(APIView):
     def get(self, request, lesson_id):
         lesson = get_object_or_404(Lesson, pk=lesson_id)
         return Response(build_removal_preview(lesson))
+
+
+class ChapterBulkPublishPreviewView(APIView):
+    """Preview the bulk publish of a Chapter's live Lessons. Writes nothing.
+
+    Every live Lesson of the Chapter is a candidate; a Lesson already published
+    or missing required metadata changes nothing and the rest are counted in
+    `would_change`. The Chapter is resolved with the raw manager because
+    publication is orthogonal to removal, and an unknown id is a 404.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: BulkPublishPreviewSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        lessons = Lesson.objects.filter(chapter=chapter, is_deleted=False)
+        return Response(build_bulk_publish_preview(lessons))
+
+
+class ModuleBulkPublishPreviewView(APIView):
+    """Preview the bulk publish of a Module's whole subtree. Writes nothing.
+
+    The candidate set spans every Chapter beneath the Module, not only its
+    direct children, and excludes removed Lessons: bulk publication acts on the
+    live tree and never resurrects removed content.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        responses={
+            200: BulkPublishPreviewSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        lessons = Lesson.objects.filter(
+            chapter__module=module, is_deleted=False
+        )
+        return Response(build_bulk_publish_preview(lessons))
 
 
 class CourseRestoreView(APIView):
