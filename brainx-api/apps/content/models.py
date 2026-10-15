@@ -55,13 +55,18 @@ class ContentQuerySet(models.QuerySet):
     """
 
     def visible(self):
-        """The Student port: live rows only.
+        """The Student port: live, published rows only.
 
-        Applies `is_deleted=False`. The `is_published=True` clause lands here
-        when Epic 4 introduces that axis; this story must not invent the
-        column, so every live row is visible until then.
+        Applies `is_deleted=False` to every level. On a model that carries the
+        publication axis (Lesson) it also applies `is_published=True`, so a
+        draft is hidden exactly as a removed row is. The clause is conditional
+        because the same port serves the containers and Resource, which have
+        only the removal flag and must keep their `is_deleted`-only behaviour.
         """
-        return self.filter(is_deleted=False)
+        queryset = self.filter(is_deleted=False)
+        if 'is_published' in {field.name for field in self.model._meta.get_fields()}:
+            queryset = queryset.filter(is_published=True)
+        return queryset
 
     def manageable(self):
         """The Publisher port: every row, soft-deleted rows included.
@@ -190,6 +195,10 @@ class Lesson(UUIDModel, TimeStampedModel):
     course_date = models.DateField()
     position = models.PositiveIntegerField()
     is_deleted = models.BooleanField(default=False)
+    # The publication axis (Epic 4). Independent of `is_deleted`: all four
+    # combinations are representable, and a draft or a removed published
+    # Lesson are different states. Set only by the publish action.
+    is_published = models.BooleanField(default=False)
     # PROTECT: an account that has touched content cannot be deleted, so the
     # audit trail is never cascaded away.
     last_modified_by = models.ForeignKey(

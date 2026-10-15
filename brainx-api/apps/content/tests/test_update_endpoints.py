@@ -286,6 +286,62 @@ class LessonRequiredFieldTests(UpdateEndpointTestCase):
         self.assertEqual(self.lesson.description, 'Only this')
 
 
+class PublishedLessonWriteTests(UpdateEndpointTestCase):
+    """The publishable rule also guards a write to a published Lesson (4.1).
+
+    `description` is optional on a draft but required to publish, so it is the
+    field an ordinary update could otherwise blank on a Lesson a Student can
+    already see. The update path asks the same rule the publish action does.
+    """
+
+    def publish(self):
+        self.lesson.is_published = True
+        self.lesson.save(update_fields=['is_published'])
+        self.lesson.refresh_from_db()
+
+    def test_blanking_description_on_a_published_lesson_is_rejected(self):
+        self.publish()
+
+        response = self.publisher_client.patch(
+            self.update_url(Lesson, self.lesson.pk),
+            {'description': ''},
+            format='json',
+        )
+
+        body = assert_envelope(self, response, 'validation_error', 400)
+        self.assertIn('description', body['errors'])
+        self.lesson.refresh_from_db()
+        self.assertEqual(self.lesson.description, 'Opening')
+        self.assertTrue(self.lesson.is_published)
+
+    def test_blanking_description_on_a_draft_is_accepted(self):
+        response = self.publisher_client.patch(
+            self.update_url(Lesson, self.lesson.pk),
+            {'description': ''},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.lesson.refresh_from_db()
+        self.assertEqual(self.lesson.description, '')
+        self.assertFalse(self.lesson.is_published)
+
+    def test_a_complete_edit_to_a_published_lesson_still_works(self):
+        self.publish()
+
+        response = self.publisher_client.patch(
+            self.update_url(Lesson, self.lesson.pk),
+            {'description': 'Rewritten', 'teacher': 'Mr Euler'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.lesson.refresh_from_db()
+        self.assertEqual(self.lesson.description, 'Rewritten')
+        self.assertEqual(self.lesson.teacher, 'Mr Euler')
+        self.assertTrue(self.lesson.is_published)
+
+
 class ContainerRequiredFieldTests(UpdateEndpointTestCase):
     def test_blanking_a_container_name_is_rejected_and_named(self):
         rows = {

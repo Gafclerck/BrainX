@@ -48,6 +48,7 @@ from .mutations import (
     reorder_children,
     restore,
 )
+from .publication import lesson_missing_metadata
 from .serializers import (
     ChapterSerializer,
     CourseSerializer,
@@ -643,7 +644,11 @@ class LessonUpdateView(APIView):
 
     A partial update leaves an omitted field alone, but a required field
     (`title`, `teacher`, `course_date`) that is present and blank is rejected
-    400, naming it under `errors`.
+    400, naming it under `errors`. On an already-published Lesson the
+    publishable rule applies too: a write that would leave any required
+    metadata blank - notably `description`, which is optional on a draft - is
+    rejected 400 by the same rule the publish action uses, so an ordinary edit
+    cannot strip a published Lesson of what made it publishable.
     """
 
     permission_classes = [IsAuthenticated, IsPublisher]
@@ -662,6 +667,12 @@ class LessonUpdateView(APIView):
         lesson = get_object_or_404(Lesson, pk=lesson_id)
         serializer = LessonSerializer(lesson, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        if lesson.is_published:
+            missing = lesson_missing_metadata(
+                lesson, serializer.validated_data
+            )
+            if missing:
+                raise serializers.ValidationError(missing)
         lesson = mutate(
             actor=request.user,
             model=Lesson,
@@ -829,6 +840,49 @@ class LessonMoveView(APIView):
             actor=request.user, lesson=lesson, target_chapter=target
         )
         return Response(LessonSerializer(moved).data)
+
+
+class LessonPublishView(APIView):
+    """Publish a complete Lesson, addressed by its own UUID.
+
+    Publication requires the Lesson's metadata to be complete: `title`,
+    `description`, `teacher` and `course_date`. A missing field is a 400 whose
+    `errors` names every one, not only the first. Publishing a Lesson that is
+    already published is idempotent - the row is returned unchanged and is not
+    re-stamped. The write goes through `mutate`, so `last_modified_by` is the
+    acting Publisher and `is_published` stays server-owned.
+
+    Publication is orthogonal to removal: there is no special case for a
+    soft-deleted Lesson, and the action resolves it with the raw manager as the
+    update view does, so all four flag combinations stay reachable.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        missing = lesson_missing_metadata(lesson)
+        if missing:
+            raise serializers.ValidationError(missing)
+        if lesson.is_published:
+            return Response(LessonSerializer(lesson).data)
+        published = mutate(
+            actor=request.user,
+            model=Lesson,
+            instance=lesson,
+            data={'is_published': True},
+        )
+        return Response(LessonSerializer(published).data)
 
 
 class CourseRemovalPreviewView(APIView):

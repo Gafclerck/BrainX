@@ -107,6 +107,10 @@ class LessonSerializer(serializers.ModelSerializer):
     `errors` map. On a partial update the field may be omitted, but supplying it
     blank is rejected the same way - the model's `blank=False` keeps the field
     non-blank. `description` is optional at creation (FR-4, Epic 4).
+
+    `is_published` is the publication axis (Epic 4). It is read-only like
+    `is_deleted`: only the publish action sets it, so it is exposed on every
+    read and never accepted from a body.
     """
 
     last_modified_by = LastModifiedBySerializer(read_only=True)
@@ -121,10 +125,17 @@ class LessonSerializer(serializers.ModelSerializer):
             'course_date',
             'position',
             'is_deleted',
+            'is_published',
             'last_modified_by',
             'updated_at',
         )
-        read_only_fields = ('id', 'position', 'is_deleted', 'updated_at')
+        read_only_fields = (
+            'id',
+            'position',
+            'is_deleted',
+            'is_published',
+            'updated_at',
+        )
 
 
 class ResourceSerializer(serializers.ModelSerializer):

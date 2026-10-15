@@ -190,6 +190,10 @@ class ResourceEndpointTestCase(ContentEndpointTestCase):
             teacher='Ms Ada',
             course_date=date(2026, 9, 1),
             position=1,
+            # Published, so the Student retrieval port resolves the parent
+            # Lesson: `ResourceRetrievalView` reads it through `visible()`,
+            # which now hides a draft exactly as it hides a removed row.
+            is_published=True,
             last_modified_by=self.publisher,
         )
 
@@ -1418,6 +1422,17 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
         resource = self.file_resource()
         self.lesson.is_deleted = True
         self.lesson.save(update_fields=['is_deleted'])
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+
+        assert_envelope(self, response, 'not_found', 404)
+
+    def test_an_unpublished_parent_lesson_is_404(self):
+        # Story 4.1 widens the Student port: a Resource whose parent Lesson is
+        # a draft resolves to 404 exactly as one whose parent is removed does.
+        resource = self.file_resource()
+        self.lesson.is_published = False
+        self.lesson.save(update_fields=['is_published'])
 
         response = self.verified_client.get(self.retrieve_url(resource))
 

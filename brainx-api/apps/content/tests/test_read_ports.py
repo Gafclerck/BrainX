@@ -62,6 +62,9 @@ class ReadPortTestCase(ContentEndpointTestCase):
             teacher='Ms Ada',
             course_date=date(2026, 9, 1),
             position=1,
+            # Published, so the widened Student port keeps showing it: a
+            # Lesson that carries no publication state is a draft (Epic 4).
+            is_published=True,
             last_modified_by=self.publisher,
         )
         self.deleted_lesson = Lesson.objects.create(
