@@ -1423,9 +1423,22 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
         self.lesson.is_deleted = True
         self.lesson.save(update_fields=['is_deleted'])
 
-        response = self.verified_client.get(self.retrieve_url(resource))
-
-        assert_envelope(self, response, 'not_found', 404)
+        removed = assert_envelope(
+            self,
+            self.verified_client.get(self.retrieve_url(resource)),
+            'not_found',
+            404,
+        )
+        # A removed parent is indistinguishable from a nonexistent id.
+        nonexistent = assert_envelope(
+            self,
+            self.verified_client.get(
+                reverse('resource-retrieve', args=[uuid.uuid4()])
+            ),
+            'not_found',
+            404,
+        )
+        self.assertEqual(removed, nonexistent)
 
     def test_an_unpublished_parent_lesson_is_404(self):
         # Story 4.1 widens the Student port: a Resource whose parent Lesson is
@@ -1437,6 +1450,50 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
         response = self.verified_client.get(self.retrieve_url(resource))
 
         assert_envelope(self, response, 'not_found', 404)
+
+    def test_unpublishing_a_parent_lesson_revokes_retrieval_until_re_published(
+        self,
+    ):
+        # End to end over the surface Story 4.2 adds: the Publisher's unpublish
+        # hides the file from the Student, and re-publishing brings it back.
+        resource = self.file_resource()
+
+        response = self.verified_client.get(self.retrieve_url(resource))
+        self.assertEqual(response.status_code, 200)
+
+        self.publisher_client.post(
+            reverse('lesson-unpublish', args=[self.lesson.pk])
+        )
+        hidden = assert_envelope(
+            self,
+            self.verified_client.get(self.retrieve_url(resource)),
+            'not_found',
+            404,
+        )
+        # An unpublished parent is indistinguishable from a nonexistent id.
+        nonexistent = assert_envelope(
+            self,
+            self.verified_client.get(
+                reverse('resource-retrieve', args=[uuid.uuid4()])
+            ),
+            'not_found',
+            404,
+        )
+        self.assertEqual(hidden, nonexistent)
+
+        # Re-publishing runs Story 4.1's metadata gate, so the Lesson is
+        # completed through the update surface first.
+        response = self.publisher_client.patch(
+            reverse('lesson-update', args=[self.lesson.pk]),
+            {'description': 'Opening'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.publisher_client.post(
+            reverse('lesson-publish', args=[self.lesson.pk])
+        )
+        response = self.verified_client.get(self.retrieve_url(resource))
+        self.assertEqual(response.status_code, 200)
 
     def test_a_removal_revokes_retrieval_until_it_is_restored(self):
         # End to end over the surface Story 3.5 adds: the Publisher's removal

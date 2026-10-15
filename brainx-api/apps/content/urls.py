@@ -17,6 +17,7 @@ from .views import (
     LessonRemovalPreviewView,
     LessonResourcesView,
     LessonRestoreView,
+    LessonUnpublishView,
     LessonUpdateView,
     ModuleChaptersReorderView,
     ModuleCreateView,
@@ -104,6 +105,11 @@ urlpatterns = [
         'lessons/<uuid:lesson_id>/publish/',
         LessonPublishView.as_view(),
         name='lesson-publish',
+    ),
+    path(
+        'lessons/<uuid:lesson_id>/unpublish/',
+        LessonUnpublishView.as_view(),
+        name='lesson-unpublish',
     ),
     path(
         'lessons/<uuid:lesson_id>/removal-preview/',

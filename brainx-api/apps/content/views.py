@@ -885,6 +885,48 @@ class LessonPublishView(APIView):
         return Response(LessonSerializer(published).data)
 
 
+class LessonUnpublishView(APIView):
+    """Withdraw a Lesson from every Student read path, addressed by its UUID.
+
+    Unpublishing clears `is_published`, which `visible()` filters, so the
+    Lesson and its Resources leave every Student read path at once. It is never
+    gated on metadata completeness: an urgent withdrawal of a Lesson missing
+    required metadata must still succeed, so the publishable rule is not
+    consulted. Unpublishing a Lesson that is already unpublished is idempotent -
+    the row is returned unchanged and is not re-stamped. The write goes through
+    `mutate`, so `last_modified_by` is the acting Publisher and `is_published`
+    stays server-owned.
+
+    Unpublishing is orthogonal to removal: there is no special case for a
+    soft-deleted Lesson, and the action resolves it with the raw manager as the
+    publish view does, so a removed published Lesson reaches
+    `(is_published=False, is_deleted=True)`.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: LessonSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, pk=lesson_id)
+        if not lesson.is_published:
+            return Response(LessonSerializer(lesson).data)
+        unpublished = mutate(
+            actor=request.user,
+            model=Lesson,
+            instance=lesson,
+            data={'is_published': False},
+        )
+        return Response(LessonSerializer(unpublished).data)
+
+
 class CourseRemovalPreviewView(APIView):
     """Preview what removing a Course would hide. Writes nothing."""
 
@@ -1074,11 +1116,17 @@ class ResourceRetrievalView(APIView):
                 {'disposition': ['disposition must be inline or attachment']}
             )
 
-        resource = get_object_or_404(Resource.objects.visible(), pk=resource_id)
-        # The parent Lesson is resolved through its own Student port too, so a
-        # soft-deleted (and, once Epic 4 widens `visible()`, an unpublished)
-        # Lesson hides its Resources with the same 404 as a nonexistent id.
-        get_object_or_404(Lesson.objects.visible(), pk=resource.lesson_id)
+        # The parent Lesson is resolved through its own Student port inside the
+        # same lookup, so a soft-deleted or unpublished Lesson hides its
+        # Resources with the byte-identical 404 of a nonexistent id - a
+        # separate lookup would name the Lesson in `detail` and leak that the
+        # Resource row exists.
+        resource = get_object_or_404(
+            Resource.objects.visible().filter(
+                lesson_id__in=Lesson.objects.visible().values('pk')
+            ),
+            pk=resource_id,
+        )
 
         if resource.type not in ('document', 'image') or not resource.file:
             raise Http404
