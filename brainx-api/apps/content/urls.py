@@ -1,6 +1,10 @@
 from django.urls import path
 
 from .views import (
+    BrowseChapterListView,
+    BrowseCourseListView,
+    BrowseLessonListView,
+    BrowseModuleListView,
     ChapterBulkPublishPreviewView,
     ChapterBulkPublishView,
     ChapterCreateView,
@@ -184,5 +188,27 @@ urlpatterns = [
         'lessons/<uuid:lesson_id>/move/',
         LessonMoveView.as_view(),
         name='lesson-move',
+    ),
+    # The Student browse surface walks the tree one level at a time, under its
+    # own `browse/` prefix so it can never collide with a Publisher route.
+    path(
+        'browse/courses/',
+        BrowseCourseListView.as_view(),
+        name='browse-course-list',
+    ),
+    path(
+        'browse/courses/<uuid:course_id>/modules/',
+        BrowseModuleListView.as_view(),
+        name='browse-module-list',
+    ),
+    path(
+        'browse/modules/<uuid:module_id>/chapters/',
+        BrowseChapterListView.as_view(),
+        name='browse-chapter-list',
+    ),
+    path(
+        'browse/chapters/<uuid:chapter_id>/lessons/',
+        BrowseLessonListView.as_view(),
+        name='browse-lesson-list',
     ),
 ]

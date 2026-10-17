@@ -49,8 +49,11 @@ from .mutations import (
     reorder_children,
     restore,
 )
+from .ordering import order_containers, order_lessons
 from .publication import lesson_missing_metadata
 from .serializers import (
+    BrowseContainerSerializer,
+    BrowseLessonSerializer,
     BulkPublishCommitSerializer,
     BulkPublishPreviewSerializer,
     BulkPublishResultSerializer,
@@ -64,6 +67,7 @@ from .serializers import (
     ResourceRetrievalSerializer,
     ResourceSerializer,
 )
+from .visibility import visible_content
 
 # The five-key envelope every rejection uses, described locally so each
 # operation's contract is honest in the generated schema. Named for content
@@ -165,12 +169,14 @@ def build_bulk_publish_preview(lessons):
 
 
 def list_response(view, queryset, serializer_class):
-    """A Publisher listing read through `manageable()`, paged by the default.
+    """A paginated listing shared by the Publisher and Student read views.
 
-    `queryset` is expected to be the output of `manageable()`, so soft-deleted
-    rows are present. `view` supplies the project's page-number
-    paginator (20 per page, no `page_size` parameter); the response carries the
-    usual `count`/`next`/`previous`/`results` frame.
+    The caller hands in the queryset already scoped to the right port, so a
+    Publisher listing reads through `manageable()` (soft-deleted rows present)
+    and a browse listing through `visible_content()` (hidden rows absent).
+    `view` supplies the project's page-number paginator (20 per page, no
+    `page_size` parameter); the response carries the usual
+    `count`/`next`/`previous`/`results` frame.
     """
     page = view.paginate_queryset(queryset)
     serializer = serializer_class(
@@ -1307,3 +1313,121 @@ class ResourceRetrievalView(APIView):
         }
         # The signed URL is a short-lived credential; keep it out of caches.
         return Response(payload, headers={'Cache-Control': 'no-store'})
+
+
+class BrowseCourseListView(GenericAPIView):
+    """List the Courses that hold at least one visible Lesson (Story 5.2).
+
+    This is the Student port by construction: `IsAuthenticated` is the whole
+    gate, so an authenticated Publisher sees the same published tree and no
+    caller sees an unpublished or soft-deleted Course. Rows are `{id, name}` in
+    the shared container order, page-number paginated at the project default,
+    and the listing reads through `visible_content()` rather than a view-local
+    filter on the removal or publication flags.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: BrowseContainerSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            # The `page` parameter is the only 404 source: there is no parent.
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request):
+        return list_response(
+            self,
+            order_containers(visible_content().courses),
+            BrowseContainerSerializer,
+        )
+
+
+class BrowseModuleListView(GenericAPIView):
+    """List the visible Modules under one visible Course (Story 5.2).
+
+    The parent Course is resolved through `visible_content()` - a single lookup
+    that already requires a visible descendant Lesson - so a hidden Course and
+    a nonexistent one both raise the same 404, byte for byte. The Modules listed
+    are the visible ones scoped to that Course.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: BrowseContainerSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, course_id):
+        visible = visible_content()
+        course = get_object_or_404(visible.courses, pk=course_id)
+        return list_response(
+            self,
+            order_containers(visible.modules.filter(course=course)),
+            BrowseContainerSerializer,
+        )
+
+
+class BrowseChapterListView(GenericAPIView):
+    """List the visible Chapters under one visible Module (Story 5.2).
+
+    As with the Module listing, the parent is resolved through
+    `visible_content()` so a hidden or nonexistent Module id gives the same 404,
+    and the Chapters listed are the visible ones scoped to that Module.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: BrowseContainerSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, module_id):
+        visible = visible_content()
+        module = get_object_or_404(visible.modules, pk=module_id)
+        return list_response(
+            self,
+            order_containers(visible.chapters.filter(module=module)),
+            BrowseContainerSerializer,
+        )
+
+
+class BrowseLessonListView(GenericAPIView):
+    """List the visible Lessons under one visible Chapter (Story 5.2).
+
+    The parent Chapter is resolved through `visible_content()`, so a Chapter
+    whose Lessons are all unpublished is as hidden as a nonexistent id and both
+    answer the same 404. The Lessons are read through the Student port and the
+    shared total order, with the ancestor names joined so each row can carry the
+    five context fields without a query per row.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: BrowseLessonSerializer(many=True),
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, chapter_id):
+        visible = visible_content()
+        chapter = get_object_or_404(visible.chapters, pk=chapter_id)
+        lessons = (
+            Lesson.objects.visible()
+            .select_related('chapter__module__course')
+            .filter(chapter=chapter)
+        )
+        return list_response(
+            self,
+            order_lessons(lessons),
+            BrowseLessonSerializer,
+        )

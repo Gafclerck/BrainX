@@ -82,6 +82,38 @@ class LessonContextSerializer(serializers.ModelSerializer):
         )
 
 
+class BrowseContainerSerializer(serializers.Serializer):
+    """A Course, Module or Chapter as a Student browse row: `{id, name}`.
+
+    The three container levels share one row shape for browse because the list
+    that carries the row already conveys the level and the route carries the
+    parent; each level's order is position-then-id, so no `position` is needed
+    to reconstruct it. Neither `position` nor `is_deleted` is exposed: the
+    Student only ever sees visible rows in their total order, so neither is
+    information it may act on. A plain `Serializer`, not a `ModelSerializer`,
+    because it renders all three models through the two fields they share.
+    """
+
+    id = serializers.UUIDField(read_only=True)
+    name = serializers.CharField(read_only=True)
+
+
+class BrowseLessonSerializer(LessonContextSerializer):
+    """A Lesson browse row: `{id, title}` plus the five flat context fields.
+
+    It subclasses the single 5.1 context serializer, so the five fields stay
+    identical in shape and value to Lesson detail and search. It only adds the
+    two fields that identify the row itself, both read-only; the parent context
+    is never repeated as a nested object.
+    """
+
+    id = serializers.UUIDField(read_only=True)
+    title = serializers.CharField(read_only=True)
+
+    class Meta(LessonContextSerializer.Meta):
+        fields = ('id', 'title') + LessonContextSerializer.Meta.fields
+
+
 class CourseSerializer(serializers.ModelSerializer):
     """Create or update a Course, the one level that carries a subject."""
 
