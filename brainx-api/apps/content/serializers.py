@@ -44,6 +44,44 @@ class LastModifiedBySerializer(serializers.ModelSerializer):
         fields = ('id', 'email')
 
 
+class LessonContextSerializer(serializers.ModelSerializer):
+    """The five-field context block for a Lesson (AD-15).
+
+    The serializer emits exactly `course_name`, `module_name`, `chapter_name`,
+    `teacher` and `course_date`, all flat. The names of the ancestor containers
+    are read through `chapter__module__course`, so the output never nests an
+    object; every field is read-only, and there is no writable field a request
+    could fill in. It is the single source of the five fields shared by browse,
+    Lesson detail and search, so those results cannot drift apart.
+
+    A consumer reading many rows should `select_related(
+    'chapter__module__course')` on the queryset, because each of the three
+    ancestor names is a database column reached through that join.
+    """
+
+    course_name = serializers.CharField(
+        source='chapter.module.course.name', read_only=True
+    )
+    module_name = serializers.CharField(
+        source='chapter.module.name', read_only=True
+    )
+    chapter_name = serializers.CharField(
+        source='chapter.name', read_only=True
+    )
+    teacher = serializers.CharField(read_only=True)
+    course_date = serializers.DateField(read_only=True)
+
+    class Meta:
+        model = Lesson
+        fields = (
+            'course_name',
+            'module_name',
+            'chapter_name',
+            'teacher',
+            'course_date',
+        )
+
+
 class CourseSerializer(serializers.ModelSerializer):
     """Create or update a Course, the one level that carries a subject."""
 
