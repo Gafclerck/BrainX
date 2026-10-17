@@ -139,11 +139,18 @@ class CourseListTests(BrowseTestCase):
         self.assertNotIn(str(hidden.pk), self.ids(response))
 
     def test_rows_carry_only_id_and_name(self):
-        row = self.student_client.get(self.course_url()).json()['results'][0]
+        cases = (
+            (self.course_url(), str(self.course.pk), 'Maths'),
+            (self.module_url(), str(self.module.pk), 'Module 1'),
+            (self.chapter_url(), str(self.chapter.pk), 'Chapter 1'),
+        )
+        for url, expected_id, expected_name in cases:
+            with self.subTest(url=url):
+                row = self.student_client.get(url).json()['results'][0]
 
-        self.assertEqual(set(row), {'id', 'name'})
-        self.assertEqual(row['id'], str(self.course.pk))
-        self.assertEqual(row['name'], 'Maths')
+                self.assertEqual(set(row), {'id', 'name'})
+                self.assertEqual(row['id'], expected_id)
+                self.assertEqual(row['name'], expected_name)
 
     def test_an_empty_course_is_hidden(self):
         self.make_course(name='Empty', position=2)
@@ -686,13 +693,14 @@ class BrowseSchemaTests(BrowseTestCase):
                 self.assertIn(path, paths)
                 self.assertIn('get', paths[path])
 
-    def test_each_browse_operation_declares_the_401_and_404_envelopes(self):
+    def test_each_browse_operation_declares_the_expected_responses(self):
         schema = SchemaGenerator().get_schema(request=None, public=True)
         paths = schema['paths']
 
         for path in self.browse_paths():
             with self.subTest(path=path):
                 responses = paths[path]['get']['responses']
+                # 401 and 404 envelopes
                 for status_code in ('401', '404'):
                     self.assertIn(status_code, responses)
                     self.assertEqual(
@@ -701,6 +709,18 @@ class BrowseSchemaTests(BrowseTestCase):
                         ]['$ref'],
                         '#/components/schemas/ContentErrorResponse',
                     )
+                # 200 response reference
+                self.assertIn('200', responses)
+                if path.endswith('/lessons/'):
+                    expected_ref = '#/components/schemas/PaginatedBrowseLessonList'
+                else:
+                    expected_ref = '#/components/schemas/PaginatedBrowseContainerList'
+                self.assertEqual(
+                    responses['200']['content']['application/json']['schema'][
+                        '$ref'
+                    ],
+                    expected_ref,
+                )
 
 
 class BrowseSourceGuardTests(SimpleTestCase):

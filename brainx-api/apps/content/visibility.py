@@ -15,12 +15,13 @@ Every step is a `pk__in` subquery, so one request runs a fixed number of
 queries regardless of how wide or deep the tree is - the walk is bounded at the
 four levels of the content tree, and no subquery is executed on its own.
 
-It composes the two existing read ports instead of adding a selector, so the
-port guard on `ContentQuerySet` stays at exactly `visible`, `manageable` and
-`with_deleted`. A consumer passes the returned querysets straight to
-`order_containers()`; `.values('pk')` of each is its id set, which is what a
-scoped parent lookup intersects with so a hidden parent is never an existence
-oracle.
+It uses the Student read port (`Lesson.objects.visible()`) to seed the walk and
+the container `visible()` port for the container sets, without adding a new
+queryset selector, so the port guard on `ContentQuerySet` stays at exactly
+`visible`, `manageable` and `with_deleted`. Consumers pass the returned
+querysets straight to `order_containers()` or to `get_object_or_404()` when
+resolving a parent, so a hidden or nonexistent parent id produces the same 404
+as the predicate itself does.
 """
 
 from collections import namedtuple

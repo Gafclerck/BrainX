@@ -1,22 +1,23 @@
 """The create, list, update, reorder and move endpoints of the content tree.
 
-Each endpoint is Publisher-only and acts on exactly one level. The four
-collection routes answer a `POST` with a create and a `GET` with the Publisher
-listing, which reads through `manageable()` (AD-2) so it includes rows a Student
-cannot see; the listing is page-number paginated by the project default. The
-parent is resolved from the URL rather than the body, so a node can never be
-created under a parent other than the path names, and an unknown parent id is a
-404 before any row is written. `position` is assigned by the server on create
-(the next free slot under the parent); explicit ordering is this story's,
-through the reorder endpoints, which take a container's whole ordered child
-list, and the Lesson move endpoint, which relocates a single Lesson to another
-Chapter.
-An update is a `PATCH` on the row's own UUID and writes only the fields the
-body carries, so a descriptive edit never touches `position` and never moves
-the row to a new parent. The write itself - row, actor stamp and all - belongs
-to `mutate` (and the reorder/move helpers built on it), so a view only
-validates, resolves and looks the row up; it never persists a content row
-itself.
+Publisher endpoints act on exactly one level (create/list under parent for
+containers and lessons, detail update, reorder, remove/restore, publish actions).
+Student browse endpoints are the four per-level listings under `browse/` and
+require only `IsAuthenticated`. The four Publisher collection routes answer a
+`POST` with a create and a `GET` with the Publisher listing, which reads through
+`manageable()` (AD-2) so it includes rows a Student cannot see; all listings are
+page-number paginated at the project default. The parent is resolved from the
+URL rather than the body, so a node can never be created under a parent other
+than the path names, and an unknown parent id is a 404 before any row is
+written. `position` is assigned by the server on create (the next free slot
+under the parent); explicit ordering is via the reorder endpoints, which take a
+container's whole ordered child list, and the Lesson move endpoint, which
+relocates a single Lesson to another Chapter. An update is a `PATCH` on the
+row's own UUID and writes only the fields the body carries, so a descriptive
+edit never touches `position` and never moves the row to a new parent. The
+write itself - row, actor stamp and all - belongs to `mutate` (and the
+reorder/move helpers built on it), so a view only validates, resolves and looks
+the row up; it never persists a content row itself.
 """
 
 from django.conf import settings
@@ -171,12 +172,16 @@ def build_bulk_publish_preview(lessons):
 def list_response(view, queryset, serializer_class):
     """A paginated listing shared by the Publisher and Student read views.
 
-    The caller hands in the queryset already scoped to the right port, so a
-    Publisher listing reads through `manageable()` (soft-deleted rows present)
-    and a browse listing through `visible_content()` (hidden rows absent).
-    `view` supplies the project's page-number paginator (20 per page, no
-    `page_size` parameter); the response carries the usual
-    `count`/`next`/`previous`/`results` frame.
+    The caller hands in the queryset already scoped to the right read surface:
+    Publisher collection listings pass a queryset filtered by the parent that
+    uses the Publisher port (`manageable()`), and container browse listings pass
+    `visible_content()` querysets intersected with the parent. The lesson browse
+    listing passes `Lesson.objects.visible().select_related(...).filter(chapter=chapter)`
+    (ordered by `order_lessons`). In all cases the queryset is already the
+    correct, final set, so the helper does not re-apply visibility. `view`
+    supplies the project's page-number paginator (20 per page, no `page_size`
+    parameter); the response carries the usual `count`/`next`/`previous`/`results`
+    frame.
     """
     page = view.paginate_queryset(queryset)
     serializer = serializer_class(
