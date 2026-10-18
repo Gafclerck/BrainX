@@ -655,6 +655,234 @@ class SearchSchemaTests(SearchTestCase):
         self.assertFalse(by_name['sort'].get('required', False))
 
 
+class SearchCourseDateFilterTests(SearchTestCase):
+    """Story 5.6: the window narrows matches, whatever the `sort`."""
+
+    def setUp(self):
+        super().setUp()
+        # Three matching Lessons at three dates in the base Course ...
+        self.old = self.make_searchable_lesson(
+            self.chapter, title='Algorithms basics', position=2,
+            course_date=date(2026, 8, 15),
+        )
+        self.mid = self.make_searchable_lesson(
+            self.chapter, title='Algorithms practice', position=3,
+            course_date=date(2026, 9, 1),
+        )
+        self.new = self.make_searchable_lesson(
+            self.chapter, title='Algorithms recap', position=4,
+            course_date=date(2026, 9, 25),
+        )
+        # ... and a second Course whose matching Lesson sits outside every
+        # window below, so a bound can never leak it back in through `sort`.
+        zebra = self.make_course(name='Zebra maths', position=2)
+        zebra_module = self.make_module(zebra, name='Module 1')
+        zebra_chapter = self.make_chapter(zebra_module, name='Chapter 1')
+        self.outside = self.make_searchable_lesson(
+            zebra_chapter, title='Algorithms far away',
+            course_date=date(2026, 7, 1),
+        )
+
+    def test_no_bounds_keep_every_match_in_the_total_order(self):
+        self.assertEqual(
+            self.ids(self.search(query='algorithms')),
+            [
+                str(self.new.pk),
+                str(self.mid.pk),
+                str(self.old.pk),
+                str(self.outside.pk),
+            ],
+        )
+
+    def test_a_lower_bound_narrows_the_matches(self):
+        self.assertEqual(
+            self.ids(
+                self.search(query='algorithms', course_date_from='2026-08-15')
+            ),
+            [str(self.new.pk), str(self.mid.pk), str(self.old.pk)],
+        )
+
+    def test_an_upper_bound_alone_narrows_the_matches(self):
+        self.assertEqual(
+            self.ids(
+                self.search(query='algorithms', course_date_to='2026-08-15')
+            ),
+            [str(self.old.pk), str(self.outside.pk)],
+        )
+
+    def test_both_bounds_are_inclusive(self):
+        self.assertEqual(
+            self.ids(
+                self.search(
+                    query='algorithms',
+                    course_date_from='2026-08-15',
+                    course_date_to='2026-09-01',
+                )
+            ),
+            [str(self.mid.pk), str(self.old.pk)],
+        )
+
+        # The same window over a result set wider than one page: 22 more
+        # in-window matches, so the narrowed listing has to paginate without
+        # losing or duplicating a row.
+        added = [
+            self.make_searchable_lesson(
+                self.chapter,
+                title=f'Algorithms in window {position}',
+                position=position,
+                course_date=date(2026, 8, 20),
+            )
+            for position in range(10, 32)
+        ]
+        window = {
+            'course_date_from': '2026-08-15',
+            'course_date_to': '2026-09-01',
+        }
+        first = self.search(query='algorithms', **window).json()
+        second = self.search(query='algorithms', page=2, **window).json()
+
+        expected = {str(row.pk) for row in [self.mid, self.old, *added]}
+        self.assertEqual(first['count'], 24)
+        self.assertEqual(len(first['results']), 20)
+        self.assertEqual(len(second['results']), 4)
+        first_ids = {row['id'] for row in first['results']}
+        second_ids = {row['id'] for row in second['results']}
+        self.assertFalse(first_ids & second_ids)
+        self.assertEqual(first_ids | second_ids, expected)
+        for row in first['results'] + second['results']:
+            self.assertTrue('2026-08-15' <= row['course_date'] <= '2026-09-01')
+
+    def test_a_reversed_window_is_a_200_with_no_results(self):
+        response = self.search(
+            query='algorithms',
+            course_date_from='2026-09-25',
+            course_date_to='2026-07-01',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['count'], 0)
+        self.assertEqual(body['results'], [])
+
+    def test_the_window_applies_whatever_the_sort(self):
+        response = self.search(
+            query='algorithms',
+            sort='course',
+            course_date_from='2026-09-01',
+        )
+
+        # `sort=course` re-orders the rows the window selected; it never
+        # widens them, so the out-of-range 'Zebra maths' row stays out.
+        self.assertEqual(
+            self.ids(response), [str(self.mid.pk), str(self.new.pk)]
+        )
+
+    def test_a_malformed_bound_is_a_400_naming_the_offending_field(self):
+        # The exact-shape rules of AC 8: `strptime` alone would accept the
+        # second value, `fromisoformat` would also accept the third. The
+        # rejection costs only the JWT account lookup - the bound parses as
+        # a string before any content query can run.
+        malformed = ('01-09-2026', '2026-9-1', '20260901', '', '2026-02-30')
+        for name in ('course_date_from', 'course_date_to'):
+            for value in malformed:
+                with self.subTest(name=name, value=value):
+                    with self.assertNumQueries(1):
+                        response = self.search(
+                            query='algorithms', **{name: value}
+                        )
+                    body = assert_envelope(
+                        self, response, 'validation_error', 400
+                    )
+
+                    self.assertIn(name, body['errors'])
+
+    def test_a_malformed_bound_is_rejected_even_with_an_empty_query(self):
+        # The bounds parse ahead of the empty-query answer, so AC 8 holds
+        # whatever the query is.
+        body = assert_envelope(
+            self,
+            self.search(query='', course_date_from='2026-9-1'),
+            'validation_error',
+            400,
+        )
+
+        self.assertIn('course_date_from', body['errors'])
+
+    def test_the_window_does_not_change_the_query_count(self):
+        # Validation is string-only and the window rides the same statement,
+        # so the pinned count of the listing stands with a bound on.
+        with self.assertNumQueries(3):
+            self.search(
+                query='algorithms',
+                course_date_from='2026-08-01',
+                course_date_to='2026-09-30',
+            )
+
+    def test_the_schema_declares_both_bounds(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        path = f'{settings.API_PREFIX}/search/lessons/'
+        by_name = {
+            param['name']: param
+            for param in schema['paths'][path]['get']['parameters']
+        }
+
+        for name in ('course_date_from', 'course_date_to'):
+            with self.subTest(name=name):
+                self.assertIn(name, by_name)
+                # drf-spectacular omits `required` entirely when it is false.
+                self.assertFalse(by_name[name].get('required', False))
+
+
+class SearchExactTitlePlacementTests(SearchTestCase):
+    """Story 5.6 AC 5: the match sits in the first page of its course date.
+
+    An exact-title match whose `course_date` is older than twenty newer
+    matches can only appear once the leading date key has handed over to its
+    date group - relevance never floats it above a newer lesson - and it
+    must already be inside the first page that group occupies.
+    """
+
+    def test_the_match_is_in_the_first_page_that_shares_its_course_date(self):
+        # 22 newer matching rows, so the target's date group cannot start
+        # before page 2.
+        for position in range(2, 24):
+            self.make_searchable_lesson(
+                self.chapter,
+                title=f'Sorting algorithms recap {position}',
+                position=position,
+                course_date=date(2026, 9, 20),
+            )
+        target = self.make_searchable_lesson(
+            self.chapter, title='Sorting algorithms', position=24,
+            course_date=date(2026, 9, 1),
+        )
+        # A sibling sharing the target's date, so the group is a real block
+        # the match has to hold its place inside.
+        sibling = self.make_searchable_lesson(
+            self.chapter, title='Sorting algorithms again', position=25,
+            course_date=date(2026, 9, 1),
+        )
+
+        first = self.search(query='sorting algorithms').json()
+        second = self.search(query='sorting algorithms', page=2).json()
+
+        # No page before the second shares the target's course date ...
+        self.assertEqual(first['count'], 24)
+        self.assertEqual(len(first['results']), 20)
+        self.assertEqual(
+            {row['course_date'] for row in first['results']}, {'2026-09-20'}
+        )
+        # ... and the first page that does already holds the match, inside
+        # the block of rows that share its course date.
+        dated = [
+            row['id']
+            for row in second['results']
+            if row['course_date'] == '2026-09-01'
+        ]
+        self.assertIn(str(target.pk), dated)
+        self.assertIn(str(sibling.pk), dated)
+
+
 class SearchSourceGuardTests(SimpleTestCase):
     """The view reads only through the ports and never touches files."""
 

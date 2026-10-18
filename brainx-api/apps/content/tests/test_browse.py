@@ -730,6 +730,244 @@ class BrowseSchemaTests(BrowseTestCase):
                 )
 
 
+class BrowseCourseDateFilterTests(BrowseTestCase):
+    """Story 5.6: optional inclusive `course_date_from`/`course_date_to`."""
+
+    def setUp(self):
+        super().setUp()
+        # The fixture's Lesson (2026-09-01) plus one on either side, so a
+        # window has both edges to include and something to exclude.
+        self.older = self.make_lesson(
+            self.chapter, title='Older', position=2,
+            course_date=date(2026, 8, 20),
+        )
+        self.newer = self.make_lesson(
+            self.chapter, title='Newer', position=3,
+            course_date=date(2026, 9, 30),
+        )
+
+    def test_no_bounds_keep_the_newest_first_total_order(self):
+        response = self.student_client.get(self.lesson_url())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row['title'] for row in response.json()['results']],
+            ['Newer', 'A lesson', 'Older'],
+        )
+
+    def test_a_lower_bound_keeps_every_lesson_on_or_after_it(self):
+        response = self.student_client.get(
+            self.lesson_url(), {'course_date_from': '2026-09-01'}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row['title'] for row in response.json()['results']],
+            ['Newer', 'A lesson'],
+        )
+
+    def test_an_upper_bound_keeps_every_lesson_on_or_before_it(self):
+        response = self.student_client.get(
+            self.lesson_url(), {'course_date_to': '2026-09-01'}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row['title'] for row in response.json()['results']],
+            ['A lesson', 'Older'],
+        )
+
+    def test_both_bounds_are_inclusive_and_keep_the_newest_first_order(self):
+        response = self.student_client.get(
+            self.lesson_url(),
+            {
+                'course_date_from': '2026-08-20',
+                'course_date_to': '2026-09-01',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['count'], 2)
+        self.assertEqual(
+            [row['title'] for row in body['results']], ['A lesson', 'Older']
+        )
+
+    def test_a_reversed_window_is_a_200_with_no_results(self):
+        response = self.student_client.get(
+            self.lesson_url(),
+            {
+                'course_date_from': '2026-09-30',
+                'course_date_to': '2026-08-20',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['count'], 0)
+        self.assertEqual(body['results'], [])
+
+    def test_a_malformed_bound_is_a_400_naming_the_offending_field(self):
+        # The exact-shape rules of AC 8: `strptime` alone would accept the
+        # second value, `fromisoformat` would also accept the third.
+        malformed = ('01-09-2026', '2026-9-1', '20260901', '', '2026-02-30')
+        for name in ('course_date_from', 'course_date_to'):
+            for value in malformed:
+                with self.subTest(name=name, value=value):
+                    body = assert_envelope(
+                        self,
+                        self.student_client.get(
+                            self.lesson_url(), {name: value}
+                        ),
+                        'validation_error',
+                        400,
+                    )
+
+                    self.assertIn(name, body['errors'])
+
+    def test_a_malformed_bound_is_400_before_the_parent_404(self):
+        # The bounds parse before the parent lookup, so a malformed window
+        # answers 400 naming the field - never the hidden/missing 404 - and
+        # the hidden chapter is not an existence oracle through this path.
+        hidden = self.make_chapter(self.module, name='Hidden', position=2)
+        self.make_lesson(hidden, is_published=False)
+        urls = (
+            self.lesson_url(hidden),
+            reverse('browse-lesson-list', args=[uuid.uuid4()]),
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                body = assert_envelope(
+                    self,
+                    self.student_client.get(
+                        url, {'course_date_from': '2026-9-1'}
+                    ),
+                    'validation_error',
+                    400,
+                )
+
+                self.assertIn('course_date_from', body['errors'])
+
+    def test_the_bounds_are_ignored_on_the_container_lists(self):
+        # Containers carry no `course_date`, so the params stay unknown
+        # parameters there: ignored like any other, rows byte-identical.
+        window = {
+            'course_date_from': '2026-09-01',
+            'course_date_to': '2026-09-01',
+        }
+        for url in (self.course_url(), self.module_url(), self.chapter_url()):
+            with self.subTest(url=url):
+                plain = self.student_client.get(url)
+                narrowed = self.student_client.get(url, window)
+
+                self.assertEqual(plain.status_code, 200)
+                self.assertEqual(narrowed.status_code, 200)
+                self.assertEqual(plain.content, narrowed.content)
+
+    def fill_dated_lessons(self, count, first_position=2):
+        # A spread of dates with ties inside it, so the leading date key and
+        # the tie-break keys both have work to do across the page boundary.
+        cycle = (
+            date(2026, 8, 5),
+            date(2026, 9, 12),
+            date(2026, 7, 20),
+            date(2026, 9, 1),
+        )
+        for offset, position in enumerate(
+            range(first_position, first_position + count)
+        ):
+            self.make_lesson(
+                self.chapter,
+                title=f'Dated {position}',
+                position=position,
+                course_date=cycle[offset % len(cycle)],
+            )
+
+    def test_pages_stay_disjoint_and_concatenate_to_the_total_order(self):
+        # 20 more on top of the three above: 23 dated Lessons in total, and
+        # a window whose lower edge sits before every fixture date while
+        # its upper edge touches the newest one - the inclusive bound still
+        # excludes nothing, which is what makes the comparison with the
+        # unfiltered order exact, while exercising the filter on both pages.
+        self.fill_dated_lessons(20, first_position=4)
+        cases = (
+            {},
+            {
+                'course_date_from': '2026-07-01',
+                'course_date_to': '2026-09-30',
+            },
+        )
+        expected = [
+            str(lesson.pk)
+            for lesson in order_lessons(
+                Lesson.objects.visible().filter(chapter=self.chapter)
+            )
+        ]
+        for params in cases:
+            with self.subTest(params=params):
+                first = self.student_client.get(
+                    self.lesson_url(), params
+                ).json()
+                second = self.student_client.get(
+                    self.lesson_url(), {**params, 'page': 2}
+                ).json()
+
+                self.assertEqual(first['count'], 23)
+                self.assertEqual(len(first['results']), 20)
+                self.assertIsNotNone(first['next'])
+                self.assertEqual(len(second['results']), 3)
+                self.assertIsNone(second['next'])
+
+                first_ids = {row['id'] for row in first['results']}
+                second_ids = {row['id'] for row in second['results']}
+                self.assertFalse(first_ids & second_ids)
+
+                rows = first['results'] + second['results']
+                self.assertEqual([row['id'] for row in rows], expected)
+                dates = [row['course_date'] for row in rows]
+                self.assertEqual(dates, sorted(dates, reverse=True))
+
+    def test_the_bounds_do_not_change_the_query_count(self):
+        # Validation is string-only and the window rides the same statement,
+        # so the pinned count of a lesson listing stands with a bound on.
+        with self.assertNumQueries(4):
+            self.student_client.get(
+                self.lesson_url(),
+                {
+                    'course_date_from': '2026-08-01',
+                    'course_date_to': '2026-09-30',
+                },
+            )
+
+        # The rejection path costs only the JWT account lookup: the bounds
+        # parse as strings before any content query can run.
+        with self.assertNumQueries(1):
+            self.student_client.get(
+                self.lesson_url(), {'course_date_from': '2026-9-1'}
+            )
+
+    def test_the_schema_declares_both_bounds_and_the_400_envelope(self):
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        path = (
+            f'{settings.API_PREFIX}/browse/chapters/{{chapter_id}}/lessons/'
+        )
+        operation = schema['paths'][path]['get']
+        by_name = {param['name']: param for param in operation['parameters']}
+
+        for name in ('course_date_from', 'course_date_to'):
+            with self.subTest(name=name):
+                self.assertIn(name, by_name)
+                # drf-spectacular omits `required` entirely when it is false.
+                self.assertFalse(by_name[name].get('required', False))
+
+        self.assertEqual(
+            operation['responses']['400']['content']['application/json'][
+                'schema'
+            ]['$ref'],
+            '#/components/schemas/ContentErrorResponse',
+        )
+
+
 class BrowseSourceGuardTests(SimpleTestCase):
     """No browse view filters the visibility flags itself."""
 
