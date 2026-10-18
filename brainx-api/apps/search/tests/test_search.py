@@ -8,7 +8,8 @@ absence, the Resource bait, the `query`/`sort` 400s, the 401 envelope, fixed-20
 pagination, a bounded query count, the OpenAPI references, and a source guard
 that the view reads only through the content ports - plus the migration- and
 database-state assertion that the functional GIN trigram index is exactly the
-one this story owns.
+one this story owns. Story 5.5 adds the end-to-end invariant: a write through
+the Publisher API retargets the index immediately, with no reindex step.
 """
 
 import importlib
@@ -44,19 +45,12 @@ MIGRATION = importlib.import_module(
 def compose_search_document(lesson):
     """The document composition Story 5.4 pins, byte for byte.
 
-    Title, description, keywords, Module name and Chapter name, newline-joined
-    and stored as authored; `icontains` uppercases both sides at match time,
-    and Story 5.5's rebuild must reproduce exactly this composition.
+    Delegates to the live method on `Lesson`, so this stamping helper and
+    Story 5.5's rebuild can never disagree; the independent copy of
+    migration 0005's composition is pinned in
+    `apps.content.tests.test_search_document`.
     """
-    return '\n'.join(
-        [
-            lesson.title,
-            lesson.description,
-            lesson.keywords,
-            lesson.chapter.module.name,
-            lesson.chapter.name,
-        ]
-    )
+    return lesson.compose_search_document()
 
 
 class SearchTestCase(BrowseTestCase):
@@ -77,12 +71,12 @@ class SearchTestCase(BrowseTestCase):
         keywords='',
         **kwargs,
     ):
-        """A Lesson carrying its document, as the 0005 backfill writes it.
+        """A Lesson carrying its document, stamped like the 0005 backfill.
 
-        The write-path rebuild belongs to Story 5.5, so a test stamps the
-        document explicitly - the same bytes the backfill would have written
-        for this row. The base fixture's own Lesson is deliberately left
-        unindexed, which is also the state new rows are in until 5.5 lands.
+        The row is built with the ORM rather than the write port, so a test
+        plants the exact bytes it needs - including an unindexed row, which
+        the base fixture's own Lesson also is. Since Story 5.5 the write path
+        composes the document itself; this helper bypasses it on purpose.
         """
         lesson = self.make_lesson(
             chapter,
@@ -802,3 +796,70 @@ class SearchBackfillTests(ContentEndpointTestCase):
             '\nModule 1\nChapter 1',
         )
         self.assertEqual(bare.search_document, 'Bare\n\n\nModule 1\nChapter 1')
+
+
+class SearchWriteRebuildEndToEndTests(SearchTestCase):
+    """Story 5.5: a write through the Publisher API retargets the index.
+
+    The invariant the story exists for - no reindex step, no second write
+    path: keywords edited through the API become searchable immediately, and
+    a Module rename makes the old name miss while the new one hits, both
+    answered from the same denormalised document the write port maintains.
+    """
+
+    def create_published_lesson(self, chapter, **payload):
+        """A visible Lesson: created through the API, then published."""
+        body = {
+            'title': 'Quadratic equations',
+            'description': 'Parabolas and roots',
+            'teacher': 'Ms Ada',
+            'course_date': '2026-09-01',
+            **payload,
+        }
+        response = self.publisher_client.post(
+            reverse('lesson-create', args=[chapter.pk]), body, format='json'
+        )
+        self.assertEqual(response.status_code, 201)
+        lesson = Lesson.objects.get(pk=response.json()['id'])
+        published = self.publisher_client.post(
+            reverse('lesson-publish', args=[lesson.pk])
+        )
+        self.assertEqual(published.status_code, 200)
+        return lesson
+
+    def test_editing_keywords_through_the_api_makes_the_new_term_findable(self):
+        lesson = self.create_published_lesson(self.chapter)
+        self.assertEqual(self.ids(self.search(query='revision')), [])
+
+        response = self.publisher_client.patch(
+            reverse('lesson-update', args=[lesson.pk]),
+            {'keywords': 'exam revision'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.ids(self.search(query='revision')), [str(lesson.pk)]
+        )
+
+    def test_renaming_a_module_retargets_the_matches(self):
+        lesson = self.create_published_lesson(self.chapter)
+        self.assertEqual(
+            self.ids(self.search(query='module')), [str(lesson.pk)]
+        )
+
+        response = self.publisher_client.patch(
+            reverse('module-update', args=[self.module.pk]),
+            {'name': 'Geometry'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        # The old name no longer matches any document; the new one does -
+        # for the created Lesson and for the fixture's previously unindexed
+        # one, which the same descendant refresh composed along the way.
+        self.assertEqual(self.ids(self.search(query='module')), [])
+        self.assertEqual(
+            set(self.ids(self.search(query='geometry'))),
+            {str(lesson.pk), str(self.lesson.pk)},
+        )

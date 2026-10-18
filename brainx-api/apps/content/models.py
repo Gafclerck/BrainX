@@ -195,7 +195,8 @@ class Lesson(UUIDModel, TimeStampedModel):
     description = models.TextField(blank=True, default='')
     # Publisher keywords (Story 5.4): optional free text, part of the indexed
     # search document; a Lesson with none still indexes on its other fields.
-    # Never serializer-exposed.
+    # Writable through the Publisher LessonSerializer (Story 5.5); absent
+    # from every Student read shape (Story 5.1's projections are pinned).
     keywords = models.TextField(blank=True, default='')
     # The denormalised search document (Story 5.4): title, description,
     # keywords, Module name and Chapter name, newline-joined as authored and
@@ -238,6 +239,24 @@ class Lesson(UUIDModel, TimeStampedModel):
                 name='lesson_search_document_trgm',
             ),
         ]
+
+    def compose_search_document(self):
+        """Compose this Lesson's search document - migration 0005, byte for byte.
+
+        title, description, keywords, Module name and Chapter name, newline-
+        joined and stored as authored; `icontains` uppercases both sides at
+        match time. The migration keeps its own frozen copy of this
+        composition; the write entry point calls this one (Story 5.5).
+        """
+        return '\n'.join(
+            [
+                self.title,
+                self.description,
+                self.keywords,
+                self.chapter.module.name,
+                self.chapter.name,
+            ]
+        )
 
     def __str__(self):
         return self.title

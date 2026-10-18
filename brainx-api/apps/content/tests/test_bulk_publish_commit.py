@@ -51,6 +51,13 @@ class BulkPublishCommitTestCase(ContentEndpointTestCase):
         )
 
     def make_lesson(self, chapter, position, **overrides):
+        """A Lesson built with the ORM, bypassing the write port.
+
+        On purpose: since Story 5.5 the API can no longer produce a row whose
+        `search_document` is empty, and this helper still does. A caller that
+        needs a composed document must go through the API or stamp the bytes
+        explicitly.
+        """
         fields = {
             'chapter': chapter,
             'title': f'Lesson {position}',

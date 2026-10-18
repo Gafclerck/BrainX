@@ -55,6 +55,13 @@ class BrowseTestCase(ContentEndpointTestCase):
         is_deleted=False,
         course_date=date(2026, 9, 1),
     ):
+        """A published Lesson built with the ORM, bypassing the write port.
+
+        On purpose: since Story 5.5 the API can no longer produce a row whose
+        `search_document` is empty, and this helper still does. A caller that
+        needs a composed document must go through the API or stamp the bytes
+        explicitly.
+        """
         return Lesson.objects.create(
             chapter=chapter,
             title=title,

@@ -63,7 +63,6 @@ def removal_targets(node):
     return [row for row in _subtree(node) if not row.is_deleted]
 
 
-
 def mutate(*, actor, model, data, instance=None):
     """Create a content row, or update one that exists, stamped with the actor.
 
@@ -83,39 +82,73 @@ def mutate(*, actor, model, data, instance=None):
     raised after the row change starts rolls the change and the stamp back
     together: there is never a half-written or unstamped row.
 
-    Two obligations are documented here rather than performed, because their
-    fields and rules arrive later:
-
-    - `search_document` is NOT rebuilt. That field does not exist until
-      Epic 5, which extends this same entry point rather than adding a second
-      write path next to it.
-    - Ancestor recomputation runs but is a no-op in this story; it is the hook
-      Epic 5's recursive container computation fills in, inside this same
-      transaction.
+    The `search_document` rebuild happens in this same transaction (Story 5.5):
+    a Lesson write recomposes its own document and persists it alongside the
+    row change, and a Module or Chapter write that carries `name` refreshes
+    every live descendant Lesson's document, writing `search_document` alone so
+    no descendant's stamp or timestamp moves. Each rebuild first re-reads its
+    row under `select_for_update()` - the same row lock `move`, `remove`,
+    `restore` and `bulk_publish` already take - so a Lesson edit and a
+    container rename serialize on the row instead of composing from unlocked
+    reads and committing last over fresher bytes. A failure during any of it -
+    the row change, the stamp or a rebuild - propagates and rolls the whole
+    mutation back: never a saved-but-unindexed row. There is no second write
+    path and no reindex step.
 
     Returns the created or updated row.
     """
     with transaction.atomic():
         if instance is None:
-            instance = model.objects.create(**data, last_modified_by=actor)
+            instance = model(**data, last_modified_by=actor)
+            if isinstance(instance, Lesson):
+                instance.search_document = instance.compose_search_document()
+            instance.save(force_insert=True)
         else:
+            if isinstance(instance, Lesson):
+                # Story 5.5: re-read the row under `select_for_update()`
+                # before the data lands and the document composes, so this
+                # transaction builds the bytes from the columns (and, read
+                # fresh after the lock, the ancestor names) a concurrent
+                # write has committed, instead of from an unlocked snapshot
+                # that its own commit would then overwrite.
+                instance.refresh_from_db(
+                    from_queryset=Lesson.objects.select_for_update()
+                )
             for field, value in data.items():
                 setattr(instance, field, value)
             instance.last_modified_by = actor
-            instance.save(
-                update_fields=[*data, 'last_modified_by', 'updated_at']
-            )
+            update_fields = [*data, 'last_modified_by', 'updated_at']
+            if isinstance(instance, Lesson):
+                instance.search_document = instance.compose_search_document()
+                update_fields.append('search_document')
+            instance.save(update_fields=update_fields)
+            if 'name' in data and isinstance(
+                instance, (Module, Chapter)
+            ):
+                # The container's own name is part of every descendant
+                # document; refresh them with `search_document` alone so no
+                # descendant is re-stamped or re-timestamped by a rename.
+                for lesson in _live_descendant_lessons(instance):
+                    # The same locked re-read as the Lesson branch: a
+                    # descendant edit committing meanwhile waits here, and
+                    # its own rebuild then rewrites these bytes with both
+                    # writes in order.
+                    lesson.refresh_from_db(
+                        from_queryset=Lesson.objects.select_for_update()
+                    )
+                    lesson.search_document = lesson.compose_search_document()
+                    lesson.save(update_fields=['search_document'])
         _recompute_ancestors(instance)
         return instance
 
 
 def _recompute_ancestors(instance):
-    """Recompute the changed row's ancestors - a no-op in Story 2.2.
+    """Recompute the changed row's ancestors - still a no-op (Story 5.5).
 
-    Called inside `mutate`'s transaction so the recomputation and the row
-    change commit or roll back together. Epic 5's recursive
-    container-visibility computation lands here; nothing is recomputed while
-    no visibility column exists.
+    Called inside `mutate`'s transaction so any future recomputation and the
+    row change commit or roll back together. Epic 5's rebuild did not land
+    here: the `search_document` refresh runs directly inside `mutate`
+    (Story 5.5), and no ancestor column exists to recompute.
     """
 
 
@@ -191,9 +224,15 @@ def _live_descendant_lessons(container):
     recomputes the enumeration before writing any row.
     """
     if isinstance(container, Chapter):
-        return list(Lesson.objects.filter(chapter=container, is_deleted=False))
+        return list(
+            Lesson.objects.select_related('chapter__module').filter(
+                chapter=container, is_deleted=False
+            )
+        )
     return list(
-        Lesson.objects.filter(chapter__module=container, is_deleted=False)
+        Lesson.objects.select_related('chapter__module').filter(
+            chapter__module=container, is_deleted=False
+        )
     )
 
 

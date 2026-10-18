@@ -228,6 +228,11 @@ class LessonSerializer(serializers.ModelSerializer):
     `is_published` is the publication axis (Epic 4). It is read-only like
     `is_deleted`: only the publish action sets it, so it is exposed on every
     read and never accepted from a body.
+
+    `keywords` is the optional Publisher free text that rides in the indexed
+    search document (Story 5.4). It is writable here - blank allowed - because
+    it is one of the document's inputs the write port rebuilds from (Story
+    5.5); `search_document` itself is never a serializer field.
     """
 
     last_modified_by = LastModifiedBySerializer(read_only=True)
@@ -238,6 +243,7 @@ class LessonSerializer(serializers.ModelSerializer):
             'id',
             'title',
             'description',
+            'keywords',
             'teacher',
             'course_date',
             'position',
