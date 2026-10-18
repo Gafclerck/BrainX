@@ -39,6 +39,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import IsPublisher, IsVerifiedAccount
 
+from .date_filters import course_date_range, filter_course_date
 from .delivery import build_signed_url, derive_content_type, derive_filename
 from .models import Chapter, Course, Lesson, Module, Resource
 from .mutations import (
@@ -1414,25 +1415,52 @@ class BrowseLessonListView(GenericAPIView):
     whose Lessons are all unpublished is as hidden as a nonexistent id and both
     answer the same 404. The Lessons are read through the Student port and the
     shared total order, with the ancestor names joined so each row can carry the
-    five context fields without a query per row.
+    five context fields without a query per row. The optional inclusive
+    `course_date_from`/`course_date_to` bounds (Story 5.6) narrow that same
+    queryset before the order runs; they parse string-only ahead of the parent
+    lookup, so a malformed window is the 400 that names the field and never
+    costs a query.
     """
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='course_date_from',
+                type=str,
+                required=False,
+                description=(
+                    'Inclusive lower bound on the lesson course date, '
+                    'written as YYYY-MM-DD.'
+                ),
+            ),
+            OpenApiParameter(
+                name='course_date_to',
+                type=str,
+                required=False,
+                description=(
+                    'Inclusive upper bound on the lesson course date, '
+                    'written as YYYY-MM-DD.'
+                ),
+            ),
+        ],
         responses={
             200: BrowseLessonSerializer(many=True),
+            400: ENVELOPE_RESPONSE,
             401: ENVELOPE_RESPONSE,
             404: ENVELOPE_RESPONSE,
         },
     )
     def get(self, request, chapter_id):
+        bounds = course_date_range(request)
         visible = visible_content()
         chapter = get_object_or_404(visible.chapters, pk=chapter_id)
-        lessons = (
+        lessons = filter_course_date(
             Lesson.objects.visible()
             .select_related('chapter__module__course')
-            .filter(chapter=chapter)
+            .filter(chapter=chapter),
+            bounds,
         )
         return list_response(
             self,
