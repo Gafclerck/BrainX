@@ -114,6 +114,53 @@ class BrowseLessonSerializer(LessonContextSerializer):
         fields = ('id', 'title') + LessonContextSerializer.Meta.fields
 
 
+class LessonResourceSerializer(serializers.Serializer):
+    """One attached Resource as a Student sees it: `{id, type, title, note,
+    url}` (Story 5.3).
+
+    A plain `Serializer`, not the Publisher's `ResourceSerializer`: the audit
+    fields (`is_deleted`, `last_modified_by`, `updated_at`) and the write-only
+    `file` are deliberately absent, so no Publisher control or storage detail
+    rides on a Student read. The row is what the material *is*, never the
+    bytes: a document or image carries `url: null` and is reached through the
+    authenticated retrieval endpoint, while a video or external_link carries
+    its stored URL verbatim.
+    """
+
+    id = serializers.UUIDField(read_only=True)
+    type = serializers.ChoiceField(
+        choices=Resource.Type.choices, read_only=True
+    )
+    title = serializers.CharField(read_only=True)
+    note = serializers.CharField(read_only=True)
+    url = serializers.CharField(read_only=True)
+
+
+class LessonDetailSerializer(LessonContextSerializer):
+    """A full Lesson as a Student opens it: `{id, title, description}` plus
+    the five flat context fields and the attached Resources (Story 5.3).
+
+    It subclasses the single 5.1 context serializer, sibling to
+    `BrowseLessonSerializer`, so the five fields stay identical in shape and
+    value to browse rows and to search results. The Resources come from the
+    related manager, prefetched in the view through the Student port and the
+    shared Resource order, so the nested list is visible material only and
+    never costs a query per row.
+    """
+
+    id = serializers.UUIDField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True)
+    resources = LessonResourceSerializer(many=True, read_only=True)
+
+    class Meta(LessonContextSerializer.Meta):
+        fields = (
+            ('id', 'title', 'description')
+            + LessonContextSerializer.Meta.fields
+            + ('resources',)
+        )
+
+
 class CourseSerializer(serializers.ModelSerializer):
     """Create or update a Course, the one level that carries a subject."""
 

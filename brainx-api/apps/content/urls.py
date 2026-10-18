@@ -18,6 +18,7 @@ from .views import (
     CourseRestoreView,
     CourseUpdateView,
     LessonCreateView,
+    LessonDetailView,
     LessonMoveView,
     LessonPublishView,
     LessonRemovalPreviewView,
@@ -210,5 +211,13 @@ urlpatterns = [
         'browse/chapters/<uuid:chapter_id>/lessons/',
         BrowseLessonListView.as_view(),
         name='browse-lesson-list',
+    ),
+    # Opening a Lesson is the same Student surface one level deeper: its own
+    # UUID under the same `browse/` prefix, so it stays clear of the Publisher
+    # `lessons/<uuid>/` update route.
+    path(
+        'browse/lessons/<uuid:lesson_id>/',
+        LessonDetailView.as_view(),
+        name='browse-lesson-detail',
     ),
 ]

@@ -28,7 +28,7 @@ from .. import views, visibility
 from ..models import Chapter, Course, Lesson, Module
 from ..ordering import order_containers, order_lessons
 from ..serializers import LessonContextSerializer
-from .helpers import assert_envelope
+from .helpers import assert_envelope, class_sources
 from .test_create_endpoints import ContentEndpointTestCase
 
 
@@ -734,17 +734,8 @@ class BrowseSourceGuardTests(SimpleTestCase):
     )
 
     def test_no_browse_view_names_the_visibility_flags(self):
-        source = Path(views.__file__).read_text(encoding='utf-8')
-        tree = ast.parse(source)
-        classes = {
-            node.name: node
-            for node in tree.body
-            if isinstance(node, ast.ClassDef)
-        }
-
-        for name in self.BROWSE_VIEWS:
+        for name, text in class_sources(views, self.BROWSE_VIEWS).items():
             with self.subTest(view=name):
-                text = ast.get_source_segment(source, classes[name])
                 self.assertNotIn('is_published', text)
                 self.assertNotIn('is_deleted', text)
 

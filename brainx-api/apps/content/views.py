@@ -1,26 +1,28 @@
 """The create, list, update, reorder and move endpoints of the content tree.
 
 Publisher endpoints act on exactly one level (create/list under parent for
-containers and lessons, detail update, reorder, remove/restore, publish actions).
-Student browse endpoints are the four per-level listings under `browse/` and
-require only `IsAuthenticated`. The four Publisher collection routes answer a
-`POST` with a create and a `GET` with the Publisher listing, which reads through
-`manageable()` (AD-2) so it includes rows a Student cannot see; all listings are
-page-number paginated at the project default. The parent is resolved from the
-URL rather than the body, so a node can never be created under a parent other
-than the path names, and an unknown parent id is a 404 before any row is
-written. `position` is assigned by the server on create (the next free slot
-under the parent); explicit ordering is via the reorder endpoints, which take a
-container's whole ordered child list, and the Lesson move endpoint, which
-relocates a single Lesson to another Chapter. An update is a `PATCH` on the
-row's own UUID and writes only the fields the body carries, so a descriptive
-edit never touches `position` and never moves the row to a new parent. The
-write itself - row, actor stamp and all - belongs to `mutate` (and the
-reorder/move helpers built on it), so a view only validates, resolves and looks
-the row up; it never persists a content row itself.
+containers and lessons, detail update, reorder, remove/restore, publish
+actions). Student browse endpoints are the four per-level listings and the
+Lesson detail under `browse/` and require only `IsAuthenticated`. The four
+Publisher collection routes answer a `POST` with a create and a `GET` with the
+Publisher listing, which reads through `manageable()` (AD-2) so it includes
+rows a Student cannot see; all listings are page-number paginated at the
+project default. The parent is resolved from the URL rather than the body, so a
+node can never be created under a parent other than the path names, and an
+unknown parent id is a 404 before any row is written. `position` is assigned by
+the server on create (the next free slot under the parent); explicit ordering
+is via the reorder endpoints, which take a container's whole ordered child
+list, and the Lesson move endpoint, which relocates a single Lesson to another
+Chapter. An update is a `PATCH` on the row's own UUID and writes only the
+fields the body carries, so a descriptive edit never touches `position` and
+never moves the row to a new parent. The write itself - row, actor stamp and
+all - belongs to `mutate` (and the reorder/move helpers built on it), so a view
+only validates, resolves and looks the row up; it never persists a content row
+itself.
 """
 
 from django.conf import settings
+from django.db.models import Prefetch
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
@@ -50,7 +52,7 @@ from .mutations import (
     reorder_children,
     restore,
 )
-from .ordering import order_containers, order_lessons
+from .ordering import order_containers, order_lessons, order_resources
 from .publication import lesson_missing_metadata
 from .serializers import (
     BrowseContainerSerializer,
@@ -60,6 +62,7 @@ from .serializers import (
     BulkPublishResultSerializer,
     ChapterSerializer,
     CourseSerializer,
+    LessonDetailSerializer,
     LessonMoveSerializer,
     LessonSerializer,
     ModuleSerializer,
@@ -1436,3 +1439,49 @@ class BrowseLessonListView(GenericAPIView):
             order_lessons(lessons),
             BrowseLessonSerializer,
         )
+
+
+class LessonDetailView(GenericAPIView):
+    """Open one published, live Lesson with its context and material
+    (Story 5.3).
+
+    The Lesson is resolved through the Student port, and its Chapter must be in
+    `visible_content()` - the same ancestor walk browse uses - so an
+    unpublished or soft-deleted Lesson, and a live Lesson under a hidden
+    container, both answer the byte-identical 404 of a nonexistent id. The walk
+    is needed because the write path can still create or move a Lesson under an
+    already-removed container, which leaves the Lesson's own flags agreeing
+    with a tree browse hides. The ancestor names are joined so the five context
+    fields cost no extra query, and the visible Resources are prefetched in the
+    shared Resource order, so a Lesson with many attachments still answers in a
+    fixed number of queries. The nested Resource list is a bounded part of the
+    detail body, not a paginated listing of its own. No signed URL is minted
+    here: document and image bytes stay behind the authenticated retrieval
+    endpoint with its own verified-account gate.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: LessonDetailSerializer,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        visible = visible_content()
+        lesson = get_object_or_404(
+            Lesson.objects.visible()
+            .select_related('chapter__module__course')
+            .filter(chapter__in=visible.chapters)
+            .prefetch_related(
+                Prefetch(
+                    'resources',
+                    queryset=order_resources(Resource.objects.visible()),
+                )
+            ),
+            pk=lesson_id,
+        )
+        serializer = LessonDetailSerializer(lesson)
+        return Response(serializer.data)
