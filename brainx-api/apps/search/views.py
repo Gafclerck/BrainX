@@ -25,15 +25,6 @@ whitespace-only value is a 200 with zero results; a non-empty value shorter
 than three characters is a 400 - the length is checked after the trim, so
 `" al "` is rejected like `ab`. Pagination is the shared `list_response`,
 fixed at 20, with no `page_size`.
-
-The optional inclusive `course_date_from`/`course_date_to` bounds (Story
-5.6) narrow any match to an inclusive `YYYY-MM-DD` window on
-`Lesson.course_date`. They parse string-only through the shared parser
-browse uses, after `query` and `sort` are validated and ahead of the
-empty-query answer: a malformed bound is a 400 naming the field whenever
-`query` and `sort` are otherwise valid (an invalid `query` or `sort` is
-named first), and the window applies before the shared order -
-`sort=course` re-orders the rows the window selected, it never widens them.
 """
 
 from django.contrib.postgres.search import TrigramWordSimilarity
@@ -44,7 +35,6 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
 
-from apps.content.date_filters import course_date_range, filter_course_date
 from apps.content.models import Lesson
 from apps.content.ordering import lesson_order, order_lessons
 from apps.content.serializers import BrowseLessonSerializer
@@ -91,24 +81,6 @@ class SearchLessonView(GenericAPIView):
                     're-orders the same rows by course name ascending.'
                 ),
             ),
-            OpenApiParameter(
-                name='course_date_from',
-                type=str,
-                required=False,
-                description=(
-                    'Inclusive lower bound on the lesson course date, '
-                    'written as YYYY-MM-DD.'
-                ),
-            ),
-            OpenApiParameter(
-                name='course_date_to',
-                type=str,
-                required=False,
-                description=(
-                    'Inclusive upper bound on the lesson course date, '
-                    'written as YYYY-MM-DD.'
-                ),
-            ),
         ],
         responses={
             200: BrowseLessonSerializer(many=True),
@@ -119,9 +91,6 @@ class SearchLessonView(GenericAPIView):
     def get(self, request):
         query = self._validated_query(request)
         sort = self._validated_sort(request)
-        # String-only, so a malformed window is the 400 that names the field
-        # even when the query itself would answer with no rows.
-        bounds = course_date_range(request)
 
         # An empty query is a valid request with no answer, not an error.
         if not query:
@@ -157,9 +126,6 @@ class SearchLessonView(GenericAPIView):
                 }
             )
         )
-        # The window narrows the matched rows before either sort mode sees
-        # them: `sort=course` re-orders the selection, never widens it.
-        lessons = filter_course_date(lessons, bounds)
         if sort == 'course':
             # The course sort is the one-slot substitution the 2026-10-18
             # decision defines: the shared order's leading date key is
