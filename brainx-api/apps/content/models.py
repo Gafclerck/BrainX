@@ -18,8 +18,10 @@ second Publisher is a permission change rather than a data migration.
 """
 
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex, OpClass
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Upper
 
 from apps.core.models import TimeStampedModel, UUIDModel
 
@@ -191,6 +193,16 @@ class Lesson(UUIDModel, TimeStampedModel):
     )
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, default='')
+    # Publisher keywords (Story 5.4): optional free text, part of the indexed
+    # search document; a Lesson with none still indexes on its other fields.
+    # Never serializer-exposed.
+    keywords = models.TextField(blank=True, default='')
+    # The denormalised search document (Story 5.4): title, description,
+    # keywords, Module name and Chapter name, newline-joined as authored and
+    # rebuilt by the single write entry point (Story 5.5). Read through
+    # `search_document__icontains` behind the functional GIN trigram index
+    # below; never serializer-exposed.
+    search_document = models.TextField(blank=True, default='')
     teacher = models.CharField(max_length=255)
     course_date = models.DateField()
     position = models.PositiveIntegerField()
@@ -216,6 +228,15 @@ class Lesson(UUIDModel, TimeStampedModel):
                 fields=('chapter', 'position'),
                 name='unique_lesson_position_per_chapter',
             )
+        ]
+        indexes = [
+            # The functional GIN trigram index (Story 5.4), on the uppercased
+            # document exactly as the `icontains` match reads it - an index on
+            # the bare column would never be consulted and is a defect.
+            GinIndex(
+                OpClass(Upper('search_document'), name='gin_trgm_ops'),
+                name='lesson_search_document_trgm',
+            ),
         ]
 
     def __str__(self):
