@@ -959,6 +959,11 @@ class BrowseCourseDateFilterTests(BrowseTestCase):
                 self.assertIn(name, by_name)
                 # drf-spectacular omits `required` entirely when it is false.
                 self.assertFalse(by_name[name].get('required', False))
+                param = by_name[name]
+                self.assertIn('schema', param)
+                schema = param['schema']
+                self.assertEqual(schema.get('type'), 'string')
+                self.assertNotIn('format', schema)
 
         self.assertEqual(
             operation['responses']['400']['content']['application/json'][

@@ -192,6 +192,23 @@ def discover(base_url, token, requested_query):
         raise LoadCheckError(
             f'the term {term!r} matches no lesson - pass --query'
         )
+
+    # The two bounded legs measure the windowed query shape, so discovery
+    # proves the fixed window selects rows on both surfaces first - against
+    # a differently seeded dataset the bounded legs would otherwise measure
+    # empty listings and still report a p95.
+    remedy = 'reseed or move BOUNDED_WINDOW inside the dataset date spread'
+    bounded = get_json(base_url, token, browse_path, dict(BOUNDED_WINDOW))
+    if not bounded.get('results'):
+        raise LoadCheckError(f'the window {BOUNDED_WINDOW} matches no lesson - {remedy}')
+    windowed_matches = get_json(
+        base_url, token, search_path, {'query': term, **BOUNDED_WINDOW}
+    )
+    if not windowed_matches.get('results'):
+        raise LoadCheckError(
+            f'the window {BOUNDED_WINDOW} matches no search result for '
+            f'{term!r} - {remedy}'
+        )
     return browse_path, search_path, term
 
 
@@ -312,6 +329,9 @@ def main(argv=None):
             f'(browse, browse+window, search, search+window; '
             f'term {term!r})'
         )
+        print(f'window: {BOUNDED_WINDOW}')
+        print(f'base_url: {args.base_url}')
+        print(f'timestamp: {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}')
         timings = run_workload(
             args.base_url, args.token, browse_path, search_path, term
         )

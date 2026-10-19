@@ -77,7 +77,9 @@ def _course_date_bound(request, name):
     except ValueError:
         exact = False
     if not exact:
+        # The envelope is already keyed by the parameter name, so the
+        # message states the required form without repeating it.
         raise ValidationError(
-            {name: [f'{name} must be a date written as YYYY-MM-DD']}
+            {name: ['must be a date written as YYYY-MM-DD']}
         )
     return parsed.date()

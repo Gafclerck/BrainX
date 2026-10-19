@@ -808,6 +808,35 @@ class SearchCourseDateFilterTests(SearchTestCase):
 
         self.assertIn('course_date_from', body['errors'])
 
+    def test_query_is_named_before_a_malformed_bound(self):
+        # The documented precedence pin: `_validated_query` runs before the
+        # bounds, so a short query and a malformed bound together name
+        # `query` - reordering the validations would flip this 400.
+        body = assert_envelope(
+            self,
+            self.search(query='ab', course_date_from='2026-9-1'),
+            'validation_error',
+            400,
+        )
+
+        self.assertIn('query', body['errors'])
+        self.assertNotIn('course_date_from', body['errors'])
+
+    def test_sort_is_named_before_a_malformed_bound(self):
+        body = assert_envelope(
+            self,
+            self.search(
+                query='algorithms',
+                sort='bogus',
+                course_date_from='2026-9-1',
+            ),
+            'validation_error',
+            400,
+        )
+
+        self.assertIn('sort', body['errors'])
+        self.assertNotIn('course_date_from', body['errors'])
+
     def test_the_window_does_not_change_the_query_count(self):
         # Validation is string-only and the window rides the same statement,
         # so the pinned count of the listing stands with a bound on.
@@ -831,25 +860,30 @@ class SearchCourseDateFilterTests(SearchTestCase):
                 self.assertIn(name, by_name)
                 # drf-spectacular omits `required` entirely when it is false.
                 self.assertFalse(by_name[name].get('required', False))
+                param = by_name[name]
+                self.assertIn('schema', param)
+                schema = param['schema']
+                self.assertEqual(schema.get('type'), 'string')
+                self.assertNotIn('format', schema)
 
 
 class SearchExactTitlePlacementTests(SearchTestCase):
-    """Story 5.6 AC 5 (renegotiated 2026-10-18): relevance, then position.
+    """Story 5.6 AC 5 as renegotiated: relevance, then position.
 
     The total order leads with the course date, so relevance never floats a
-    match above a newer lesson; inside its date group the exact-title match
-    is placed by relevance and then by position, and it holds a place in the
-    first page that shares its course_date - unless twenty or more equally
-    relevant matches share that date and rank ahead of it, the exception the
-    renegotiation accepted (review round 2, finding 36) and the second test
-    here pins. Both tests tie every row on relevance deliberately: the query
-    is a contiguous phrase in each document, so the trigram scores the same
-    maximum and the position keys decide inside the group.
+    match above a newer lesson; inside its date group, a match is placed by
+    relevance then by position. Same-date matches tie on relevance and fall
+    through to the position keys, so the endpoint makes no promise about which
+    page of that date group a specific match lands on - even equally relevant
+    same-date matches can displace it across a fixed-20 page boundary. Both
+    tests tie every row on relevance deliberately: the query is a contiguous
+    phrase in each document, so trigram scores are the same maximum and the
+    position keys decide inside the group.
     """
 
     def fill_newer_matches(self):
         # 22 equally relevant matches on a newer date, so the target's date
-        # group cannot start before page 2.
+        # group cannot start before page 2 in this layout.
         for position in range(2, 24):
             self.make_searchable_lesson(
                 self.chapter,
@@ -858,7 +892,7 @@ class SearchExactTitlePlacementTests(SearchTestCase):
                 course_date=date(2026, 9, 20),
             )
 
-    def test_the_match_is_in_the_first_page_that_shares_its_course_date(self):
+    def test_the_match_is_placed_by_relevance_then_position_within_its_date_group(self):
         self.fill_newer_matches()
         target = self.make_searchable_lesson(
             self.chapter, title='Sorting algorithms', position=24,
@@ -880,9 +914,9 @@ class SearchExactTitlePlacementTests(SearchTestCase):
         self.assertEqual(
             {row['course_date'] for row in first['results']}, {'2026-09-20'}
         )
-        # ... and the first page that does already holds the match, ahead of
-        # the equally relevant same-date sibling on the position key - the
-        # relevance-then-position placement inside the date group.
+        # Relevance then position within the date group: the target precedes
+        # the equally relevant same-date sibling by position on the page where
+        # that date group appears.
         dated = [
             row['id']
             for row in second['results']
@@ -890,7 +924,7 @@ class SearchExactTitlePlacementTests(SearchTestCase):
         ]
         self.assertEqual(dated, [str(target.pk), str(sibling.pk)])
 
-    def test_twenty_same_date_matches_ahead_may_displace_the_match(self):
+    def test_equally_relevant_same_date_matches_may_displace_the_match_across_page_boundaries(self):
         # The renegotiated exception: 22 equally relevant matches share the
         # target's date and rank ahead of it on the position keys, so the
         # exact-title match legitimately lands on the second page of its
@@ -910,8 +944,8 @@ class SearchExactTitlePlacementTests(SearchTestCase):
             str(target.pk), [row['id'] for row in first['results']]
         )
         # The whole first page is already the target's own date group, and
-        # the match is the last row of that group's next page - placed by
-        # position behind every equally relevant same-date match.
+        # the match is placed by position behind every equally relevant
+        # same-date match, including across the page boundary.
         self.assertEqual(
             {row['course_date'] for row in first['results']}, {'2026-09-20'}
         )
