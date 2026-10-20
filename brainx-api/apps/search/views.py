@@ -34,12 +34,27 @@ empty-query answer: a malformed bound is a 400 naming the field whenever
 `query` and `sort` are otherwise valid (an invalid `query` or `sort` is
 named first), and the window applies before the shared order -
 `sort=course` re-orders the rows the window selected, it never widens them.
+
+`query` is capped at 200 characters (Story 6.1): a longer one is a 400
+naming `query`, never truncated. The same story makes the endpoint the
+capture surface for FR-20: once the first page's listing is built, its
+result count and the query text are recorded through `capture`, which is the
+only writer of the session tables, and the session id is handed to the client
+both in the 200 body and as an `HttpOnly` cookie. A later page records
+nothing, an empty or rejected query records nothing, and a capture failure
+never turns the search into an error; the id is never placed in a URL.
 """
 
+from django.conf import settings
 from django.contrib.postgres.search import TrigramWordSimilarity
 from django.db.models import FloatField, Value
 from django.db.models.functions import Coalesce, Upper
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    extend_schema,
+    inline_serializer,
+)
+from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -51,8 +66,29 @@ from apps.content.serializers import BrowseLessonSerializer
 from apps.content.views import ENVELOPE_RESPONSE, list_response
 from apps.content.visibility import visible_content
 
+from . import capture
+
 # The shortest query that can match: trigrams need at least three characters.
 MINIMUM_QUERY_LENGTH = 3
+
+# The longest query the endpoint accepts, so capture cannot store an
+# unbounded client string in a `CharField(200)` - rejected, never truncated.
+MAXIMUM_QUERY_LENGTH = 200
+
+# The search 200: the shared paginated frame plus the capture session id,
+# which the body always carries (null when no session was minted). It is
+# documented here rather than only returned, so the operation's contract stays
+# honest; no other listing carries the key, hence a search-local component.
+SEARCH_RESPONSE = inline_serializer(
+    name='PaginatedSearchLessonList',
+    fields={
+        'count': serializers.IntegerField(),
+        'next': serializers.URLField(allow_null=True, required=False),
+        'previous': serializers.URLField(allow_null=True, required=False),
+        'results': BrowseLessonSerializer(many=True),
+        'search_session_id': serializers.UUIDField(allow_null=True),
+    },
+)
 
 # The accepted `sort` values. `date` is the search total order; `course`
 # re-places its leading date key with the course name.
@@ -77,7 +113,8 @@ class SearchLessonView(GenericAPIView):
                 description=(
                     'The text to match, case-insensitively and partially, '
                     'against the Lesson search document. Empty returns no '
-                    'rows; under three characters is rejected.'
+                    'rows; under three characters is rejected, and a query '
+                    'over 200 characters is rejected rather than truncated.'
                 ),
             ),
             OpenApiParameter(
@@ -111,7 +148,7 @@ class SearchLessonView(GenericAPIView):
             ),
         ],
         responses={
-            200: BrowseLessonSerializer(many=True),
+            200: SEARCH_RESPONSE,
             400: ENVELOPE_RESPONSE,
             401: ENVELOPE_RESPONSE,
         },
@@ -123,12 +160,16 @@ class SearchLessonView(GenericAPIView):
         # even when the query itself would answer with no rows.
         bounds = course_date_range(request)
 
-        # An empty query is a valid request with no answer, not an error.
+        # An empty query is a valid request with no answer, not an error, and
+        # mints no session: its 200 carries a null `search_session_id`.
         if not query:
-            return list_response(
-                self,
-                order_lessons(Lesson.objects.none()),
-                BrowseLessonSerializer,
+            return self._answer(
+                list_response(
+                    self,
+                    order_lessons(Lesson.objects.none()),
+                    BrowseLessonSerializer,
+                ),
+                session_id=None,
             )
 
         visible = visible_content()
@@ -171,7 +212,63 @@ class SearchLessonView(GenericAPIView):
             )
         else:
             lessons = order_lessons(lessons, relevance=RELEVANCE)
-        return list_response(self, lessons, BrowseLessonSerializer)
+        response = list_response(self, lessons, BrowseLessonSerializer)
+        # Capture rides the listing: the count it records is the paginator's
+        # own, so it costs no extra COUNT.
+        session_id = self._captured_session_id(request, query, response)
+        return self._answer(response, session_id)
+
+    def _captured_session_id(self, request, query, response):
+        """The session this search belongs to, or None when nothing is captured.
+
+        Only the first page is captured: a `page>1` request answers exactly as
+        before and records nothing, so paging cannot inflate the zero-result
+        share. The page is compared as a number, because the paginator treats
+        spellings like `01`, `+1` or ` 1` as page one. Capture is additive
+        instrumentation, so the call is guarded even though the port already
+        swallows its own failures - a capture failure must never turn a valid
+        search into an error.
+        """
+        page = request.query_params.get('page')
+        if page is not None:
+            try:
+                # The paginator serves an empty value as page one
+                # (`... or 1`), so `?page=` is treated the same here.
+                first_page = int(page or 1) <= 1
+            except (TypeError, ValueError):
+                # A value the paginator cannot parse never reaches capture; it
+                # has already been answered with a 404.
+                first_page = False
+            if not first_page:
+                return None
+        try:
+            return capture.record_search(
+                request, query, response.data['count']
+            )
+        except Exception:
+            return None
+
+    def _answer(self, response, session_id):
+        """Add the session id to the 200 body and, when there is one, its cookie.
+
+        The id is handed over both ways: the SPA reads the top-level body key,
+        and the `HttpOnly` cookie is what groups a later GET, which cannot
+        carry a body. It is never in a URL. With no session minted (an empty
+        query, a later page, a failed capture) the key is null and no cookie is
+        set.
+        """
+        response.data['search_session_id'] = (
+            None if session_id is None else str(session_id)
+        )
+        if session_id is not None:
+            response.set_cookie(
+                capture.SESSION_COOKIE,
+                str(session_id),
+                httponly=True,
+                secure=settings.SESSION_COOKIE_SECURE,
+                samesite=settings.SESSION_COOKIE_SAMESITE,
+            )
+        return response
 
     def _validated_query(self, request):
         """The trimmed `query`, or the 400 that names it.
@@ -179,8 +276,10 @@ class SearchLessonView(GenericAPIView):
         Absent is a 400, because the parameter is required. A NUL byte is a
         400, because PostgreSQL cannot store it in a text parameter. A
         supplied empty or whitespace-only value is valid and returns no rows.
-        Anything else is length-checked after the trim, so `" al "` is
-        rejected like `ab`.
+        Anything else is length-checked after the trim - a minimum of
+        `MINIMUM_QUERY_LENGTH` and a maximum of `MAXIMUM_QUERY_LENGTH`, the
+        latter rejected rather than truncated - so `" al "` is rejected like
+        `ab` and a 201-character query is rejected whole.
         """
         raw = request.query_params.get('query')
         if raw is None:
@@ -201,6 +300,15 @@ class SearchLessonView(GenericAPIView):
                     'query': [
                         f'a search query must be at least '
                         f'{MINIMUM_QUERY_LENGTH} characters long'
+                    ]
+                }
+            )
+        if len(query) > MAXIMUM_QUERY_LENGTH:
+            raise ValidationError(
+                {
+                    'query': [
+                        f'a search query must be at most '
+                        f'{MAXIMUM_QUERY_LENGTH} characters long'
                     ]
                 }
             )

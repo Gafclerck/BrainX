@@ -10,6 +10,12 @@ that the view reads only through the content ports - plus the migration- and
 database-state assertion that the functional GIN trigram index is exactly the
 one this story owns. Story 5.5 adds the end-to-end invariant: a write through
 the Publisher API retargets the index immediately, with no reindex step.
+
+Story 6.1 adds the capture writes: a first-page search mints or reuses a
+session and records the query, so the query-count pins below carry those
+writes, and the 200 body's paginated frame gains a top-level
+`search_session_id`. The capture matrix itself lives in `test_capture`; here
+only the existing evidence is retuned for it.
 """
 
 import importlib
@@ -549,7 +555,13 @@ class SearchAuthorizationTests(SearchTestCase):
         )
 
         self.assertEqual(student.status_code, 200)
-        self.assertEqual(student.content, publisher.content)
+        # The rows and the count are identical for both roles; only the
+        # captured session differs, because Story 6.1 mints one per caller
+        # and each client has its own cookie jar.
+        student_body = student.json()
+        publisher_body = publisher.json()
+        self.assertEqual(student_body['count'], publisher_body['count'])
+        self.assertEqual(student_body['results'], publisher_body['results'])
 
 
 class SearchPaginationTests(SearchTestCase):
@@ -600,11 +612,17 @@ class SearchPaginationTests(SearchTestCase):
 
         # One query loads the account from the JWT; the rest is the listing:
         # a page count and a page fetch. The ancestor walk rides along as
-        # subqueries of the same statements.
-        with self.assertNumQueries(3):
+        # subqueries of the same statements. Story 6.1 adds the capture
+        # writes on the first page: a session insert (the fresh client
+        # carries no cookie, so there is no resolve select) and the recorded
+        # query insert, the pair wrapped in a savepoint so a failed write
+        # leaves no session behind.
+        with self.assertNumQueries(7):
             self.search(query='lecture')
 
     def test_the_empty_query_answers_in_a_fixed_number_of_queries(self):
+        # An empty query mints no session and writes nothing, so the count is
+        # the account lookup alone.
         with self.assertNumQueries(1):
             self.search(query='')
 
@@ -625,11 +643,26 @@ class SearchSchemaTests(SearchTestCase):
     def test_the_schema_documents_the_search_operation(self):
         get = self.the_get_operation()
 
+        # Story 6.1: the 200 frame documents the capture id the body always
+        # carries, so the search response is its own component rather than the
+        # shared paginated one.
         self.assertEqual(
             get['responses']['200']['content']['application/json']['schema'][
                 '$ref'
             ],
-            '#/components/schemas/PaginatedBrowseLessonList',
+            '#/components/schemas/PaginatedSearchLessonList',
+        )
+        component = self.schema()['components']['schemas'][
+            'PaginatedSearchLessonList'
+        ]
+        session_id = component['properties']['search_session_id']
+        self.assertIn('search_session_id', component['required'])
+        self.assertEqual(session_id['type'], 'string')
+        self.assertEqual(session_id['format'], 'uuid')
+        self.assertTrue(session_id['nullable'])
+        self.assertEqual(
+            component['properties']['results']['items']['$ref'],
+            '#/components/schemas/BrowseLesson',
         )
 
     def test_every_rejection_declares_the_shared_envelope(self):
@@ -781,7 +814,8 @@ class SearchCourseDateFilterTests(SearchTestCase):
         # The exact-shape rules of AC 8: `strptime` alone would accept the
         # second value, `fromisoformat` would also accept the third. The
         # rejection costs only the JWT account lookup - the bound parses as
-        # a string before any content query can run.
+        # a string before any content query can run - and capture never runs
+        # on a rejected query, so no session or query row is written.
         malformed = ('01-09-2026', '2026-9-1', '20260901', '', '2026-02-30')
         for name in ('course_date_from', 'course_date_to'):
             for value in malformed:
@@ -839,8 +873,10 @@ class SearchCourseDateFilterTests(SearchTestCase):
 
     def test_the_window_does_not_change_the_query_count(self):
         # Validation is string-only and the window rides the same statement,
-        # so the pinned count of the listing stands with a bound on.
-        with self.assertNumQueries(3):
+        # so the pinned listing count stands with a bound on - including the
+        # two capture writes and their savepoint pair on a first page
+        # (Story 6.1).
+        with self.assertNumQueries(7):
             self.search(
                 query='algorithms',
                 course_date_from='2026-08-01',
