@@ -43,6 +43,10 @@ only writer of the session tables, and the session id is handed to the client
 both in the 200 body and as an `HttpOnly` cookie. A later page records
 nothing, an empty or rejected query records nothing, and a capture failure
 never turns the search into an error; the id is never placed in a URL.
+
+Story 6.2 adds session lifecycle management: `SearchSessionCloseView` and
+`SearchSessionAbandonView` close active sessions, with abandon clearing the
+transport cookie.
 """
 
 from django.conf import settings
@@ -54,10 +58,11 @@ from drf_spectacular.utils import (
     extend_schema,
     inline_serializer,
 )
-from rest_framework import serializers
+from rest_framework import serializers, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from apps.content.date_filters import course_date_range, filter_course_date
 from apps.content.models import Lesson
@@ -67,6 +72,7 @@ from apps.content.views import ENVELOPE_RESPONSE, list_response
 from apps.content.visibility import visible_content
 
 from . import capture
+from .models import CloseReason
 
 # The shortest query that can match: trigrams need at least three characters.
 MINIMUM_QUERY_LENGTH = 3
@@ -90,6 +96,40 @@ SEARCH_RESPONSE = inline_serializer(
     },
 )
 
+# The session status response returned on close or abandon.
+SEARCH_SESSION_STATUS_RESPONSE = inline_serializer(
+    name='SearchSessionStatusResponse',
+    fields={
+        'search_session_id': serializers.UUIDField(),
+        'state': serializers.CharField(),
+        'close_reason': serializers.CharField(),
+    },
+)
+
+VALID_CLIENT_CLOSE_REASONS = (
+    CloseReason.LESSON_OPENED,
+    CloseReason.ABANDONED,
+)
+
+SEARCH_SESSION_CLOSE_REQUEST = inline_serializer(
+    name='SearchSessionCloseRequest',
+    fields={
+        'search_session_id': serializers.UUIDField(required=False),
+        'reason': serializers.ChoiceField(
+            choices=VALID_CLIENT_CLOSE_REASONS,
+            required=False,
+            default=CloseReason.LESSON_OPENED,
+        ),
+    },
+)
+
+SEARCH_SESSION_ABANDON_REQUEST = inline_serializer(
+    name='SearchSessionAbandonRequest',
+    fields={
+        'search_session_id': serializers.UUIDField(required=False),
+    },
+)
+
 # The accepted `sort` values. `date` is the search total order; `course`
 # re-places its leading date key with the course name.
 SORT_CHOICES = ('date', 'course')
@@ -97,6 +137,19 @@ DEFAULT_SORT = 'date'
 
 # The name of the relevance annotation the ordering refers to.
 RELEVANCE = 'relevance'
+
+
+def _extract_session_id(request):
+    """The session id from body, header, or cookie, or None."""
+    if isinstance(request.data, dict):
+        if 'search_session_id' in request.data:
+            return request.data.get('search_session_id')
+        if 'session_id' in request.data:
+            return request.data.get('session_id')
+    header_val = request.headers.get('X-Search-Session-Id')
+    if header_val and header_val.strip():
+        return header_val.strip()
+    return request.COOKIES.get(capture.SESSION_COOKIE)
 
 
 class SearchLessonView(GenericAPIView):
@@ -322,3 +375,120 @@ class SearchLessonView(GenericAPIView):
                 {'sort': [f'sort must be one of: {", ".join(SORT_CHOICES)}']}
             )
         return sort
+
+
+class SearchSessionCloseView(GenericAPIView):
+    """Explicitly close a search session (Story 6.2).
+
+    Resolves the session through `capture.resolve_session`, ensuring existence,
+    caller ownership, open state, and idle timeout <= 30 minutes. An invalid,
+    foreign, closed, or expired session answers uniform 404. Closes with
+    `close_reason='lesson_opened'` by default, or an optional reason from the
+    body. If closed as `abandoned`, the cookie is cleared.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='The search session id when not sent in body or cookie.',
+            ),
+        ],
+        request=SEARCH_SESSION_CLOSE_REQUEST,
+        responses={
+            200: SEARCH_SESSION_STATUS_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        session_id = _extract_session_id(request)
+        session = capture.resolve_session(request.user, session_id)
+
+        reason = CloseReason.LESSON_OPENED
+        if isinstance(request.data, dict):
+            if 'reason' in request.data:
+                candidate = request.data.get('reason')
+                if not candidate or candidate not in VALID_CLIENT_CLOSE_REASONS:
+                    raise ValidationError(
+                        {
+                            'reason': [
+                                f'reason must be one of: {", ".join(VALID_CLIENT_CLOSE_REASONS)}'
+                            ]
+                        }
+                    )
+                reason = candidate
+            elif 'close_reason' in request.data:
+                candidate = request.data.get('close_reason')
+                if not candidate or candidate not in VALID_CLIENT_CLOSE_REASONS:
+                    raise ValidationError(
+                        {
+                            'reason': [
+                                f'reason must be one of: {", ".join(VALID_CLIENT_CLOSE_REASONS)}'
+                            ]
+                        }
+                    )
+                reason = candidate
+
+        capture.close_session(session, reason=reason)
+        response = Response(
+            {
+                'search_session_id': str(session.pk),
+                'state': session.state,
+                'close_reason': session.close_reason,
+            },
+            status=status.HTTP_200_OK,
+        )
+        if reason == CloseReason.ABANDONED:
+            response.delete_cookie(
+                capture.SESSION_COOKIE,
+                samesite=settings.SESSION_COOKIE_SAMESITE,
+            )
+        return response
+
+
+class SearchSessionAbandonView(GenericAPIView):
+    """Explicitly abandon a search session and clear its cookie (Story 6.2)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='The search session id when not sent in body or cookie.',
+            ),
+        ],
+        request=SEARCH_SESSION_ABANDON_REQUEST,
+        responses={
+            200: SEARCH_SESSION_STATUS_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        session_id = _extract_session_id(request)
+        session = capture.resolve_session(request.user, session_id)
+        capture.close_session(session, reason=CloseReason.ABANDONED)
+        response = Response(
+            {
+                'search_session_id': str(session.pk),
+                'state': session.state,
+                'close_reason': session.close_reason,
+            },
+            status=status.HTTP_200_OK,
+        )
+        response.delete_cookie(
+            capture.SESSION_COOKIE,
+            samesite=settings.SESSION_COOKIE_SAMESITE,
+        )
+        return response

@@ -1,4 +1,4 @@
-"""The capture tables of the search surface (Story 6.1).
+"""The capture tables of the search surface (Story 6.1, Story 6.2).
 
 Story 6.1 gives `apps.search` its first tables. Neither is read by a Student
 read path: `SearchSession` groups one account's searches and `SearchQuery`
@@ -11,6 +11,7 @@ nothing owns deleting one).
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import TimeStampedModel, UUIDModel
 
@@ -21,10 +22,19 @@ class SearchSession(UUIDModel, TimeStampedModel):
     The id is the UUID primary key, which is what makes it safe to hand to the
     client; the session belongs to exactly one account, so a carried id that
     does not resolve to the caller's own row mints a fresh session instead of
-    attaching a query to someone else's (Story 6.1). Story 6.2 adds the open
-    state and its lazy idle expiry; this story records only the owner and the
-    timestamps.
+    attaching a query to someone else's (Story 6.1). Story 6.2 adds the lifecycle
+    state (`open`, `closed`), the lazy 30-minute idle expiry, and the closure
+    signals (`lesson_opened`, `abandoned`, `idle_expired`).
     """
+
+    class SessionState(models.TextChoices):
+        OPEN = 'open', 'Open'
+        CLOSED = 'closed', 'Closed'
+
+    class CloseReason(models.TextChoices):
+        LESSON_OPENED = 'lesson_opened', 'Lesson opened'
+        ABANDONED = 'abandoned', 'Abandoned'
+        IDLE_EXPIRED = 'idle_expired', 'Idle expired'
 
     # PROTECT: a session is the attribution for the product's retrieval
     # signal, so an account that has searched cannot be deleted out from under
@@ -34,6 +44,19 @@ class SearchSession(UUIDModel, TimeStampedModel):
         on_delete=models.PROTECT,
         related_name='search_sessions',
     )
+    state = models.CharField(
+        max_length=16,
+        choices=SessionState.choices,
+        default=SessionState.OPEN,
+    )
+    closed_at = models.DateTimeField(null=True, blank=True)
+    close_reason = models.CharField(
+        max_length=32,
+        choices=CloseReason.choices,
+        null=True,
+        blank=True,
+    )
+    last_activity_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         # Newest session first: the order Story 6.2's resolution check wants.
@@ -43,6 +66,10 @@ class SearchSession(UUIDModel, TimeStampedModel):
         # Never the owner's email or the query text: this is what a log line
         # or a debugger would print.
         return str(self.pk)
+
+
+SessionState = SearchSession.SessionState
+CloseReason = SearchSession.CloseReason
 
 
 class SearchQuery(UUIDModel, TimeStampedModel):

@@ -38,6 +38,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import IsPublisher, IsVerifiedAccount
+from apps.search import capture
+from apps.search.models import CloseReason
 
 from .date_filters import course_date_range, filter_course_date
 from .delivery import build_signed_url, derive_content_type, derive_filename
@@ -1491,6 +1493,18 @@ class LessonDetailView(GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description=(
+                    'Carried search session id. When present, closes the '
+                    'session with close_reason="lesson_opened".'
+                ),
+            ),
+        ],
         responses={
             200: LessonDetailSerializer,
             401: ENVELOPE_RESPONSE,
@@ -1498,6 +1512,11 @@ class LessonDetailView(GenericAPIView):
         },
     )
     def get(self, request, lesson_id):
+        session_id = request.headers.get('X-Search-Session-Id')
+        session = None
+        if session_id and session_id.strip():
+            session = capture.resolve_session(request.user, session_id.strip())
+
         visible = visible_content()
         lesson = get_object_or_404(
             Lesson.objects.visible()
@@ -1511,5 +1530,9 @@ class LessonDetailView(GenericAPIView):
             ),
             pk=lesson_id,
         )
+        if session is not None:
+            capture.close_session(
+                session, reason=CloseReason.LESSON_OPENED
+            )
         serializer = LessonDetailSerializer(lesson)
         return Response(serializer.data)

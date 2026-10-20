@@ -11,15 +11,17 @@ short, absent and NUL cases write nothing and keep their existing answers; and
 a capture write that fails still leaves the search a 200 with its rows.
 """
 
+from datetime import timedelta
 import logging
 from unittest.mock import patch
 
 from django.conf import settings
 from django.test import RequestFactory, override_settings
+from django.utils import timezone
 
 from apps.content.tests.helpers import assert_envelope
 from apps.search import capture
-from apps.search.models import SearchQuery, SearchSession
+from apps.search.models import CloseReason, SearchQuery, SearchSession, SessionState
 
 from ..views import MAXIMUM_QUERY_LENGTH
 from .test_search import SearchTestCase
@@ -124,6 +126,72 @@ class SearchCaptureTests(SearchTestCase):
         self.assertEqual(fresh.user, self.student)
         self.assertEqual(SearchQuery.objects.get().session, fresh)
         self.assertEqual(foreign.queries.count(), 0)
+
+    def test_repeat_search_with_expired_cookie_lazily_closes_and_mints_fresh(self):
+        self.make_searchable_lesson(
+            self.chapter, title='Algorithms', position=2
+        )
+        first = self.search(query='algorithms')
+        old_session = SearchSession.objects.get()
+        self.assertEqual(old_session.state, SessionState.OPEN)
+
+        idle_time = timezone.now() - timedelta(minutes=35)
+        SearchSession.objects.filter(pk=old_session.pk).update(
+            last_activity_at=idle_time
+        )
+
+        second = self.search(query='algorithms')
+        self.assertEqual(second.status_code, 200)
+
+        old_session.refresh_from_db()
+        self.assertEqual(old_session.state, SessionState.CLOSED)
+        self.assertEqual(old_session.close_reason, CloseReason.IDLE_EXPIRED)
+        self.assertEqual(
+            old_session.closed_at, idle_time + capture.IDLE_TIMEOUT
+        )
+
+        fresh_session = SearchSession.objects.exclude(pk=old_session.pk).get()
+        self.assertEqual(fresh_session.user, self.student)
+        self.assertEqual(fresh_session.state, SessionState.OPEN)
+        self.assertEqual(
+            second.json()['search_session_id'], str(fresh_session.pk)
+        )
+        self.assertEqual(self.cookie_id(second), str(fresh_session.pk))
+
+    def test_repeat_search_with_closed_cookie_mints_fresh_session(self):
+        self.make_searchable_lesson(
+            self.chapter, title='Algorithms', position=2
+        )
+        first = self.search(query='algorithms')
+        old_session = SearchSession.objects.get()
+        capture.close_session(old_session, reason=CloseReason.LESSON_OPENED)
+
+        second = self.search(query='algorithms')
+        self.assertEqual(second.status_code, 200)
+
+        fresh_session = SearchSession.objects.exclude(pk=old_session.pk).get()
+        self.assertEqual(
+            second.json()['search_session_id'], str(fresh_session.pk)
+        )
+        self.assertEqual(self.cookie_id(second), str(fresh_session.pk))
+
+    def test_repeat_search_maintains_last_activity_at(self):
+        self.make_searchable_lesson(
+            self.chapter, title='Algorithms', position=2
+        )
+        first = self.search(query='algorithms')
+        session = SearchSession.objects.get()
+        earlier = timezone.now() - timedelta(minutes=5)
+        SearchSession.objects.filter(pk=session.pk).update(
+            last_activity_at=earlier
+        )
+
+        second = self.search(query='algorithms')
+        self.assertEqual(second.status_code, 200)
+
+        session.refresh_from_db()
+        self.assertGreater(session.last_activity_at, earlier)
+        self.assertEqual(session.queries.count(), 2)
 
     def test_a_publisher_search_is_attributed_to_the_publisher(self):
         self.make_searchable_lesson(
