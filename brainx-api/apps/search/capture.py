@@ -1,4 +1,4 @@
-"""The capture port: the only writer of the search session tables (Story 6.1, 6.2).
+"""The capture port: the only writer of the search session tables (Story 6.1, 6.2, 6.3).
 
 Capture is instrumentation, not the product. It records the query text and the
 size of the matched set so the Publisher's decay signal (Story 6.4) has data to
@@ -19,6 +19,10 @@ expiry, and explicit close actions (`lesson_opened`, `abandoned`). The single
 resolution authority is `resolve_session`, which returns uniform 404 for any
 failed leg.
 
+Story 6.3 adds `resolve_session_for_answer` and `record_answer`, allowing a
+Student to answer "did you find it?" exactly once for sessions closed via
+`lesson_opened` or currently open.
+
 The query text never reaches a log, at any level. Length rules belong to the
 endpoint; here the text is stripped of control characters before it is
 written, because a control character in a stored value or a log line forges
@@ -34,7 +38,13 @@ from django.db import transaction
 from django.http import Http404
 from django.utils import timezone
 
-from .models import CloseReason, SearchQuery, SearchSession, SessionState
+from .models import (
+    CloseReason,
+    SearchAnswer,
+    SearchQuery,
+    SearchSession,
+    SessionState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +130,76 @@ def close_session(session, reason=CloseReason.LESSON_OPENED):
         update_fields=['state', 'closed_at', 'close_reason', 'updated_at']
     )
     return session
+
+
+def resolve_session_for_answer(user, session_id):
+    """The single resolution authority for answer submissions (Story 6.3).
+
+    Verifies UUID format, database existence, caller ownership (`session.user_id == user.id`),
+    that the session is either closed with `close_reason == CloseReason.LESSON_OPENED` or
+    is `state == SessionState.OPEN`, and that idle time has not exceeded 30 minutes
+    (`now - last_activity_at <= 30m` and `now - (closed_at or last_activity_at) <= 30m`).
+
+    Any failed leg raises `Http404` (rendered as the uniform `not_found` envelope),
+    with no oracle distinguishing unknown, foreign, closed (abandoned/idle_expired),
+    expired, or malformed session IDs. If an open session has idle-expired, it is
+    lazily marked closed in the database (`closed_at=last_activity_at + 30m`,
+    `close_reason='idle_expired'`) before raising `Http404`.
+    """
+    if not session_id:
+        raise Http404
+
+    if isinstance(session_id, uuid.UUID):
+        parsed_id = session_id
+    else:
+        try:
+            parsed_id = uuid.UUID(str(session_id))
+        except (ValueError, TypeError, AttributeError):
+            raise Http404
+
+    try:
+        session = SearchSession.objects.get(pk=parsed_id)
+    except SearchSession.DoesNotExist:
+        raise Http404
+
+    if session.user_id != user.id:
+        raise Http404
+
+    if session.state == SessionState.CLOSED:
+        if session.close_reason != CloseReason.LESSON_OPENED:
+            raise Http404
+    elif session.state != SessionState.OPEN:
+        raise Http404
+
+    now = timezone.now()
+    if session.state == SessionState.OPEN:
+        if now - session.last_activity_at > IDLE_TIMEOUT:
+            session.state = SessionState.CLOSED
+            session.closed_at = session.last_activity_at + IDLE_TIMEOUT
+            session.close_reason = CloseReason.IDLE_EXPIRED
+            session.save(
+                update_fields=['state', 'closed_at', 'close_reason', 'updated_at']
+            )
+            raise Http404
+    else:
+        reference_closed = session.closed_at or session.last_activity_at
+        if now - reference_closed > IDLE_TIMEOUT:
+            raise Http404
+
+    return session
+
+
+def record_answer(session, found):
+    """Record an answer for `session`, closing it if currently open (Story 6.3)."""
+    with transaction.atomic():
+        locked_session = (
+            SearchSession.objects.select_for_update().get(pk=session.pk)
+        )
+        if locked_session.state == SessionState.OPEN:
+            close_session(locked_session, reason=CloseReason.LESSON_OPENED)
+        return SearchAnswer.objects.create(session=locked_session, found=found)
+
+
 
 
 def record_search(request, query, result_count):

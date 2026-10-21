@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     SearchLessonView,
     SearchSessionAbandonView,
+    SearchSessionAnswerView,
     SearchSessionCloseView,
 )
 
@@ -24,5 +25,10 @@ urlpatterns = [
         'search/sessions/abandon/',
         SearchSessionAbandonView.as_view(),
         name='search-sessions-abandon',
+    ),
+    path(
+        'search/sessions/answer/',
+        SearchSessionAnswerView.as_view(),
+        name='search-sessions-answer',
     ),
 ]

@@ -1,4 +1,4 @@
-"""The capture tables of the search surface (Story 6.1, Story 6.2).
+"""The capture tables of the search surface (Story 6.1, Story 6.2, Story 6.3).
 
 Story 6.1 gives `apps.search` its first tables. Neither is read by a Student
 read path: `SearchSession` groups one account's searches and `SearchQuery`
@@ -7,6 +7,9 @@ signal (Story 6.4) has data to aggregate. The search endpoint is the only
 writer, through `apps.search.capture`, and retention is indefinite - there is
 no soft-delete or deletion path here (Story 6.2 owns closing a session;
 nothing owns deleting one).
+
+Story 6.3 adds `SearchAnswer`, recording a Student's one-time "did you find it?"
+outcome against a search session.
 """
 
 from django.conf import settings
@@ -102,3 +105,31 @@ class SearchQuery(UUIDModel, TimeStampedModel):
         # Deliberately not the query text: a search term must never reach a
         # log, and `__str__` is what a log call or a debugger would print.
         return str(self.pk)
+
+
+class SearchAnswer(UUIDModel, TimeStampedModel):
+    """One Student's answer to the "did you find it?" prompt (Story 6.3).
+
+    Recorded against a SearchSession when the Student either opened a Lesson
+    from search results (close_reason='lesson_opened') or answered while the
+    session was open. Answers are strictly append-only; an outcome can never
+    be updated, restated, or overwritten. Indefinite retention matching the
+    platform's soft-delete policy.
+    """
+
+    session = models.OneToOneField(
+        SearchSession,
+        on_delete=models.CASCADE,
+        related_name='answer',
+    )
+    found = models.BooleanField()
+
+    class Meta:
+        # Chronological order by creation, with `id` as final tiebreak.
+        ordering = ('created_at', 'id')
+
+    def __str__(self):
+        # Deliberately not the student identity or outcome: this is what a log
+        # line or debugger prints.
+        return str(self.pk)
+

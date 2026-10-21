@@ -51,6 +51,7 @@ transport cookie.
 
 from django.conf import settings
 from django.contrib.postgres.search import TrigramWordSimilarity
+from django.db import IntegrityError
 from django.db.models import FloatField, Value
 from django.db.models.functions import Coalesce, Upper
 from drf_spectacular.utils import (
@@ -70,9 +71,10 @@ from apps.content.ordering import lesson_order, order_lessons
 from apps.content.serializers import BrowseLessonSerializer
 from apps.content.views import ENVELOPE_RESPONSE, list_response
 from apps.content.visibility import visible_content
+from apps.core.exceptions import Conflict
 
 from . import capture
-from .models import CloseReason
+from .models import CloseReason, SearchAnswer
 
 # The shortest query that can match: trigrams need at least three characters.
 MINIMUM_QUERY_LENGTH = 3
@@ -129,6 +131,23 @@ SEARCH_SESSION_ABANDON_REQUEST = inline_serializer(
         'search_session_id': serializers.UUIDField(required=False),
     },
 )
+
+
+class SearchSessionAnswerRequestSerializer(serializers.Serializer):
+    search_session_id = serializers.UUIDField(required=False)
+    session_id = serializers.UUIDField(required=False)
+    found = serializers.BooleanField(required=True)
+
+
+class SearchSessionAnswerResponseSerializer(serializers.Serializer):
+    search_session_id = serializers.UUIDField()
+    found = serializers.BooleanField()
+
+
+SEARCH_SESSION_ANSWER_REQUEST = SearchSessionAnswerRequestSerializer
+SEARCH_SESSION_ANSWER_RESPONSE = SearchSessionAnswerResponseSerializer
+
+
 
 # The accepted `sort` values. `date` is the search total order; `course`
 # re-places its leading date key with the course name.
@@ -492,3 +511,69 @@ class SearchSessionAbandonView(GenericAPIView):
             samesite=settings.SESSION_COOKIE_SAMESITE,
         )
         return response
+
+
+class SearchSessionAnswerView(GenericAPIView):
+    """Record a Student's one-time answer to 'did you find it?' (Story 6.3).
+
+    Resolves the session through `capture.resolve_session_for_answer`, ensuring
+    existence, caller ownership, eligible lifecycle state (`lesson_opened` or `open`),
+    and idle timeout <= 30 minutes. An invalid, foreign, closed (abandoned/idle_expired),
+    or expired session answers uniform 404 with no existence oracle.
+
+    If the session already has an associated answer, rejects with 409 Conflict.
+    Answers are strictly append-only; an outcome can never be updated, restated,
+    or overwritten. If submitted while the session is open, closes the session
+    with `close_reason='lesson_opened'`.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SEARCH_SESSION_ANSWER_REQUEST
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='The search session id when not sent in body or cookie.',
+            ),
+        ],
+        request=SEARCH_SESSION_ANSWER_REQUEST,
+        responses={
+            201: SEARCH_SESSION_ANSWER_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+            409: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        session_id = _extract_session_id(request)
+        session = capture.resolve_session_for_answer(request.user, session_id)
+
+        if SearchAnswer.objects.filter(session=session).exists():
+            raise Conflict(
+                'An answer has already been recorded for this search session.'
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        found = serializer.validated_data['found']
+
+        try:
+            answer = capture.record_answer(session, found)
+        except IntegrityError:
+            raise Conflict(
+                'An answer has already been recorded for this search session.'
+            )
+
+        return Response(
+            {
+                'search_session_id': str(session.pk),
+                'found': answer.found,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
