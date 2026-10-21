@@ -47,6 +47,9 @@ never turns the search into an error; the id is never placed in a URL.
 Story 6.2 adds session lifecycle management: `SearchSessionCloseView` and
 `SearchSessionAbandonView` close active sessions, with abandon clearing the
 transport cookie.
+
+Story 6.4 adds `SearchAggregateView` providing the Publisher aggregate view over
+search queries, answers, and live retrieval decay signals (SM-5, SM-6).
 """
 
 from django.conf import settings
@@ -72,8 +75,11 @@ from apps.content.serializers import BrowseLessonSerializer
 from apps.content.views import ENVELOPE_RESPONSE, list_response
 from apps.content.visibility import visible_content
 from apps.core.exceptions import Conflict
+from apps.core.permissions import IsPublisher
 
 from . import capture
+from .date_filters import parse_date_range
+from .metrics import get_search_aggregate
 from .models import CloseReason, SearchAnswer
 
 # The shortest query that can match: trigrams need at least three characters.
@@ -146,6 +152,31 @@ class SearchSessionAnswerResponseSerializer(serializers.Serializer):
 
 SEARCH_SESSION_ANSWER_REQUEST = SearchSessionAnswerRequestSerializer
 SEARCH_SESSION_ANSWER_RESPONSE = SearchSessionAnswerResponseSerializer
+
+
+class GroupedQuerySerializer(serializers.Serializer):
+    query = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class SearchAggregateResponseSerializer(serializers.Serializer):
+    total_queries = serializers.IntegerField()
+    zero_result_queries = serializers.IntegerField()
+    total_zero_result_queries = serializers.IntegerField(required=False)
+    total_answers = serializers.IntegerField()
+    negative_answers = serializers.IntegerField()
+    zero_result_rate = serializers.FloatField()
+    sm5_rate = serializers.FloatField()
+    sm5_zero_result_rate = serializers.FloatField(required=False)
+    negative_answer_rate = serializers.FloatField()
+    sm6_rate = serializers.FloatField()
+    sm6_negative_answer_rate = serializers.FloatField(required=False)
+    grouped_queries = GroupedQuerySerializer(many=True)
+    grouped_zero_result_queries = GroupedQuerySerializer(many=True)
+    zero_result_grouped_queries = GroupedQuerySerializer(many=True, required=False)
+
+
+SEARCH_AGGREGATE_RESPONSE = SearchAggregateResponseSerializer
 
 
 
@@ -576,4 +607,51 @@ class SearchSessionAnswerView(GenericAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class SearchAggregateView(GenericAPIView):
+    """Publisher aggregate view over search queries, answers, and decay signals (Story 6.4).
+
+    Returns dynamic SM-5 (zero-result query share), SM-6 (negative-answer rate),
+    totals, and grouped query texts over an optional inclusive calendar date range
+    bounded by `date_from` and `date_to` (YYYY-MM-DD).
+
+    Requires Publisher privilege: unauthenticated callers receive 401; authenticated
+    non-publishers (Students) receive 403.
+    Contains no student identity fields and no per-student query histories.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+    serializer_class = SEARCH_AGGREGATE_RESPONSE
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='date_from',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Optional inclusive lower date bound written strictly as YYYY-MM-DD.',
+            ),
+            OpenApiParameter(
+                name='date_to',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Optional inclusive upper date bound written strictly as YYYY-MM-DD.',
+            ),
+        ],
+        responses={
+            200: SEARCH_AGGREGATE_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request):
+        date_from, date_to = parse_date_range(request)
+        data = get_search_aggregate(date_from=date_from, date_to=date_to)
+        serializer = self.get_serializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 

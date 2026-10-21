@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    SearchAggregateView,
     SearchLessonView,
     SearchSessionAbandonView,
     SearchSessionAnswerView,
@@ -15,6 +16,11 @@ urlpatterns = [
         'search/lessons/',
         SearchLessonView.as_view(),
         name='search-lessons',
+    ),
+    path(
+        'search/aggregate/',
+        SearchAggregateView.as_view(),
+        name='search-aggregate',
     ),
     path(
         'search/sessions/close/',
