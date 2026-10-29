@@ -5,18 +5,35 @@ import { VerifyEmailPage } from '@/features/auth/verify-email-page';
 import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
 import { ResetPasswordPage } from '@/features/auth/reset-password-page';
 import { LandingPage } from '@/features/landing/landing-page';
+import { StudentLayout } from '@/components/layout/student-layout';
 import { AuthGuard, PublisherGuard, GuestGuard } from './guards';
 
 export function CoursesPagePlaceholder() {
   return (
     <div
       data-testid="courses-page-placeholder"
-      className="min-h-screen bg-background text-foreground flex items-center justify-center p-4 min-w-[360px]"
+      className="w-full py-12 bg-background text-foreground flex items-center justify-center p-4 min-w-[360px]"
     >
       <div className="rounded-lg border border-border bg-card p-6 max-w-md w-full text-center space-y-3">
         <h1 className="text-xl font-bold">Catalogue des Cours</h1>
         <p className="text-sm text-foreground-muted">
           Bienvenue sur BrainX. Les cours et ressources pédagogiques seront affichés ici.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function SearchPagePlaceholder() {
+  return (
+    <div
+      data-testid="search-page-placeholder"
+      className="w-full py-12 bg-background text-foreground flex items-center justify-center p-4 min-w-[360px]"
+    >
+      <div className="rounded-lg border border-border bg-card p-6 max-w-md w-full text-center space-y-3">
+        <h1 className="text-xl font-bold">Recherche</h1>
+        <p className="text-sm text-foreground-muted">
+          Recherchez des cours, des leçons et des ressources pédagogiques.
         </p>
       </div>
     </div>
@@ -56,7 +73,10 @@ export function AppRoutes() {
 
       {/* Authenticated student routes */}
       <Route element={<AuthGuard />}>
-        <Route path="/courses" element={<CoursesPagePlaceholder />} />
+        <Route element={<StudentLayout />}>
+          <Route path="/courses" element={<CoursesPagePlaceholder />} />
+          <Route path="/search" element={<SearchPagePlaceholder />} />
+        </Route>
       </Route>
 
       {/* Authenticated publisher routes */}

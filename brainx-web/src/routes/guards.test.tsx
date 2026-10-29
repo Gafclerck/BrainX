@@ -126,6 +126,9 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       expect(
         screen.queryByTestId('courses-page-placeholder')
       ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('student-layout')
+      ).not.toBeInTheDocument();
     });
 
     it('preserves query parameters and hash fragments in the returnUrl', () => {
@@ -156,6 +159,11 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       );
 
       expect(screen.getByTestId('current-location')).toHaveTextContent('/courses');
+      // Confirm StudentLayout and guarded courses placeholder are rendered
+      expect(screen.getByTestId('student-layout')).toBeInTheDocument();
+      expect(screen.getByTestId('student-left-sidebar')).toBeInTheDocument();
+      expect(screen.getByTestId('student-main-content')).toBeInTheDocument();
+      expect(screen.getByTestId('student-right-toc')).toBeInTheDocument();
       expect(
         screen.getByTestId('courses-page-placeholder')
       ).toBeInTheDocument();
