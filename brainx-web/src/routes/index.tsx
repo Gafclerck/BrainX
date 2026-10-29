@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, useParams, Link } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { RegisterPage } from '@/features/auth/register-page';
 import { LoginPage } from '@/features/auth/login-page';
 import { VerifyEmailPage } from '@/features/auth/verify-email-page';
@@ -11,6 +11,7 @@ import {
   CoursesPage,
   CourseModulesPage,
   ModuleChaptersPage,
+  ChapterLessonsPage,
   BrowseTreeSidebar,
 } from '@/features/browse';
 
@@ -24,33 +25,6 @@ export function CoursesPagePlaceholder() {
         <h1 className="text-xl font-bold">Catalogue des Cours</h1>
         <p className="text-sm text-foreground-muted">
           Bienvenue sur BrainX. Les cours et ressources pédagogiques seront affichés ici.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-export function ChapterLessonsPagePlaceholder() {
-  const { chapterId } = useParams<{ chapterId: string }>();
-  return (
-    <div
-      data-testid="chapter-page-placeholder"
-      className="w-full min-w-[360px] overflow-x-hidden space-y-6"
-    >
-      <nav aria-label="Fil d'Ariane">
-        <Link
-          to="/courses"
-          data-testid="back-to-courses-link"
-          className="inline-flex items-center text-sm text-foreground-muted hover:text-foreground min-h-[48px] py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
-        >
-          <span aria-hidden="true" className="mr-2">←</span>
-          Retour aux cours
-        </Link>
-      </nav>
-      <div className="rounded-lg border border-border bg-card p-6 max-w-md w-full text-center space-y-3 mx-auto">
-        <h1 className="text-xl font-bold text-foreground">Leçons du Chapitre</h1>
-        <p className="text-sm text-foreground-muted">
-          Aperçu des leçons du chapitre {chapterId ?? ''}.
         </p>
       </div>
     </div>
@@ -110,7 +84,7 @@ export function AppRoutes() {
           <Route path="/courses" element={<CoursesPage />} />
           <Route path="/courses/:courseId" element={<CourseModulesPage />} />
           <Route path="/modules/:moduleId" element={<ModuleChaptersPage />} />
-          <Route path="/chapters/:chapterId" element={<ChapterLessonsPagePlaceholder />} />
+          <Route path="/chapters/:chapterId" element={<ChapterLessonsPage />} />
           <Route path="/search" element={<SearchPagePlaceholder />} />
         </Route>
       </Route>

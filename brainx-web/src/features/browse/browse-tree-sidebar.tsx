@@ -19,8 +19,10 @@ export function BrowseTreeSidebar({ onLinkClick }: BrowseTreeSidebarProps) {
   // Extract current IDs from path
   const courseMatch = location.pathname.match(/^\/courses\/([^/?#]+)/);
   const moduleMatch = location.pathname.match(/^\/modules\/([^/?#]+)/);
+  const chapterMatch = location.pathname.match(/^\/chapters\/([^/?#]+)/);
   const activeCourseId = courseMatch ? courseMatch[1] : undefined;
   const activeModuleId = moduleMatch ? moduleMatch[1] : undefined;
+  const activeChapterId = chapterMatch ? chapterMatch[1] : undefined;
   const isCatalogActive = location.pathname === '/courses';
 
   // Fetch published courses on mount
@@ -108,6 +110,7 @@ export function BrowseTreeSidebar({ onLinkClick }: BrowseTreeSidebarProps) {
   return (
     <nav
       data-testid="browse-tree-sidebar"
+      data-active-chapter={activeChapterId}
       aria-label="Arborescence des cours"
       className="space-y-4 text-sm"
     >

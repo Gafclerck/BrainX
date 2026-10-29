@@ -716,6 +716,22 @@ describe('Story FE-2.2: Exploration de l\'Arborescence Publiée (Cours → Modul
       };
 
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/v1/browse/chapters/ch1/lessons/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  count: 0,
+                  next: null,
+                  previous: null,
+                  results: [],
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
         if (url.includes('/api/v1/browse/modules/m1/chapters/')) {
           return Promise.resolve({
             ok: true,
@@ -770,11 +786,11 @@ describe('Story FE-2.2: Exploration de l\'Arborescence Publiée (Cours → Modul
       const chapterCard = await screen.findByTestId('chapter-card-ch1');
       await userEvent.click(chapterCard);
 
-      // Step 4: Chapter Placeholder with back link
+      // Step 4: Chapter Lessons with back link
       await waitFor(() => {
         expect(screen.getByRole('heading', { level: 1, name: 'Leçons du Chapitre' })).toBeInTheDocument();
       });
-      expect(screen.getByTestId('chapter-page-placeholder')).toBeInTheDocument();
+      expect(screen.getByTestId('chapter-lessons-page')).toBeInTheDocument();
       const chapterBackLink = screen.getByTestId('back-to-courses-link');
       expect(chapterBackLink).toHaveTextContent(/Retour aux cours/i);
       expect(chapterBackLink).toHaveAttribute('href', '/courses');

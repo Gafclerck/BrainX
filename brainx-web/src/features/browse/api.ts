@@ -1,5 +1,10 @@
 import { apiClient } from '@/lib/api';
-import type { BrowseContainerItem, PaginatedBrowseResponse } from './types';
+import type {
+  BrowseContainerItem,
+  BrowseLessonItem,
+  BrowseLessonFilterParams,
+  PaginatedBrowseResponse,
+} from './types';
 
 /**
  * Fetch the published courses visible to students.
@@ -41,3 +46,31 @@ export async function fetchModuleChapters(
     `/api/v1/browse/modules/${encodeURIComponent(moduleId)}/chapters/${query}`
   );
 }
+
+/**
+ * Fetch the published lessons belonging to a specific visible chapter,
+ * optionally filtered by date range (course_date_from, course_date_to).
+ * Queries GET /api/v1/browse/chapters/:chapterId/lessons/
+ */
+export async function fetchChapterLessons(
+  chapterId: string,
+  params?: BrowseLessonFilterParams,
+  page?: number
+): Promise<PaginatedBrowseResponse<BrowseLessonItem>> {
+  const queryParams = new URLSearchParams();
+  if (params?.course_date_from) {
+    queryParams.set('course_date_from', params.course_date_from);
+  }
+  if (params?.course_date_to) {
+    queryParams.set('course_date_to', params.course_date_to);
+  }
+  if (page) {
+    queryParams.set('page', String(page));
+  }
+  const queryString = queryParams.toString();
+  const query = queryString ? `?${queryString}` : '';
+  return apiClient<PaginatedBrowseResponse<BrowseLessonItem>>(
+    `/api/v1/browse/chapters/${encodeURIComponent(chapterId)}/lessons/${query}`
+  );
+}
+
