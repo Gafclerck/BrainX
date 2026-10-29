@@ -418,7 +418,7 @@ describe('Story FE-1.3: Activation de Compte par Fragment Hash sans fuite Refere
   });
 
   describe('useAuthStore', () => {
-    it('manages tokens and logout correctly with localStorage sync under brainx_auth_tokens and omits isPublisher', () => {
+    it('manages tokens and logout correctly with localStorage sync under brainx_auth_tokens and persists isPublisher', () => {
       const store = useAuthStore.getState();
       expect(store.accessToken).toBeNull();
       expect(store.refreshToken).toBeNull();
@@ -441,8 +441,8 @@ describe('Story FE-1.3: Activation de Compte par Fragment Hash sans fuite Refere
       expect(parsedStored.state.accessToken).toBe('acc_123');
       expect(parsedStored.state.refreshToken).toBe('ref_456');
       expect(parsedStored.state.user.email).toBe('student@example.com');
-      // partialize omits isPublisher
-      expect(parsedStored.state.isPublisher).toBeUndefined();
+      // partialize persists isPublisher (Story FE-1.5)
+      expect(parsedStored.state.isPublisher).toBe(true);
 
       act(() => {
         store.logout();

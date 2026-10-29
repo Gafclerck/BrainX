@@ -58,7 +58,7 @@ if 'rest_framework.throttling.ScopedRateThrottle' not in REST_FRAMEWORK.get(
         "REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] in production."
     )
 
-REQUIRED_THROTTLE_SCOPES = ('register', 'forgot', 'reset', 'activate', 'source')
+REQUIRED_THROTTLE_SCOPES = ('login', 'register', 'forgot', 'reset', 'activate', 'source')
 _throttle_rates = REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
 _missing_throttle_scopes = [
     scope

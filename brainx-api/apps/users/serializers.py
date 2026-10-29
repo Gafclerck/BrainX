@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import User, UserManager
 from .tokens import (
@@ -152,4 +153,16 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         attrs['user'] = user
         attrs['token_row'] = row
         return attrs
+
+
+class LoginSerializer(TokenObtainPairSerializer):
+    """Authenticate with email and password, returning access and refresh JWTs.
+
+    Normalizes the email address before authentication.
+    """
+
+    def validate(self, attrs):
+        if self.username_field in attrs and isinstance(attrs[self.username_field], str):
+            attrs[self.username_field] = normalize_email(attrs[self.username_field])
+        return super().validate(attrs)
 

@@ -1,4 +1,5 @@
 import type { FieldValues, Path, UseFormSetError } from 'react-hook-form';
+import { useAuthStore } from '@/features/auth/auth-store';
 
 /**
  * Standard RFC 9457 error representation used across BrainX API.
@@ -63,6 +64,15 @@ export async function apiClient<T = unknown>(
     ...(headers as Record<string, string>),
   };
 
+  const accessToken = useAuthStore.getState().accessToken;
+  if (
+    accessToken &&
+    !requestHeaders['Authorization'] &&
+    !requestHeaders['authorization']
+  ) {
+    requestHeaders['Authorization'] = `Bearer ${accessToken}`;
+  }
+
   let body: BodyInit | undefined;
   if (data !== undefined) {
     requestHeaders['Content-Type'] = 'application/json';
@@ -106,6 +116,46 @@ export async function apiClient<T = unknown>(
     }
 
     const retryAfter = parseRetryAfter(response.headers.get('Retry-After'));
+
+    const PUBLIC_ROUTES = [
+      '/login',
+      '/register',
+      '/verify-email',
+      '/forgot-password',
+      '/reset-password',
+      '/',
+    ];
+
+    const isLoginEndpoint = /(?:^|\/)login\/?$/.test(endpoint.split('?')[0]);
+    if (response.status === 401 && !isLoginEndpoint) {
+      const hadToken = Boolean(useAuthStore.getState().accessToken);
+      useAuthStore.getState().clearAuth();
+
+      if (typeof window !== 'undefined' && hadToken) {
+        const currentPathname = window.location.pathname;
+        const isPublicRoute = PUBLIC_ROUTES.includes(currentPathname);
+
+        if (!isPublicRoute) {
+          const currentPath =
+            window.location.pathname + window.location.search + window.location.hash;
+          const redirectUrl = `/login?returnUrl=${encodeURIComponent(currentPath)}`;
+          try {
+            if (typeof window.location.assign === 'function') {
+              window.location.assign(redirectUrl);
+            } else {
+              window.location.href = redirectUrl;
+            }
+          } catch {
+            try {
+              window.location.href = redirectUrl;
+            } catch {
+              // Ignore in environments where navigation is restricted
+            }
+          }
+        }
+      }
+    }
+
     throw new ApiError(envelope, retryAfter);
   }
 

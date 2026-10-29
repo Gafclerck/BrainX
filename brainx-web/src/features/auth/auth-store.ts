@@ -4,6 +4,7 @@ import { persist, createJSONStorage, type StateStorage } from 'zustand/middlewar
 export interface UserProfile {
   id?: string;
   email?: string;
+  is_email_verified?: boolean;
   is_publisher?: boolean;
   [key: string]: unknown;
 }
@@ -20,6 +21,7 @@ export interface AuthState {
   isPublisher: boolean;
   setTokens: (tokens: { access: string; refresh: string }) => void;
   setUser: (user: UserProfile | null) => void;
+  setIsPublisher: (isPublisher: boolean) => void;
   clearAuth: () => void;
   logout: () => void;
 }
@@ -59,10 +61,17 @@ export const useAuthStore = create<AuthState>()(
           refreshToken: refresh,
         }),
       setUser: (user: UserProfile | null) =>
-        set({
+        set((state) => ({
           user,
-          isPublisher: Boolean(user?.is_publisher),
-        }),
+          isPublisher:
+            user === null
+              ? false
+              : user.is_publisher !== undefined
+              ? Boolean(user.is_publisher)
+              : state.isPublisher,
+        })),
+      setIsPublisher: (isPublisher: boolean) =>
+        set({ isPublisher }),
       clearAuth: () =>
         set({
           accessToken: null,
@@ -85,6 +94,7 @@ export const useAuthStore = create<AuthState>()(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         user: state.user,
+        isPublisher: state.isPublisher,
       }),
     }
   )

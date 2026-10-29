@@ -28,10 +28,16 @@ import {
   Code2,
   Terminal,
   UserPlus,
+  LogIn,
+  LogOut,
 } from 'lucide-react';
+import { useAuthStore } from '@/features/auth/auth-store';
 
 export function LandingPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const isPublisher = useAuthStore((s) => s.isPublisher);
+  const logout = useAuthStore((s) => s.logout);
 
   return (
     <div
@@ -54,26 +60,90 @@ export function LandingPage() {
               </span>
             </div>
           </div>
-          <div className="flex items-center space-x-3">
-            <Button
-              asChild
-              variant="default"
-              size="default"
-              className="min-h-[44px]"
-            >
-              <Link
-                to="/register"
-                data-testid="nav-register-link"
-                className="flex items-center gap-1.5"
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            {Boolean(accessToken && isPublisher) && (
+              <Button
+                asChild
+                variant="outline"
+                size="default"
+                className="min-h-[44px]"
               >
-                <UserPlus className="h-4 w-4" />
-                <span>S'inscrire</span>
-              </Link>
-            </Button>
+                <Link
+                  to="/courses"
+                  data-testid="nav-publisher-link"
+                  className="flex items-center gap-1.5"
+                >
+                  <BookOpen className="h-4 w-4 text-primary" />
+                  <span>Espace Éditeur</span>
+                </Link>
+              </Button>
+            )}
+            {accessToken ? (
+              <>
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="default"
+                  className="min-h-[44px]"
+                >
+                  <Link
+                    to="/courses"
+                    data-testid="nav-courses-link"
+                    className="flex items-center gap-1.5"
+                  >
+                    <BookOpen className="h-4 w-4" />
+                    <span>Cours</span>
+                  </Link>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="default"
+                  onClick={logout}
+                  data-testid="nav-logout-btn"
+                  className="min-h-[44px]"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span>Se déconnecter</span>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="default"
+                  className="min-h-[44px]"
+                >
+                  <Link
+                    to="/login"
+                    data-testid="nav-login-link"
+                    className="flex items-center gap-1.5"
+                  >
+                    <LogIn className="h-4 w-4" />
+                    <span>Se connecter</span>
+                  </Link>
+                </Button>
+                <Button
+                  asChild
+                  variant="default"
+                  size="default"
+                  className="min-h-[44px]"
+                >
+                  <Link
+                    to="/register"
+                    data-testid="nav-register-link"
+                    className="flex items-center gap-1.5"
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    <span>S'inscrire</span>
+                  </Link>
+                </Button>
+              </>
+            )}
             <span className="text-xs font-mono text-foreground-muted hidden sm:inline-block">
               2026-10-29
             </span>
-            <span className="text-xs px-2.5 py-1 rounded-full border border-border text-foreground-muted bg-surface font-mono">
+            <span className="text-xs px-2.5 py-1 rounded-full border border-border text-foreground-muted bg-surface font-mono hidden md:inline-block">
               Dark-Only
             </span>
           </div>

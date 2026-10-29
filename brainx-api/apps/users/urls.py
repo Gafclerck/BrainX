@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    LoginView,
     MeView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
@@ -10,6 +11,7 @@ from .views import (
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
+    path('login/', LoginView.as_view(), name='login'),
     # Mirrors `FRONTEND_VERIFY_PATH`'s default, because that is the page the
     # emailed link already lands the SPA on and the page that POSTs the fragment
     # it read. Written out rather than read from the setting: that setting names

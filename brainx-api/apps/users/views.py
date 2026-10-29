@@ -16,8 +16,10 @@ from rest_framework import serializers, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.core.exceptions import ServiceUnavailable
 from apps.core.permissions import IsVerifiedAccount
@@ -27,6 +29,7 @@ from .models import AccountToken, TokenConsumption, User
 from .serializers import (
     AccountStateSerializer,
     EmailVerificationSerializer,
+    LoginSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegistrationSerializer,
@@ -138,6 +141,14 @@ THROTTLED_RESPONSE = OpenApiResponse(
 # publishing.
 VERIFICATION_RESPONSE = inline_serializer(
     name='EmailVerificationResponse',
+    fields={
+        'access': serializers.CharField(),
+        'refresh': serializers.CharField(),
+    },
+)
+
+LOGIN_RESPONSE = inline_serializer(
+    name='LoginResponse',
     fields={
         'access': serializers.CharField(),
         'refresh': serializers.CharField(),
@@ -330,6 +341,28 @@ class RegisterView(APIView):
         return (
             isinstance(exc, smtplib.SMTPResponseException) and exc.smtp_code >= 500
         )
+
+
+class LoginView(TokenObtainPairView):
+    """Obtain a JWT pair using email and password, subject to rate limiting."""
+
+    serializer_class = LoginSerializer
+    throttle_scope = 'login'
+    throttle_classes = [ScopedRateThrottle]
+
+    @extend_schema(
+        request=LoginSerializer,
+        responses={
+            200: LOGIN_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            405: DRF_ERROR_RESPONSE,
+            415: DRF_ERROR_RESPONSE,
+            429: THROTTLED_RESPONSE,
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
 
 class VerifyEmailView(APIView):
