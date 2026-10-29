@@ -18,6 +18,8 @@
     "lucide-react": "^1.64.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-hook-form": "^7.91.0",
+    "react-router-dom": "^7.18.5",
     "tailwind-merge": "^2.5.5"
   },
   "devDependencies": {
