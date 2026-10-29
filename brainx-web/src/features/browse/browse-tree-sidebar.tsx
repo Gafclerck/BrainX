@@ -20,9 +20,11 @@ export function BrowseTreeSidebar({ onLinkClick }: BrowseTreeSidebarProps) {
   const courseMatch = location.pathname.match(/^\/courses\/([^/?#]+)/);
   const moduleMatch = location.pathname.match(/^\/modules\/([^/?#]+)/);
   const chapterMatch = location.pathname.match(/^\/chapters\/([^/?#]+)/);
+  const lessonMatch = location.pathname.match(/^\/lessons\/([^/?#]+)/);
   const activeCourseId = courseMatch ? courseMatch[1] : undefined;
   const activeModuleId = moduleMatch ? moduleMatch[1] : undefined;
   const activeChapterId = chapterMatch ? chapterMatch[1] : undefined;
+  const activeLessonId = lessonMatch ? lessonMatch[1] : undefined;
   const isCatalogActive = location.pathname === '/courses';
 
   // Fetch published courses on mount
@@ -111,6 +113,7 @@ export function BrowseTreeSidebar({ onLinkClick }: BrowseTreeSidebarProps) {
     <nav
       data-testid="browse-tree-sidebar"
       data-active-chapter={activeChapterId}
+      data-active-lesson={activeLessonId}
       aria-label="Arborescence des cours"
       className="space-y-4 text-sm"
     >

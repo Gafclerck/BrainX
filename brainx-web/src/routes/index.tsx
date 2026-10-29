@@ -12,6 +12,7 @@ import {
   CourseModulesPage,
   ModuleChaptersPage,
   ChapterLessonsPage,
+  LessonDetailPage,
   BrowseTreeSidebar,
 } from '@/features/browse';
 
@@ -85,6 +86,7 @@ export function AppRoutes() {
           <Route path="/courses/:courseId" element={<CourseModulesPage />} />
           <Route path="/modules/:moduleId" element={<ModuleChaptersPage />} />
           <Route path="/chapters/:chapterId" element={<ChapterLessonsPage />} />
+          <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
           <Route path="/search" element={<SearchPagePlaceholder />} />
         </Route>
       </Route>

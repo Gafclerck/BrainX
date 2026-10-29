@@ -30,6 +30,10 @@ export interface BrowseLessonItem {
   resources?: LessonResourceItem[];
 }
 
+export interface BrowseLessonDetailItem extends BrowseLessonItem {
+  description: string;
+}
+
 export interface BrowseLessonFilterParams {
   course_date_from?: string;
   course_date_to?: string;

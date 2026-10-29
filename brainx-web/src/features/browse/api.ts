@@ -2,6 +2,7 @@ import { apiClient } from '@/lib/api';
 import type {
   BrowseContainerItem,
   BrowseLessonItem,
+  BrowseLessonDetailItem,
   BrowseLessonFilterParams,
   PaginatedBrowseResponse,
 } from './types';
@@ -73,4 +74,23 @@ export async function fetchChapterLessons(
     `/api/v1/browse/chapters/${encodeURIComponent(chapterId)}/lessons/${query}`
   );
 }
+
+/**
+ * Fetch the detail of a published lesson visible to students.
+ * Queries GET /api/v1/browse/lessons/:lessonId/
+ */
+export async function fetchLessonDetail(
+  lessonId: string,
+  searchSessionId?: string
+): Promise<BrowseLessonDetailItem> {
+  const headers: Record<string, string> = {};
+  if (searchSessionId && searchSessionId.trim()) {
+    headers['X-Search-Session-Id'] = searchSessionId.trim();
+  }
+  return apiClient<BrowseLessonDetailItem>(
+    `/api/v1/browse/lessons/${encodeURIComponent(lessonId)}/`,
+    { headers }
+  );
+}
+
 

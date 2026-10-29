@@ -4,6 +4,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Menu, AlignRight, X } from 'lucide-react';
 import { AppHeader } from './app-header';
 import { cn } from '@/lib/utils';
+import { TocProvider, useToc } from './toc-context';
 
 export interface StudentLayoutProps {
   children?: React.ReactNode;
@@ -93,13 +94,14 @@ export function DefaultTocContent({ onLinkClick }: { onLinkClick?: () => void })
   );
 }
 
-export function StudentLayout({
+function StudentLayoutInner({
   children,
   sidebar,
-  toc,
+  toc: tocProp,
   onSearchTrigger,
   className,
 }: StudentLayoutProps) {
+  const { toc: dynamicToc } = useToc();
   const [isLeftDrawerOpen, setIsLeftDrawerOpen] = React.useState(false);
   const [isRightDrawerOpen, setIsRightDrawerOpen] = React.useState(false);
   const location = useLocation();
@@ -193,7 +195,7 @@ export function StudentLayout({
           aria-label="Sur cette page"
           className="hidden lg:block w-toc-width shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto border-l border-border p-4 bg-surface/30"
         >
-          {toc ?? <DefaultTocContent />}
+          {tocProp ?? dynamicToc ?? <DefaultTocContent />}
         </aside>
       </div>
 
@@ -263,12 +265,20 @@ export function StudentLayout({
               Table des matières et ressources de la leçon pour appareils mobiles
             </DialogPrimitive.Description>
             <div className="flex-1 overflow-y-auto py-4">
-              {toc ?? <DefaultTocContent onLinkClick={() => setIsRightDrawerOpen(false)} />}
+              {tocProp ?? dynamicToc ?? <DefaultTocContent onLinkClick={() => setIsRightDrawerOpen(false)} />}
             </div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
     </div>
+  );
+}
+
+export function StudentLayout(props: StudentLayoutProps) {
+  return (
+    <TocProvider>
+      <StudentLayoutInner {...props} />
+    </TocProvider>
   );
 }
 
