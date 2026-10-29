@@ -1,6 +1,8 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Link } from 'react-router-dom';
 import { RegisterPage } from '@/features/auth/register-page';
 import { VerifyEmailPage } from '@/features/auth/verify-email-page';
+import { ForgotPasswordPage } from '@/features/auth/forgot-password-page';
+import { ResetPasswordPage } from '@/features/auth/reset-password-page';
 import { LandingPage } from '@/features/landing/landing-page';
 
 function LoginPagePlaceholder() {
@@ -14,6 +16,14 @@ function LoginPagePlaceholder() {
         <p className="text-sm text-foreground-muted">
           La page de connexion (Story FE-1.5) sera disponible prochainement.
         </p>
+        <div>
+          <Link
+            to="/forgot-password"
+            className="text-primary hover:text-primary-hover text-sm underline-offset-4 hover:underline"
+          >
+            Mot de passe oublié ?
+          </Link>
+        </div>
       </div>
     </div>
   );
@@ -42,6 +52,8 @@ export function AppRoutes() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/login" element={<LoginPagePlaceholder />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/courses" element={<CoursesPagePlaceholder />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
