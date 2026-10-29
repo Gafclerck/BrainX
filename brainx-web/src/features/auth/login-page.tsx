@@ -14,27 +14,13 @@ import { Input } from '@/components/ui/input';
 import { ThrottledBanner } from '@/components/ui/throttled-banner';
 import { apiClient, ApiError, applyApiErrorsToForm } from '@/lib/api';
 import { useAuthStore, type UserProfile } from './auth-store';
+import { sanitizeReturnUrl } from '@/routes/guards';
+
+export { sanitizeReturnUrl };
 
 export interface LoginFormData {
   email: string;
   password: string;
-}
-
-export function sanitizeReturnUrl(url: string | null): string {
-  if (!url) return '/courses';
-  const trimmed = url.trim();
-  if (
-    trimmed.startsWith('/') &&
-    !trimmed.startsWith('//') &&
-    !trimmed.startsWith('/\\') &&
-    !trimmed.includes('://')
-  ) {
-    if (trimmed === '/login' || trimmed === '/login/' || trimmed.startsWith('/login?')) {
-      return '/courses';
-    }
-    return trimmed;
-  }
-  return '/courses';
 }
 
 export function LoginPage() {
@@ -83,13 +69,16 @@ export function LoginPage() {
         }
       );
 
-      // 2. Set tokens in auth store
-      setTokens({ access: loginData.access, refresh: loginData.refresh });
+      const authHeaders = {
+        Authorization: `Bearer ${loginData.access}`,
+      };
 
-      // 3. Fetch profile from GET /api/v1/me/
+      // 2. Fetch profile from GET /api/v1/me/ with explicit Authorization header
+      let profile: UserProfile | null = null;
       try {
-        const profile = await apiClient<UserProfile>('/api/v1/me/');
-        setUser(profile);
+        profile = await apiClient<UserProfile>('/api/v1/me/', {
+          headers: authHeaders,
+        });
       } catch (profileErr) {
         if (profileErr instanceof ApiError && profileErr.envelope.status === 403) {
           setNonFieldErrors([
@@ -100,22 +89,28 @@ export function LoginPage() {
         // Non-fatal for other errors
       }
 
-      // 4. Silent publisher probe GET /api/v1/courses/?page=1
+      // 3. Silent publisher probe GET /api/v1/courses/?page=1 with explicit Authorization header
+      let isUserPublisher = false;
       try {
-        await apiClient('/api/v1/courses/?page=1');
-        setIsPublisher(true);
+        await apiClient('/api/v1/courses/?page=1', {
+          headers: authHeaders,
+        });
+        isUserPublisher = true;
       } catch (probeErr) {
-        // Only set isPublisher(false) on 403 Forbidden
+        // Only set isUserPublisher to false on 403 Forbidden
         if (probeErr instanceof ApiError && probeErr.envelope.status === 403) {
-          setIsPublisher(false);
+          isUserPublisher = false;
         }
       }
 
+      // 4. Commit tokens, profile, and publisher status together before redirecting
+      setTokens({ access: loginData.access, refresh: loginData.refresh });
+      setUser(profile);
+      setIsPublisher(isUserPublisher);
+
       // 5. Clean redirect to sanitized returnUrl or /courses
-      if (useAuthStore.getState().accessToken) {
-        const target = sanitizeReturnUrl(returnUrlParam);
-        navigate(target, { replace: true });
-      }
+      const target = sanitizeReturnUrl(returnUrlParam);
+      navigate(target, { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         if (

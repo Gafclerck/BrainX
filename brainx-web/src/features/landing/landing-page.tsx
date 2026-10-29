@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -30,11 +30,33 @@ import {
   UserPlus,
   LogIn,
   LogOut,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 import { useAuthStore } from '@/features/auth/auth-store';
 
 export function LandingPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const notice = (location.state as { notice?: string } | null | undefined)?.notice;
+  const [dismissed, setDismissed] = React.useState(false);
+
+  React.useEffect(() => {
+    setDismissed(false);
+  }, [location.key]);
+
+  const handleDismissNotice = () => {
+    setDismissed(true);
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: {},
+    });
+  };
+
+  const isNoticeValid = typeof notice === 'string' && notice.trim().length > 0;
+  const showNotice = Boolean(isNoticeValid && !dismissed);
+
   const accessToken = useAuthStore((s) => s.accessToken);
   const isPublisher = useAuthStore((s) => s.isPublisher);
   const logout = useAuthStore((s) => s.logout);
@@ -69,7 +91,7 @@ export function LandingPage() {
                 className="min-h-[44px]"
               >
                 <Link
-                  to="/courses"
+                  to="/publisher/dashboard"
                   data-testid="nav-publisher-link"
                   className="flex items-center gap-1.5"
                 >
@@ -152,6 +174,32 @@ export function LandingPage() {
 
       {/* Main Content */}
       <main className="max-w-page-max mx-auto px-4 sm:px-6 py-8 space-y-8">
+        {/* Flash / Publisher Notice Banner */}
+        {showNotice && (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="publisher-notice-banner"
+            className="rounded-md border border-info-border bg-info-surface p-4 text-sm text-info flex items-start sm:items-center justify-between gap-3 shadow-sm min-w-0"
+          >
+            <div className="flex items-start sm:items-center gap-3 min-w-0">
+              <AlertCircle className="h-5 w-5 shrink-0 text-info mt-0.5 sm:mt-0" aria-hidden="true" />
+              <p className="font-medium text-info break-words">
+                {notice}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleDismissNotice}
+              data-testid="dismiss-notice-button"
+              aria-label="Fermer la notification"
+              className="shrink-0 rounded p-1.5 text-info hover:text-foreground hover:bg-info-border/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary min-h-[44px] min-w-[44px] flex items-center justify-center"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
         {/* Hero Section */}
         <section className="space-y-3">
           <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-info-surface border border-info-border text-info text-xs font-mono">

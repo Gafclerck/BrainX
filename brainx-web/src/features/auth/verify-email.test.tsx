@@ -478,6 +478,7 @@ describe('Story FE-1.3: Activation de Compte par Fragment Hash sans fuite Refere
     });
 
     it('mounts /courses placeholder', async () => {
+      useAuthStore.getState().setTokens({ access: 'valid_token', refresh: 'valid_refresh' });
       window.history.replaceState(null, '', '/courses');
 
       render(
