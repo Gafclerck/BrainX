@@ -1,5 +1,11 @@
 import { apiClient } from '@/lib/api';
-import type { PaginatedSearchResponse, SearchOptions } from './types';
+import type {
+  AbandonSessionPayload,
+  CloseSessionPayload,
+  PaginatedSearchResponse,
+  SearchOptions,
+  SearchSessionResponse,
+} from './types';
 
 /**
  * Dispatches an authenticated GET /api/v1/search/lessons/?query=... request.
@@ -31,5 +37,63 @@ export async function searchLessons(
   return apiClient<PaginatedSearchResponse>(endpoint, {
     method: 'GET',
     signal,
+  });
+}
+
+/**
+ * Dispatches an authenticated POST /api/v1/search/sessions/close/ request.
+ * Header X-Search-Session-Id and body payload are sent.
+ */
+export async function closeSearchSession(
+  payload: CloseSessionPayload,
+  options?: { keepalive?: boolean; signal?: AbortSignal }
+): Promise<SearchSessionResponse> {
+  const sessionId = payload.session_id || payload.search_session_id;
+  const headers: Record<string, string> = {};
+  if (sessionId) {
+    headers['X-Search-Session-Id'] = sessionId;
+  }
+
+  const data: CloseSessionPayload = {
+    session_id: payload.session_id,
+    search_session_id: payload.search_session_id ?? payload.session_id,
+    reason: payload.reason ?? 'lesson_opened',
+    ...(payload.lesson_id ? { lesson_id: payload.lesson_id } : {}),
+  };
+
+  return apiClient<SearchSessionResponse>('/api/v1/search/sessions/close/', {
+    method: 'POST',
+    data,
+    headers,
+    keepalive: options?.keepalive ?? true,
+    signal: options?.signal,
+  });
+}
+
+/**
+ * Dispatches an authenticated POST /api/v1/search/sessions/abandon/ request.
+ * Header X-Search-Session-Id and body payload are sent.
+ */
+export async function abandonSearchSession(
+  payload: AbandonSessionPayload,
+  options?: { keepalive?: boolean; signal?: AbortSignal }
+): Promise<SearchSessionResponse> {
+  const sessionId = payload.session_id || payload.search_session_id;
+  const headers: Record<string, string> = {};
+  if (sessionId) {
+    headers['X-Search-Session-Id'] = sessionId;
+  }
+
+  const data: AbandonSessionPayload = {
+    session_id: payload.session_id,
+    search_session_id: payload.search_session_id ?? payload.session_id,
+  };
+
+  return apiClient<SearchSessionResponse>('/api/v1/search/sessions/abandon/', {
+    method: 'POST',
+    data,
+    headers,
+    keepalive: options?.keepalive ?? true,
+    signal: options?.signal,
   });
 }

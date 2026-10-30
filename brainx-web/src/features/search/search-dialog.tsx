@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Search, Loader2, X } from 'lucide-react';
 import { useSearchStore } from './search-store';
+import { useSearchSessionStore } from './search-session-store';
 import { SearchResultCard } from './search-result-card';
 import { cn } from '@/lib/utils';
 
@@ -63,15 +64,38 @@ export function SearchDialog() {
     }
   }, [isOpen]);
 
+  // Register page unload / pagehide handler and unmount cleanup to abandon active search session (AC-3)
+  React.useEffect(() => {
+    const handleUnloadOrHide = () => {
+      const state = useSearchSessionStore.getState();
+      if (state.status === 'active' && state.sessionId) {
+        state.abandonSession();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleUnloadOrHide);
+    window.addEventListener('pagehide', handleUnloadOrHide);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnloadOrHide);
+      window.removeEventListener('pagehide', handleUnloadOrHide);
+      const state = useSearchSessionStore.getState();
+      if (state.status === 'active' && state.sessionId) {
+        state.abandonSession();
+      }
+    };
+  }, []);
+
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       setSelectedIndex(-1);
       closeSearch();
+      useSearchSessionStore.getState().abandonSession();
     }
   };
 
   const handleSelectLesson = (lessonId: string) => {
     setSelectedIndex(-1);
+    useSearchSessionStore.getState().closeSession(lessonId);
     closeSearch();
     navigate(`/lessons/${lessonId}`);
   };

@@ -66,3 +66,49 @@ export interface SearchState {
   search: (query: string, options?: SearchOptions) => Promise<void>;
   reset: () => void;
 }
+
+/**
+ * Lifecycle status of a search session (Story FE-3.3).
+ */
+export type SearchSessionStatus = 'idle' | 'active' | 'closed' | 'abandoned';
+
+/**
+ * Request payload for POST /api/v1/search/sessions/close/
+ */
+export interface CloseSessionPayload {
+  session_id: string;
+  search_session_id?: string;
+  reason?: 'lesson_opened' | 'abandoned';
+  lesson_id?: string;
+}
+
+/**
+ * Request payload for POST /api/v1/search/sessions/abandon/
+ */
+export interface AbandonSessionPayload {
+  session_id: string;
+  search_session_id?: string;
+}
+
+/**
+ * Response payload from search session close/abandon endpoints.
+ */
+export interface SearchSessionResponse {
+  search_session_id: string;
+  state: string;
+  close_reason?: string;
+}
+
+/**
+ * State and actions for the dedicated search session store (Story FE-3.3).
+ */
+export interface SearchSessionState {
+  sessionId: string | null;
+  status: SearchSessionStatus;
+  lastOpenedLessonId: string | null;
+
+  setSessionId: (sessionId: string | null | undefined) => void;
+  closeSession: (lessonId?: string) => Promise<void>;
+  abandonSession: () => Promise<void>;
+  resetSession: () => void;
+}

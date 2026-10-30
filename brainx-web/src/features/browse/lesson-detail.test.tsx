@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent, act, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
+import { useSearchSessionStore } from '@/features/search';
 import { LessonDetailPage, extractHeadings } from './lesson-detail-page';
 import { StudentLayout } from '@/components/layout/student-layout';
 import { AppRoutes } from '@/routes';
@@ -16,6 +17,7 @@ describe('Story FE-2.4: Vue Détaillée d\'une Leçon & Fil d\'Ariane Contextuel
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    useSearchSessionStore.getState().resetSession();
     useAuthStore.getState().clearAuth();
     useAuthStore.getState().setTokens({
       access: 'valid_student_jwt',
@@ -183,6 +185,49 @@ Pour finir, testez vos connaissances.
       });
 
       expect(sessionHeader).toBe('sess-999');
+    });
+
+    it('does not attach X-Search-Session-Id to fetchLessonDetail when a session was closed via useSearchSessionStore, and renders cleanly', async () => {
+      let sessionHeader: string | undefined = undefined;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        sessionHeader = (init?.headers as Record<string, string>)?.['X-Search-Session-Id'];
+        if (url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      // Simulate a search session closed upon lesson selection
+      act(() => {
+        useSearchSessionStore.getState().setSessionId('sess-from-search');
+      });
+      await act(async () => {
+        await useSearchSessionStore.getState().closeSession('lesson-uuid-1');
+      });
+
+      expect(useSearchSessionStore.getState().status).toBe('closed');
+      expect(useSearchSessionStore.getState().sessionId).toBe('sess-from-search');
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      // Crucial: X-Search-Session-Id must NOT be sent for a closed session, avoiding 404 from capture.resolve_session
+      expect(sessionHeader).toBeUndefined();
     });
   });
 

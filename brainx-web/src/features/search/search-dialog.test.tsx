@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { useSearchStore } from './search-store';
+import { useSearchSessionStore } from './search-session-store';
 import { SearchDialog } from './search-dialog';
 import { StudentLayout } from '@/components/layout/student-layout';
 import type { SearchLessonItem } from './types';
@@ -68,6 +69,7 @@ describe('Story FE-3.1: Palette de Commande de Recherche Globale (Cmd+K)', () =>
       refresh: 'valid_refresh_token',
     });
     useSearchStore.getState().reset();
+    useSearchSessionStore.getState().resetSession();
   });
 
   afterEach(() => {
@@ -1149,6 +1151,611 @@ describe('Story FE-3.1: Palette de Commande de Recherche Globale (Cmd+K)', () =>
 
       const listbox = screen.getByTestId('search-results-list');
       expect(listbox).toHaveAttribute('id', 'search-results-list');
+    });
+  });
+
+  describe('Story FE-3.3: Orchestration de la Session de Recherche Serveur', () => {
+    describe('AC-1: Session Preservation in Store', () => {
+      it('stores search_session_id and marks status active when search returns a session ID', async () => {
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const sessionState = useSearchSessionStore.getState();
+        expect(sessionState.sessionId).toBe('s9999999-9999-9999-9999-999999999999');
+        expect(sessionState.status).toBe('active');
+      });
+
+      it('handles search responses without session ID gracefully without changing store status', async () => {
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse({
+              ...mockSearchResults,
+              search_session_id: null,
+            });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const sessionState = useSearchSessionStore.getState();
+        expect(sessionState.sessionId).toBeNull();
+        expect(sessionState.status).toBe('idle');
+      });
+
+      it('populates useSearchSessionStore and marks status active upon debounced typing in search input', async () => {
+        vi.useFakeTimers();
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        const input = screen.getByTestId('search-dialog-input');
+        act(() => {
+          fireEvent.change(input, { target: { value: 'django' } });
+        });
+
+        // Advance debounce timer by 300ms
+        await act(async () => {
+          vi.advanceTimersByTime(300);
+        });
+
+        const sessionState = useSearchSessionStore.getState();
+        expect(sessionState.sessionId).toBe('s9999999-9999-9999-9999-999999999999');
+        expect(sessionState.status).toBe('active');
+      });
+    });
+
+    describe('AC-2: Session Close on Lesson Selection', () => {
+      it('dispatches POST /close/ with session_id, lesson_id, reason lesson_opened, and header X-Search-Session-Id when a lesson is clicked', async () => {
+        let closeUrl = '';
+        let closeInit: RequestInit | undefined;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/close/')) {
+            closeUrl = url;
+            closeInit = init;
+            return createJsonResponse({
+              search_session_id: 's9999999-9999-9999-9999-999999999999',
+              state: 'closed',
+              close_reason: 'lesson_opened',
+            });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <LocationTracker />
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('active');
+
+        // Click the first lesson card
+        const firstCard = screen.getByTestId('search-result-item-l1111111-1111-1111-1111-111111111111');
+        await userEvent.click(firstCard);
+
+        // Verify API call was dispatched
+        expect(closeUrl).toContain('/api/v1/search/sessions/close/');
+        expect(closeInit?.method).toBe('POST');
+        expect(closeInit?.keepalive).toBe(true);
+        expect((closeInit?.headers as Record<string, string>)['X-Search-Session-Id']).toBe(
+          's9999999-9999-9999-9999-999999999999'
+        );
+
+        const body = JSON.parse(closeInit?.body as string);
+        expect(body).toEqual({
+          session_id: 's9999999-9999-9999-9999-999999999999',
+          search_session_id: 's9999999-9999-9999-9999-999999999999',
+          reason: 'lesson_opened',
+          lesson_id: 'l1111111-1111-1111-1111-111111111111',
+        });
+
+        // Store preserves sessionId and lastOpenedLessonId, status is closed
+        const sessionState = useSearchSessionStore.getState();
+        expect(sessionState.status).toBe('closed');
+        expect(sessionState.sessionId).toBe('s9999999-9999-9999-9999-999999999999');
+        expect(sessionState.lastOpenedLessonId).toBe('l1111111-1111-1111-1111-111111111111');
+
+        // Navigation occurred without session_id in URL search params
+        expect(screen.getByTestId('location-display')).toHaveTextContent(
+          '/lessons/l1111111-1111-1111-1111-111111111111'
+        );
+      });
+
+      it('dispatches POST /close/ when a lesson is selected via keyboard Enter', async () => {
+        let closeDispatched = false;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/close/')) {
+            closeDispatched = true;
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <LocationTracker />
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const input = screen.getByTestId('search-dialog-input');
+        // ArrowDown to select first item, then Enter
+        fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown' });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        expect(closeDispatched).toBe(true);
+        expect(useSearchSessionStore.getState().status).toBe('closed');
+        expect(useSearchSessionStore.getState().lastOpenedLessonId).toBe(
+          'l1111111-1111-1111-1111-111111111111'
+        );
+      });
+
+      it('prevents abandon call when dialog closes following a lesson selection (Double Close Prevention)', async () => {
+        const abandonSpy = vi.fn();
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/close/')) {
+            return createJsonResponse({ success: true });
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonSpy();
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const firstCard = screen.getByTestId('search-result-item-l1111111-1111-1111-1111-111111111111');
+        await userEvent.click(firstCard);
+
+        expect(abandonSpy).not.toHaveBeenCalled();
+        expect(useSearchSessionStore.getState().status).toBe('closed');
+      });
+
+      it('swallows close API failure (404/500/network) silently and still navigates to the lesson', async () => {
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/close/')) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ type: 'not_found', status: 404 }), {
+                status: 404,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            );
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <LocationTracker />
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const firstCard = screen.getByTestId('search-result-item-l1111111-1111-1111-1111-111111111111');
+        // Must not crash or block navigation
+        await userEvent.click(firstCard);
+
+        expect(useSearchSessionStore.getState().status).toBe('closed');
+        expect(screen.getByTestId('location-display')).toHaveTextContent(
+          '/lessons/l1111111-1111-1111-1111-111111111111'
+        );
+      });
+    });
+
+    describe('AC-3: Session Abandon on Dismissal & Page Unload', () => {
+      it('dispatches POST /abandon/ with header X-Search-Session-Id when palette is dismissed via Escape', async () => {
+        let abandonUrl = '';
+        let abandonInit: RequestInit | undefined;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonUrl = url;
+            abandonInit = init;
+            return createJsonResponse({
+              search_session_id: 's9999999-9999-9999-9999-999999999999',
+              state: 'closed',
+              close_reason: 'abandoned',
+            });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('active');
+
+        // Dismiss palette via Escape
+        fireEvent.keyDown(screen.getByTestId('search-dialog-content'), {
+          key: 'Escape',
+          code: 'Escape',
+        });
+
+        await waitFor(() => {
+          expect(screen.queryByTestId('search-dialog-content')).not.toBeInTheDocument();
+        });
+
+        expect(abandonUrl).toContain('/api/v1/search/sessions/abandon/');
+        expect(abandonInit?.method).toBe('POST');
+        expect((abandonInit?.headers as Record<string, string>)['X-Search-Session-Id']).toBe(
+          's9999999-9999-9999-9999-999999999999'
+        );
+
+        const body = JSON.parse(abandonInit?.body as string);
+        expect(body).toEqual({
+          session_id: 's9999999-9999-9999-9999-999999999999',
+          search_session_id: 's9999999-9999-9999-9999-999999999999',
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('abandoned');
+      });
+
+      it('dispatches POST /abandon/ when palette is dismissed via close button', async () => {
+        let abandonDispatched = false;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonDispatched = true;
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const closeBtn = screen.getByTestId('search-dialog-close');
+        await userEvent.click(closeBtn);
+
+        await waitFor(() => {
+          expect(screen.queryByTestId('search-dialog-content')).not.toBeInTheDocument();
+        });
+
+        expect(abandonDispatched).toBe(true);
+        expect(useSearchSessionStore.getState().status).toBe('abandoned');
+      });
+
+      it('does not dispatch abandon API call if palette is closed without any search query/session', async () => {
+        const fetchSpy = vi.fn();
+        globalThis.fetch = fetchSpy;
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        const closeBtn = screen.getByTestId('search-dialog-close');
+        await userEvent.click(closeBtn);
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(useSearchSessionStore.getState().status).toBe('idle');
+      });
+
+      it('dispatches POST /abandon/ with keepalive: true when beforeunload event fires while session is active', async () => {
+        let abandonInit: RequestInit | undefined;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonInit = init;
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('active');
+
+        // Dispatch beforeunload event on window
+        act(() => {
+          window.dispatchEvent(new Event('beforeunload'));
+        });
+
+        expect(abandonInit?.method).toBe('POST');
+        expect(abandonInit?.keepalive).toBe(true);
+        expect(useSearchSessionStore.getState().status).toBe('abandoned');
+      });
+
+      it('prevents duplicate abandon API calls if both dialog close and beforeunload occur', async () => {
+        const abandonSpy = vi.fn();
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonSpy();
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        // First trigger: dismiss dialog
+        const closeBtn = screen.getByTestId('search-dialog-close');
+        await userEvent.click(closeBtn);
+
+        expect(abandonSpy).toHaveBeenCalledTimes(1);
+
+        // Second trigger: beforeunload event
+        act(() => {
+          window.dispatchEvent(new Event('beforeunload'));
+        });
+
+        // Abandon must NOT be called a second time
+        expect(abandonSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('dispatches POST /abandon/ with keepalive: true when pagehide event fires while session is active', async () => {
+        let abandonInit: RequestInit | undefined;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonInit = init;
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('active');
+
+        // Dispatch pagehide event on window
+        act(() => {
+          window.dispatchEvent(new Event('pagehide'));
+        });
+
+        expect(abandonInit?.method).toBe('POST');
+        expect(abandonInit?.keepalive).toBe(true);
+        expect(useSearchSessionStore.getState().status).toBe('abandoned');
+      });
+
+      it('abandons active session when SearchDialog component is unmounted', async () => {
+        let abandonDispatched = false;
+
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            abandonDispatched = true;
+            return createJsonResponse({ success: true });
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        const { unmount } = render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('active');
+
+        // Unmount the component while session is active
+        unmount();
+
+        expect(abandonDispatched).toBe(true);
+        expect(useSearchSessionStore.getState().status).toBe('abandoned');
+      });
+
+      it('swallows abandon API failure silently without error UI', async () => {
+        globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/search/lessons/')) {
+            return createJsonResponse(mockSearchResults);
+          }
+          if (url.includes('/api/v1/search/sessions/abandon/')) {
+            return Promise.reject(new Error('Network disconnected'));
+          }
+          return Promise.reject(new Error(`Unhandled URL: ${url}`));
+        });
+
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <SearchDialog />
+          </MemoryRouter>
+        );
+
+        act(() => {
+          useSearchStore.getState().openSearch();
+        });
+
+        await act(async () => {
+          await useSearchStore.getState().search('django');
+        });
+
+        const closeBtn = screen.getByTestId('search-dialog-close');
+        await userEvent.click(closeBtn);
+
+        // Must not crash
+        await waitFor(() => {
+          expect(screen.queryByTestId('search-dialog-content')).not.toBeInTheDocument();
+        });
+
+        expect(useSearchSessionStore.getState().status).toBe('abandoned');
+      });
     });
   });
 });

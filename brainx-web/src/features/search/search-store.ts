@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { searchLessons } from './api';
+import { useSearchSessionStore } from './search-session-store';
 import type { SearchOptions, SearchState } from './types';
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -126,6 +127,9 @@ export const useSearchStore = create<SearchState>((set) => ({
       try {
         const data = await searchLessons(trimmed, { signal: controller.signal });
         if (currentAbortController === controller) {
+          if (data.search_session_id) {
+            useSearchSessionStore.getState().setSessionId(data.search_session_id);
+          }
           set({
             results: data.results,
             count: data.count,
@@ -217,6 +221,9 @@ export const useSearchStore = create<SearchState>((set) => ({
         signal: options?.signal ?? controller.signal,
       });
       if (currentAbortController === controller) {
+        if (data.search_session_id) {
+          useSearchSessionStore.getState().setSessionId(data.search_session_id);
+        }
         set({
           results: data.results,
           count: data.count,
