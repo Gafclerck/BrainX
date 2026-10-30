@@ -278,6 +278,16 @@ Pour finir, testez vos connaissances.
       expect(pre?.className).toContain('overflow-x-auto');
       expect(pre?.className).toContain('min-w-0');
       expect(pre?.className).toContain('max-w-full');
+
+      // CodeBlock integration (FE-2.5): renders slate header, uppercase badge, copy button, line numbers
+      const codeBlock = screen.getByTestId('code-block');
+      expect(codeBlock).toBeInTheDocument();
+      expect(screen.getByTestId('code-header')).toHaveClass('bg-[#161B22]');
+      expect(screen.getByTestId('code-language-badge')).toHaveTextContent('PYTHON');
+      expect(screen.getByTestId('code-copy-button')).toHaveTextContent('Copier');
+      const lineNumbers = screen.getAllByTestId('code-line-number');
+      expect(lineNumbers.length).toBeGreaterThanOrEqual(4);
+      expect(lineNumbers[0]).toHaveTextContent('1');
     });
 
     it('sanitizes script tags and unsafe attributes via rehype-sanitize', async () => {

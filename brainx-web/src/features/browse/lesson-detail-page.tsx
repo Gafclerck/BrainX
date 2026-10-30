@@ -18,6 +18,7 @@ import { useToc, type TocItem } from '@/components/layout/toc-context';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { ResourceBadge } from '@/components/ui/resource-badge';
+import { CodeBlock } from '@/components/ui/code-block';
 import { cn } from '@/lib/utils';
 
 export function slugify(text: string): string {
@@ -267,13 +268,28 @@ export function LessonDetailPage() {
           {children}
         </blockquote>
       ),
-      pre: ({ children }: React.ComponentPropsWithoutRef<'pre'>) => (
-        <pre className="bg-surface border border-border rounded-lg p-4 font-mono text-xs overflow-x-auto min-w-0 max-w-full text-foreground my-4">
-          {children}
-        </pre>
-      ),
+      pre: ({ children }: React.ComponentPropsWithoutRef<'pre'>) => {
+        if (React.isValidElement(children)) {
+          const childProps = children.props as { className?: string; children?: React.ReactNode };
+          const codeString = getChildrenText(childProps.children);
+          const match = /language-([^\s]+)/.exec(childProps.className || '');
+          const language = match ? match[1] : undefined;
+          return <CodeBlock code={codeString} language={language} />;
+        }
+        return (
+          <pre className="bg-[#0F141C] border border-[#30363D] rounded-lg p-4 font-mono text-xs overflow-x-auto min-w-0 max-w-full text-[#E6EDF3] my-4">
+            {children}
+          </pre>
+        );
+      },
       code: ({ className, children, ...props }: React.ComponentPropsWithoutRef<'code'>) => (
-        <code className={cn('font-mono text-xs text-foreground', className)} {...props}>
+        <code
+          className={cn(
+            'font-mono text-[13px] bg-[#1F242C] border border-[#30363D] text-[#E6EDF3] px-1.5 py-0.5 rounded',
+            className
+          )}
+          {...props}
+        >
           {children}
         </code>
       ),
