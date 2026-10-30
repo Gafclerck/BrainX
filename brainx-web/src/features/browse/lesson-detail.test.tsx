@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
@@ -143,8 +143,15 @@ Pour finir, testez vos connaissances.
       // Verify Resource Micro-Badges
       const badgesContainer = screen.getByTestId('lesson-resource-badges');
       expect(badgesContainer).toBeInTheDocument();
-      expect(screen.getByTestId('resource-badge-document')).toBeInTheDocument();
-      expect(screen.getByTestId('resource-badge-video')).toBeInTheDocument();
+      expect(within(badgesContainer).getByTestId('resource-badge-document')).toBeInTheDocument();
+      expect(within(badgesContainer).getByTestId('resource-badge-video')).toBeInTheDocument();
+
+      // Verify Attached Resources Section (Story FE-2.6)
+      const resourcesSection = screen.getByTestId('lesson-resources-section');
+      expect(resourcesSection).toBeInTheDocument();
+      expect(screen.getByTestId('resources-heading')).toHaveTextContent('Ressources');
+      expect(screen.getByTestId('resource-card-res-1')).toBeInTheDocument();
+      expect(screen.getByTestId('resource-card-res-2')).toBeInTheDocument();
     });
 
     it('passes search session id via X-Search-Session-Id header when present in URL params', async () => {
@@ -782,6 +789,96 @@ Contenu pédagogique sain.`,
       // Sidebar recognizes active lesson
       const sidebar = screen.getByTestId('browse-tree-sidebar');
       expect(sidebar).toHaveAttribute('data-active-lesson', 'lesson-uuid-1');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Story FE-2.6: Consultation & Téléchargement des 4 Types de Ressources
+  // ---------------------------------------------------------------------------
+  describe('Story FE-2.6: Consultation & Téléchargement des 4 Types de Ressources', () => {
+    it('omits the "Ressources" section cleanly when lesson has empty resources list', async () => {
+      const lessonWithoutResources: BrowseLessonDetailItem = {
+        ...mockLessonDetail,
+        id: 'lesson-no-res',
+        resources: [],
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/v1/browse/lessons/lesson-no-res/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(lessonWithoutResources)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-no-res']}>
+          <StudentLayout>
+            <Routes>
+              <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+            </Routes>
+          </StudentLayout>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('lesson-resources-section')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('resources-heading')).not.toBeInTheDocument();
+    });
+
+    it('renders all 4 resource types in the grid and handles interactions seamlessly', async () => {
+      const lessonWithAllResources: BrowseLessonDetailItem = {
+        ...mockLessonDetail,
+        id: 'lesson-all-res',
+        resources: [
+          { id: 'res-doc', type: 'document', title: 'Cours PDF' },
+          { id: 'res-img', type: 'image', title: 'Architecture Diagram', url: 'https://example.com/arch.png' },
+          { id: 'res-vid', type: 'video', title: 'Conférence DRF', url: 'https://www.youtube.com/watch?v=123' },
+          { id: 'res-ext', type: 'external_link', title: 'Documentation DRF', url: 'https://django-rest-framework.org' },
+        ],
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/v1/browse/lessons/lesson-all-res/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(lessonWithAllResources)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-all-res']}>
+          <StudentLayout>
+            <Routes>
+              <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+            </Routes>
+          </StudentLayout>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-resources-section')).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId('resource-card-res-doc')).toBeInTheDocument();
+      expect(screen.getByTestId('resource-card-res-img')).toBeInTheDocument();
+      expect(screen.getByTestId('resource-card-res-vid')).toBeInTheDocument();
+      expect(screen.getByTestId('resource-card-res-ext')).toBeInTheDocument();
+
+      // Video card should span full width (col-span-full)
+      const videoCard = screen.getByTestId('resource-card-res-vid');
+      expect(videoCard.className).toContain('col-span-full');
     });
   });
 });

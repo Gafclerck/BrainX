@@ -5,6 +5,7 @@ import type {
   BrowseLessonDetailItem,
   BrowseLessonFilterParams,
   PaginatedBrowseResponse,
+  ResourceRetrievalResponse,
 } from './types';
 
 /**
@@ -92,5 +93,20 @@ export async function fetchLessonDetail(
     { headers }
   );
 }
+
+/**
+ * Fetch a temporary signed URL for a document or image resource.
+ * Queries GET /api/v1/resources/:resourceId/retrieval/
+ */
+export async function fetchResourceRetrieval(
+  resourceId: string,
+  disposition: 'inline' | 'attachment' = 'attachment'
+): Promise<ResourceRetrievalResponse> {
+  const query = disposition ? `?disposition=${encodeURIComponent(disposition)}` : '';
+  return apiClient<ResourceRetrievalResponse>(
+    `/api/v1/resources/${encodeURIComponent(resourceId)}/retrieval/${query}`
+  );
+}
+
 
 

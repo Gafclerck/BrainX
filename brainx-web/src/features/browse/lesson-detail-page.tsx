@@ -18,6 +18,7 @@ import { useToc, type TocItem } from '@/components/layout/toc-context';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { ResourceBadge } from '@/components/ui/resource-badge';
+import { ResourceCard } from './resource-card';
 import { CodeBlock } from '@/components/ui/code-block';
 import { cn } from '@/lib/utils';
 
@@ -485,6 +486,35 @@ export function LessonDetailPage() {
               </div>
             )}
           </article>
+
+          {/* Attached Resources Section */}
+          {state.data.resources && state.data.resources.length > 0 && (
+            <section
+              aria-labelledby="resources-heading"
+              data-testid="lesson-resources-section"
+              className="mt-12 pt-8 border-t border-border min-w-0 max-w-full"
+            >
+              <h2
+                id="resources-heading"
+                data-testid="resources-heading"
+                className="text-xl font-semibold text-foreground mb-6"
+              >
+                Ressources
+              </h2>
+              <div
+                data-testid="lesson-resources-grid"
+                className="grid grid-cols-1 md:grid-cols-2 gap-4"
+              >
+                {state.data.resources.map((resource) => (
+                  <ResourceCard
+                    key={resource.id}
+                    resource={resource}
+                    className={resource.type === 'video' ? 'col-span-full' : undefined}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </div>

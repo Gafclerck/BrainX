@@ -19,6 +19,14 @@ export interface LessonResourceItem {
   url?: string | null;
 }
 
+export interface ResourceRetrievalResponse {
+  url: string;
+  expires_in: number;
+  content_type: string;
+  disposition: string;
+  filename: string;
+}
+
 export interface BrowseLessonItem {
   id: string;
   title: string;
