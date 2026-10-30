@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Search, Loader2, X } from 'lucide-react';
 import { useSearchStore } from './search-store';
+import { SearchResultCard } from './search-result-card';
 import { cn } from '@/lib/utils';
 
 export function SearchDialog() {
@@ -25,6 +26,30 @@ export function SearchDialog() {
   const setQuery = useSearchStore((s) => s.setQuery);
   const search = useSearchStore((s) => s.search);
 
+  // Client-side descending sort by course_date with stable tie-break (AD-7)
+  const sortedResults = React.useMemo(() => {
+    return [...results].sort((a, b) => {
+      const dateA = a.course_date || '';
+      const dateB = b.course_date || '';
+      if (dateA && dateB && dateA !== dateB) {
+        return dateB.localeCompare(dateA); // descending
+      }
+      if (dateA && !dateB) return -1;
+      if (!dateA && dateB) return 1;
+
+      const titleCmp = (a.title || '').localeCompare(b.title || '');
+      if (titleCmp !== 0) return titleCmp;
+      return (a.id || '').localeCompare(b.id || '');
+    });
+  }, [results]);
+
+  // Keyboard arrow navigation state: -1 when input is focused, 0..N-1 on cards
+  const [selectedIndex, setSelectedIndex] = React.useState<number>(-1);
+
+  React.useEffect(() => {
+    setSelectedIndex(-1);
+  }, [query, results]);
+
   // Capture the triggering active element when opened to ensure focus restoration
   React.useEffect(() => {
     if (isOpen) {
@@ -40,21 +65,63 @@ export function SearchDialog() {
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
+      setSelectedIndex(-1);
       closeSearch();
     }
   };
 
   const handleSelectLesson = (lessonId: string) => {
+    setSelectedIndex(-1);
     closeSearch();
     navigate(`/lessons/${lessonId}`);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const trimmed = query.trim();
-      if (trimmed.length >= 3 && trimmed.length <= 200) {
-        search(trimmed);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.defaultPrevented) return;
+
+    if (e.key === 'ArrowDown') {
+      if (sortedResults.length > 0) {
+        e.preventDefault();
+        setSelectedIndex((prev) => {
+          if (prev < sortedResults.length - 1) {
+            return prev + 1;
+          }
+          return prev;
+        });
+      }
+    } else if (e.key === 'ArrowUp') {
+      if (sortedResults.length > 0) {
+        e.preventDefault();
+        if (selectedIndex === 0) {
+          setSelectedIndex(-1);
+          inputRef.current?.focus();
+        } else if (selectedIndex > 0) {
+          setSelectedIndex(selectedIndex - 1);
+        }
+      }
+    } else if (e.key === 'Enter') {
+      const target = e.target as HTMLElement | null;
+      const isInput = target === inputRef.current;
+      const isCard =
+        target?.closest('[role="option"]') !== null ||
+        target?.closest('[data-testid^="search-result-item"]') !== null;
+
+      if (target?.tagName === 'BUTTON' && !isCard) {
+        return;
+      }
+      if (!isInput && !isCard) {
+        return;
+      }
+
+      if (selectedIndex >= 0 && selectedIndex < sortedResults.length) {
+        e.preventDefault();
+        handleSelectLesson(sortedResults[selectedIndex].id);
+      } else {
+        const trimmed = query.trim();
+        if (trimmed.length >= 3 && trimmed.length <= 200) {
+          e.preventDefault();
+          search(trimmed);
+        }
       }
     }
   };
@@ -80,6 +147,7 @@ export function SearchDialog() {
         <DialogPrimitive.Content
           data-testid="search-dialog-content"
           aria-label="Palette de recherche globale"
+          onKeyDown={handleKeyDown}
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             inputRef.current?.focus();
@@ -114,11 +182,20 @@ export function SearchDialog() {
               ref={inputRef}
               data-testid="search-dialog-input"
               type="text"
+              role="combobox"
+              aria-expanded={sortedResults.length > 0}
+              aria-controls="search-results-list"
+              aria-autocomplete="list"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Rechercher des leçons, cours..."
               aria-label="Rechercher"
+              aria-activedescendant={
+                selectedIndex >= 0 && sortedResults[selectedIndex]
+                  ? `search-result-item-${sortedResults[selectedIndex].id}`
+                  : undefined
+              }
               autoFocus
               className="flex-1 bg-transparent text-foreground placeholder:text-foreground-muted focus:outline-none text-base sm:text-sm h-10 min-w-0"
             />
@@ -212,46 +289,28 @@ export function SearchDialog() {
             )}
 
             {/* Results List */}
-            {trimmedQuery.length >= 3 && results.length > 0 && !isLoading && !error && (
+            {trimmedQuery.length >= 3 && sortedResults.length > 0 && !isLoading && !error && (
               <div
+                id="search-results-list"
                 data-testid="search-results-list"
                 className="space-y-2"
                 role="listbox"
                 aria-label="Résultats de recherche"
+                aria-activedescendant={
+                  selectedIndex >= 0 && sortedResults[selectedIndex]
+                    ? `search-result-item-${sortedResults[selectedIndex].id}`
+                    : undefined
+                }
               >
-                {results.map((lesson) => (
-                  <button
+                {sortedResults.map((lesson, index) => (
+                  <SearchResultCard
                     key={lesson.id}
-                    type="button"
-                    data-testid={`search-result-item-${lesson.id}`}
-                    onClick={() => handleSelectLesson(lesson.id)}
-                    className="w-full text-left p-3 rounded-md bg-background/50 hover:bg-surface border border-border hover:border-border-focus transition-colors flex flex-col gap-1 focus:outline-none focus:ring-2 focus:ring-border-focus"
-                    role="option"
-                    aria-selected="false"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-foreground text-sm line-clamp-1">
-                        {lesson.title}
-                      </span>
-                      {lesson.course_date && (
-                        <span className="text-xs text-foreground-muted shrink-0 font-mono">
-                          {lesson.course_date}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-foreground-muted truncate">
-                      <span>{lesson.course_name}</span>
-                      <span>›</span>
-                      <span>{lesson.module_name}</span>
-                      <span>›</span>
-                      <span>{lesson.chapter_name}</span>
-                    </div>
-                    {lesson.teacher && (
-                      <div className="text-xs text-foreground-subtle">
-                        Enseignant : {lesson.teacher}
-                      </div>
-                    )}
-                  </button>
+                    lesson={lesson}
+                    query={trimmedQuery}
+                    isSelected={selectedIndex === index}
+                    onSelect={handleSelectLesson}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                  />
                 ))}
               </div>
             )}
@@ -260,6 +319,18 @@ export function SearchDialog() {
           {/* Desktop Palette Footer */}
           <div className="hidden md:flex items-center justify-between border-t border-border px-4 py-2.5 bg-surface/50 text-xs text-foreground-muted shrink-0">
             <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">
+                  ↑↓
+                </kbd>
+                <span>Naviguer</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">
+                  ↵
+                </kbd>
+                <span>Ouvrir</span>
+              </span>
               <span className="flex items-center gap-1.5">
                 <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">
                   Échap

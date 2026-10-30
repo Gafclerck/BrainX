@@ -254,7 +254,10 @@ describe('Story FE-3.1: Palette de Commande de Recherche Globale (Cmd+K)', () =>
       // Results rendered
       expect(screen.getByTestId('search-results-list')).toBeInTheDocument();
       expect(
-        screen.getByText('Introduction aux Vues Génériques Django')
+        screen.getByRole('heading', {
+          level: 3,
+          name: /Introduction aux Vues Génériques Django/i,
+        })
       ).toBeInTheDocument();
       expect(screen.getByText('Authentification JWT et Sécurité')).toBeInTheDocument();
     });
@@ -781,6 +784,371 @@ describe('Story FE-3.1: Palette de Commande de Recherche Globale (Cmd+K)', () =>
       };
       expect(item.resources).toHaveLength(1);
       expect(item.resources![0].type).toBe('video');
+    });
+  });
+
+  describe('Story FE-3.2: Carte de Résultat de Recherche & Affichage des 5 Champs Contextuels', () => {
+    it('AC-1: displays all 5 mandatory context fields for each card in the palette', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(mockSearchResults)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter>
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('django');
+      });
+
+      // 1. Heading h3
+      expect(
+        screen.getByRole('heading', {
+          level: 3,
+          name: /Introduction aux Vues Génériques Django/i,
+        })
+      ).toBeInTheDocument();
+
+      // 2. Ancestry
+      const ancestry = screen.getByTestId(
+        `search-result-ancestry-${mockSearchResults.results[0].id}`
+      );
+      expect(ancestry).toHaveTextContent(/Architecture Django.*Vues et Routage.*Vues Basées sur les Classes/);
+
+      // 3. Teacher
+      expect(
+        screen.getByTestId(`search-result-teacher-${mockSearchResults.results[0].id}`)
+      ).toHaveTextContent('Enseignant : Prof. Ada Lovelace');
+
+      // 4. ISO Date
+      expect(
+        screen.getByTestId(`search-result-date-${mockSearchResults.results[0].id}`)
+      ).toHaveTextContent('2026-10-28');
+
+      // 5. Resource badge for first result and fallback for second
+      expect(
+        screen.getByTestId(`search-result-resources-${mockSearchResults.results[0].id}`)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`search-result-no-resources-${mockSearchResults.results[1].id}`)
+      ).toHaveTextContent('Aucune ressource');
+    });
+
+    it('AC-2: enforces strict client-side descending date order (AD-7)', async () => {
+      const unsortedData = {
+        count: 3,
+        results: [
+          {
+            id: 'lesson-sep',
+            title: 'Leçon de Septembre',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: '2026-09-01',
+          },
+          {
+            id: 'lesson-late-oct',
+            title: 'Leçon de Fin Octobre',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: '2026-10-28',
+          },
+          {
+            id: 'lesson-mid-oct',
+            title: 'Leçon de Mi Octobre',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: '2026-10-15',
+          },
+        ],
+      };
+
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(unsortedData)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter>
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('leçon');
+      });
+
+      const cardElements = screen.getAllByRole('option');
+      expect(cardElements).toHaveLength(3);
+      // Order should strictly be: 2026-10-28, then 2026-10-15, then 2026-09-01
+      expect(cardElements[0]).toHaveAttribute('id', 'search-result-item-lesson-late-oct');
+      expect(cardElements[1]).toHaveAttribute('id', 'search-result-item-lesson-mid-oct');
+      expect(cardElements[2]).toHaveAttribute('id', 'search-result-item-lesson-sep');
+    });
+
+    it('AC-2b: enforces stable tie-breaking for identical dates and undated items', async () => {
+      const tieBreakData = {
+        count: 4,
+        results: [
+          {
+            id: 'lesson-undated-b',
+            title: 'Z Undated Lesson',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: undefined,
+          },
+          {
+            id: 'lesson-same-date-b',
+            title: 'Beta Same Date',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: '2026-10-15',
+          },
+          {
+            id: 'lesson-same-date-a',
+            title: 'Alpha Same Date',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: '2026-10-15',
+          },
+          {
+            id: 'lesson-undated-a',
+            title: 'A Undated Lesson',
+            course_name: 'C1',
+            module_name: 'M1',
+            chapter_name: 'CH1',
+            course_date: undefined,
+          },
+        ],
+      };
+
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(tieBreakData)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter>
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('lesson');
+      });
+
+      const cardElements = screen.getAllByRole('option');
+      expect(cardElements).toHaveLength(4);
+      // Dated items first, tie-broken alphabetically by title: "Alpha Same Date" then "Beta Same Date"
+      // Undated items last, tie-broken alphabetically by title: "A Undated Lesson" then "Z Undated Lesson"
+      expect(cardElements[0]).toHaveAttribute('id', 'search-result-item-lesson-same-date-a');
+      expect(cardElements[1]).toHaveAttribute('id', 'search-result-item-lesson-same-date-b');
+      expect(cardElements[2]).toHaveAttribute('id', 'search-result-item-lesson-undated-a');
+      expect(cardElements[3]).toHaveAttribute('id', 'search-result-item-lesson-undated-b');
+    });
+
+    it('AC-3: highlights matched query terms with technical amber text-highlight and bg-highlight/15', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(mockSearchResults)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter>
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('django');
+      });
+
+      const marks = screen.getAllByTestId('search-highlight');
+      expect(marks.length).toBeGreaterThan(0);
+      marks.forEach((mark) => {
+        expect(mark.className).toContain('text-highlight');
+        expect(mark.className).toContain('bg-highlight/15');
+      });
+    });
+
+    it('AC-4: displays exact courteous technical guidance when search yields zero results', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse({ count: 0, results: [] })
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter>
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('introuvable');
+      });
+
+      const emptyNotice = screen.getByTestId('search-empty-results');
+      expect(emptyNotice).toBeInTheDocument();
+      expect(emptyNotice).toHaveTextContent(
+        'Aucune leçon trouvée pour "introuvable". Essayez un mot-clé plus court ou un nom d\'enseignant.'
+      );
+    });
+
+    it('AC-5: cycles through cards with ArrowDown/ArrowUp and navigates on Enter', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(mockSearchResults)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter initialEntries={['/courses']}>
+          <LocationTracker />
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('django');
+      });
+
+      const input = screen.getByTestId('search-dialog-input');
+      const cards = screen.getAllByRole('option');
+      expect(cards).toHaveLength(2);
+
+      // Initial state: no card is selected
+      expect(cards[0]).toHaveAttribute('aria-selected', 'false');
+      expect(cards[1]).toHaveAttribute('aria-selected', 'false');
+
+      // Press ArrowDown -> first card becomes active
+      fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown' });
+      expect(cards[0]).toHaveAttribute('aria-selected', 'true');
+      expect(cards[1]).toHaveAttribute('aria-selected', 'false');
+      // Query is preserved
+      expect(input).toHaveValue('django');
+
+      // Press ArrowDown again -> second card becomes active
+      fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown' });
+      expect(cards[0]).toHaveAttribute('aria-selected', 'false');
+      expect(cards[1]).toHaveAttribute('aria-selected', 'true');
+
+      // Press ArrowUp -> first card becomes active again
+      fireEvent.keyDown(input, { key: 'ArrowUp', code: 'ArrowUp' });
+      expect(cards[0]).toHaveAttribute('aria-selected', 'true');
+      expect(cards[1]).toHaveAttribute('aria-selected', 'false');
+
+      // Press ArrowUp from card 0 -> active state resets to -1 and input receives focus
+      fireEvent.keyDown(input, { key: 'ArrowUp', code: 'ArrowUp' });
+      expect(cards[0]).toHaveAttribute('aria-selected', 'false');
+      expect(cards[1]).toHaveAttribute('aria-selected', 'false');
+      expect(input).toHaveFocus();
+
+      // Press ArrowDown again -> card 0 becomes active
+      fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown' });
+      expect(cards[0]).toHaveAttribute('aria-selected', 'true');
+
+      // Press Enter -> navigates to first card lesson id and closes dialog
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('search-dialog-content')).not.toBeInTheDocument();
+      });
+      expect(screen.getByTestId('location-display')).toHaveTextContent(
+        `/lessons/${mockSearchResults.results[0].id}`
+      );
+    });
+
+    it('guards Enter so pressing Enter on child buttons does not trigger search or navigation', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(mockSearchResults)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter initialEntries={['/courses']}>
+          <LocationTracker />
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('django');
+      });
+
+      const clearBtn = screen.getByTestId('search-clear-button');
+      clearBtn.focus();
+
+      // Press Enter on the clear button
+      fireEvent.keyDown(clearBtn, { key: 'Enter', code: 'Enter' });
+
+      // Dialog should still be open, no navigation occurred
+      expect(screen.getByTestId('search-dialog-content')).toBeInTheDocument();
+      expect(screen.getByTestId('location-display')).toHaveTextContent('/courses');
+    });
+
+    it('renders input with combobox ARIA attributes and listbox id', async () => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        createJsonResponse(mockSearchResults)
+      );
+      globalThis.fetch = fetchMock;
+
+      render(
+        <MemoryRouter>
+          <SearchDialog />
+        </MemoryRouter>
+      );
+
+      act(() => {
+        useSearchStore.getState().openSearch();
+      });
+
+      await act(async () => {
+        await useSearchStore.getState().search('django');
+      });
+
+      const input = screen.getByTestId('search-dialog-input');
+      expect(input).toHaveAttribute('role', 'combobox');
+      expect(input).toHaveAttribute('aria-expanded', 'true');
+      expect(input).toHaveAttribute('aria-controls', 'search-results-list');
+      expect(input).toHaveAttribute('aria-autocomplete', 'list');
+
+      const listbox = screen.getByTestId('search-results-list');
+      expect(listbox).toHaveAttribute('id', 'search-results-list');
     });
   });
 });

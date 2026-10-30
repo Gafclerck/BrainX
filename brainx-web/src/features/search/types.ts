@@ -15,6 +15,22 @@ export interface SearchLessonItem {
   resources?: import('@/features/browse/types').LessonResourceItem[];
 }
 
+export interface HighlightTextProps {
+  text: string;
+  query?: string;
+  className?: string;
+  highlightClassName?: string;
+}
+
+export interface SearchResultCardProps {
+  lesson: SearchLessonItem;
+  query?: string;
+  isSelected?: boolean;
+  onSelect: (lessonId: string) => void;
+  onMouseEnter?: () => void;
+  className?: string;
+}
+
 export interface PaginatedSearchResponse {
   count: number;
   next?: string | null;
