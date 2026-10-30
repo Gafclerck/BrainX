@@ -5,6 +5,8 @@ import { Menu, AlignRight, X } from 'lucide-react';
 import { AppHeader } from './app-header';
 import { cn } from '@/lib/utils';
 import { TocProvider, useToc } from './toc-context';
+import { SearchDialog } from '@/features/search/search-dialog';
+import { useSearchStore } from '@/features/search/search-store';
 
 export interface StudentLayoutProps {
   children?: React.ReactNode;
@@ -102,6 +104,7 @@ function StudentLayoutInner({
   className,
 }: StudentLayoutProps) {
   const { toc: dynamicToc } = useToc();
+  const openSearch = useSearchStore((s) => s.openSearch);
   const [isLeftDrawerOpen, setIsLeftDrawerOpen] = React.useState(false);
   const [isRightDrawerOpen, setIsRightDrawerOpen] = React.useState(false);
   const location = useLocation();
@@ -165,7 +168,7 @@ function StudentLayoutInner({
     >
       {/* Sticky Header with drawer triggers for mobile viewport */}
       <AppHeader
-        onSearchTrigger={onSearchTrigger}
+        onSearchTrigger={onSearchTrigger ?? openSearch}
         leftDrawerTrigger={leftDrawerTrigger}
         rightDrawerTrigger={rightDrawerTrigger}
       />
@@ -270,6 +273,9 @@ function StudentLayoutInner({
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
+
+      {/* Global Command Palette (Cmd+K) Modal */}
+      <SearchDialog />
     </div>
   );
 }
