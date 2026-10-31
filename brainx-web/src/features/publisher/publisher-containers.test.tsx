@@ -5,7 +5,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { AppRoutes } from '@/routes';
 import {
-  PublisherCoursePage,
   ContainerFormModal,
   RemovalPreviewModal,
   createCourse,
@@ -20,8 +19,6 @@ import {
   updateChapter,
   deleteChapter,
   fetchChapterRemovalPreview,
-  fetchManageableModules,
-  fetchManageableChapters,
   fetchManageableCourse,
 } from './index';
 import { ApiError } from '@/lib/api';
@@ -30,7 +27,6 @@ import type {
   PublisherModuleItem,
   PublisherChapterItem,
   RemovalPreviewResponse,
-  PaginatedPublisherResponse,
 } from './types';
 
 const mockCourse: PublisherCourseItem = {
@@ -752,7 +748,7 @@ describe('Story FE-4.2: Création, Modification & Suppression Douce de Conteneur
       const onSuccess = vi.fn();
       const onClose = vi.fn();
 
-      const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      const fetchSpy = vi.fn().mockImplementation((_url: string, opts?: RequestInit) => {
         if (opts?.method === 'DELETE') {
           return Promise.resolve({
             ok: true,
@@ -799,7 +795,7 @@ describe('Story FE-4.2: Création, Modification & Suppression Douce de Conteneur
       const onSuccess = vi.fn();
       const onClose = vi.fn();
 
-      globalThis.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, opts?: RequestInit) => {
         if (opts?.method === 'DELETE') {
           return Promise.resolve({
             ok: false,

@@ -5,6 +5,7 @@ import {
   Pencil,
   Trash2,
   ChevronRight,
+  ChevronDown,
   BookOpen,
   Layers,
   FileText,
@@ -17,14 +18,28 @@ import { Button } from '@/components/ui/button';
 import { ContainerFormModal } from './container-form-modal';
 import { RemovalPreviewModal } from './removal-preview-modal';
 import {
+  SortableItem,
+  SortableHandle,
+  SortableLiveRegion,
+  getPickUpAnnouncement,
+  getMovementAnnouncement,
+  getCommitAnnouncement,
+  getCancelAnnouncement,
+} from './sortable-item';
+import {
   fetchManageableCourse,
   fetchManageableModules,
   fetchManageableChapters,
+  fetchManageableLessons,
+  reorderModules,
+  reorderChapters,
+  reorderLessons,
 } from '../api';
 import type {
   PublisherCourseItem,
   PublisherModuleItem,
   PublisherChapterItem,
+  PublisherLessonItem,
   ContainerType,
 } from '../types';
 import { ApiError } from '@/lib/api';
@@ -33,6 +48,10 @@ export function PublisherCoursePage() {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
   const mountedRef = useRef(true);
+
+  // Global announcements and error for reordering
+  const [liveAnnouncement, setLiveAnnouncement] = useState<string | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
 
   // Course State
   const [course, setCourse] = useState<PublisherCourseItem | null>(null);
@@ -48,6 +67,12 @@ export function PublisherCoursePage() {
   );
   const [modulesError, setModulesError] = useState<string | null>(null);
 
+  // Module Reorder State
+  const [grabbedModuleId, setGrabbedModuleId] = useState<string | null>(null);
+  const [overModuleIndex, setOverModuleIndex] = useState<number | null>(null);
+  const modulesSnapshotRef = useRef<PublisherModuleItem[] | null>(null);
+  const draggedModuleIdRef = useRef<string | null>(null);
+
   // Chapters State per Module ID
   const [chaptersByModule, setChaptersByModule] = useState<
     Record<
@@ -59,6 +84,37 @@ export function PublisherCoursePage() {
       }
     >
   >({});
+
+  // Chapter Reorder State
+  const [grabbedChapterId, setGrabbedChapterId] = useState<string | null>(null);
+  const [overChapterState, setOverChapterState] = useState<{
+    moduleId: string;
+    index: number;
+  } | null>(null);
+  const chaptersSnapshotRef = useRef<Record<string, PublisherChapterItem[]>>({});
+  const draggedChapterIdRef = useRef<string | null>(null);
+
+  // Lessons State per Chapter ID
+  const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
+  const [lessonsByChapter, setLessonsByChapter] = useState<
+    Record<
+      string,
+      {
+        status: 'loading' | 'success' | 'error';
+        lessons: PublisherLessonItem[];
+        error?: string;
+      }
+    >
+  >({});
+
+  // Lesson Reorder State
+  const [grabbedLessonId, setGrabbedLessonId] = useState<string | null>(null);
+  const [overLessonState, setOverLessonState] = useState<{
+    chapterId: string;
+    index: number;
+  } | null>(null);
+  const lessonsSnapshotRef = useRef<Record<string, PublisherLessonItem[]>>({});
+  const draggedLessonIdRef = useRef<string | null>(null);
 
   // Modals state
   const [formModal, setFormModal] = useState<{
@@ -93,6 +149,28 @@ export function PublisherCoursePage() {
       mountedRef.current = false;
     };
   }, []);
+
+  const focusHandle = (testId: string) => {
+    setTimeout(() => {
+      if (!mountedRef.current) return;
+      const el = document.querySelector(
+        `[data-testid="${testId}"]`
+      ) as HTMLElement | null;
+      el?.focus();
+    }, 0);
+  };
+
+  const extractErrorMessage = (err: unknown, defaultMsg: string): string => {
+    if (err instanceof ApiError) {
+      if (err.envelope?.errors?.order?.[0]) {
+        return err.envelope.errors.order[0];
+      }
+      if (err.envelope?.detail) {
+        return err.envelope.detail;
+      }
+    }
+    return (err as Error)?.message || defaultMsg;
+  };
 
   // Load Course Header Details
   const loadCourse = useCallback(async (id: string) => {
@@ -155,6 +233,60 @@ export function PublisherCoursePage() {
     }
   }, []);
 
+  // Load Lessons for a Chapter
+  const loadLessonsForChapter = useCallback(async (chapterId: string) => {
+    setLessonsByChapter((prev) => ({
+      ...prev,
+      [chapterId]: {
+        status: 'loading',
+        lessons: prev[chapterId]?.lessons || [],
+      },
+    }));
+
+    try {
+      const res = await fetchManageableLessons(chapterId);
+      if (mountedRef.current) {
+        setLessonsByChapter((prev) => ({
+          ...prev,
+          [chapterId]: {
+            status: 'success',
+            lessons: res.results || [],
+          },
+        }));
+      }
+    } catch (err: unknown) {
+      if (!mountedRef.current) return;
+      const msg =
+        err instanceof ApiError && err.envelope.detail
+          ? err.envelope.detail
+          : (err as Error)?.message ||
+            'Impossible de charger les leçons de ce chapitre.';
+      setLessonsByChapter((prev) => ({
+        ...prev,
+        [chapterId]: {
+          status: 'error',
+          lessons: [],
+          error: msg,
+        },
+      }));
+    }
+  }, []);
+
+  const toggleChapterExpand = (chapterId: string) => {
+    const isCurrentlyExpanded = !!expandedChapters[chapterId];
+    const willBeExpanded = !isCurrentlyExpanded;
+
+    setExpandedChapters((prev) => ({
+      ...prev,
+      [chapterId]: willBeExpanded,
+    }));
+
+    // Side-effect executed outside functional updater
+    if (willBeExpanded && !lessonsByChapter[chapterId]) {
+      loadLessonsForChapter(chapterId);
+    }
+  };
+
   // Load Modules List
   const loadModules = useCallback(
     async (id: string) => {
@@ -193,7 +325,623 @@ export function PublisherCoursePage() {
     }
   }, [courseId, loadCourse, loadModules]);
 
-  // Handlers for Container Modal
+  // ================= MODULES REORDERING =================
+
+  const handleModulePickUp = (mod: PublisherModuleItem, _index: number) => {
+    modulesSnapshotRef.current = [...modules];
+    setGrabbedModuleId(mod.id);
+    setLiveAnnouncement(getPickUpAnnouncement(mod.name));
+  };
+
+  const handleModuleMove = (currentIndex: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0) {
+      setLiveAnnouncement('Premier élément atteint.');
+      return;
+    }
+    if (targetIndex >= modules.length) {
+      setLiveAnnouncement('Dernier élément atteint.');
+      return;
+    }
+
+    const movingMod = modules[currentIndex];
+    setModules((prev) => {
+      const copy = [...prev];
+      const temp = copy[currentIndex];
+      copy[currentIndex] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return copy;
+    });
+
+    setLiveAnnouncement(getMovementAnnouncement(targetIndex + 1, modules.length));
+    focusHandle(`drag-handle-${movingMod.id}`);
+  };
+
+  const handleModuleCommit = async (mod: PublisherModuleItem) => {
+    setGrabbedModuleId(null);
+    const initial = modulesSnapshotRef.current;
+    modulesSnapshotRef.current = null;
+    if (!courseId || !initial) return;
+
+    const initialIds = initial
+      .filter((m) => !m.is_deleted)
+      .map((m) => m.id)
+      .join(',');
+    const currentIds = modules
+      .filter((m) => !m.is_deleted)
+      .map((m) => m.id)
+      .join(',');
+
+    if (initialIds !== currentIds) {
+      if (mountedRef.current) {
+        setLiveAnnouncement(getCommitAnnouncement(mod.name));
+      }
+      try {
+        const payloadOrder = modules.filter((m) => !m.is_deleted).map((m) => m.id);
+        const updated = await reorderModules(courseId, payloadOrder);
+        if (mountedRef.current) {
+          const updatedMap = new Map(updated.map((m) => [m.id, m]));
+          setModules((prev) => prev.map((m) => updatedMap.get(m.id) || m));
+        }
+      } catch (err: unknown) {
+        if (mountedRef.current) {
+          setModules(initial);
+          const msg = extractErrorMessage(
+            err,
+            'Échec du réordonnancement des modules.'
+          );
+          setReorderError(msg);
+          setLiveAnnouncement(`Erreur : ${msg}`);
+        }
+      }
+    }
+  };
+
+  const handleModuleCancel = () => {
+    if (modulesSnapshotRef.current) {
+      setModules(modulesSnapshotRef.current);
+      modulesSnapshotRef.current = null;
+    }
+    setGrabbedModuleId(null);
+    setLiveAnnouncement(getCancelAnnouncement());
+  };
+
+  const handleModuleDragStart = (
+    mod: PublisherModuleItem,
+    _index: number,
+    e?: React.DragEvent
+  ) => {
+    modulesSnapshotRef.current = [...modules];
+    draggedModuleIdRef.current = mod.id;
+    if (e?.dataTransfer) {
+      e.dataTransfer.setData('text/plain', mod.id);
+    }
+  };
+
+  const handleModuleDragOver = (targetIndex: number) => {
+    setOverModuleIndex(targetIndex);
+  };
+
+  const handleModuleDrop = async (
+    targetIndex: number,
+    _targetMod: PublisherModuleItem,
+    e?: React.DragEvent
+  ) => {
+    setOverModuleIndex(null);
+    const sourceId =
+      e?.dataTransfer?.getData('text/plain') || draggedModuleIdRef.current;
+    draggedModuleIdRef.current = null;
+    const initial = modulesSnapshotRef.current || modules;
+    modulesSnapshotRef.current = null;
+    if (!courseId || !sourceId) return;
+
+    const sourceIndex = initial.findIndex((m) => m.id === sourceId);
+    if (sourceIndex === -1 || sourceIndex === targetIndex) return;
+
+    const nextModules = [...initial];
+    const [moved] = nextModules.splice(sourceIndex, 1);
+    nextModules.splice(targetIndex, 0, moved);
+    setModules(nextModules);
+
+    const initialIds = initial
+      .filter((m) => !m.is_deleted)
+      .map((m) => m.id)
+      .join(',');
+    const currentIds = nextModules
+      .filter((m) => !m.is_deleted)
+      .map((m) => m.id)
+      .join(',');
+
+    if (initialIds !== currentIds) {
+      if (mountedRef.current) {
+        setLiveAnnouncement(getCommitAnnouncement(moved.name));
+      }
+      try {
+        const payloadOrder = nextModules
+          .filter((m) => !m.is_deleted)
+          .map((m) => m.id);
+        const updated = await reorderModules(courseId, payloadOrder);
+        if (mountedRef.current) {
+          const updatedMap = new Map(updated.map((m) => [m.id, m]));
+          setModules(nextModules.map((m) => updatedMap.get(m.id) || m));
+        }
+      } catch (err: unknown) {
+        if (mountedRef.current) {
+          setModules(initial);
+          const msg = extractErrorMessage(
+            err,
+            'Échec du réordonnancement des modules.'
+          );
+          setReorderError(msg);
+          setLiveAnnouncement(`Erreur : ${msg}`);
+        }
+      }
+    }
+  };
+
+  const handleModuleDragEnd = () => {
+    setOverModuleIndex(null);
+    draggedModuleIdRef.current = null;
+  };
+
+  // ================= CHAPTERS REORDERING =================
+
+  const handleChapterPickUp = (
+    moduleId: string,
+    chap: PublisherChapterItem,
+    _index: number
+  ) => {
+    const chapters = chaptersByModule[moduleId]?.chapters || [];
+    chaptersSnapshotRef.current[moduleId] = [...chapters];
+    setGrabbedChapterId(chap.id);
+    setLiveAnnouncement(getPickUpAnnouncement(chap.name));
+  };
+
+  const handleChapterMove = (
+    moduleId: string,
+    currentIndex: number,
+    direction: 'up' | 'down'
+  ) => {
+    const chapters = chaptersByModule[moduleId]?.chapters || [];
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0) {
+      setLiveAnnouncement('Premier élément atteint.');
+      return;
+    }
+    if (targetIndex >= chapters.length) {
+      setLiveAnnouncement('Dernier élément atteint.');
+      return;
+    }
+
+    const movingChap = chapters[currentIndex];
+    setChaptersByModule((prev) => {
+      const list = prev[moduleId]?.chapters || [];
+      const copy = [...list];
+      const temp = copy[currentIndex];
+      copy[currentIndex] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return {
+        ...prev,
+        [moduleId]: {
+          ...prev[moduleId],
+          chapters: copy,
+        },
+      };
+    });
+
+    setLiveAnnouncement(getMovementAnnouncement(targetIndex + 1, chapters.length));
+    focusHandle(`drag-handle-${movingChap.id}`);
+  };
+
+  const handleChapterCommit = async (
+    moduleId: string,
+    chap: PublisherChapterItem
+  ) => {
+    setGrabbedChapterId(null);
+    const initial = chaptersSnapshotRef.current[moduleId];
+    delete chaptersSnapshotRef.current[moduleId];
+    if (!initial) return;
+
+    const chapters = chaptersByModule[moduleId]?.chapters || [];
+    const initialIds = initial
+      .filter((c) => !c.is_deleted)
+      .map((c) => c.id)
+      .join(',');
+    const currentIds = chapters
+      .filter((c) => !c.is_deleted)
+      .map((c) => c.id)
+      .join(',');
+
+    if (initialIds !== currentIds) {
+      if (mountedRef.current) {
+        setLiveAnnouncement(getCommitAnnouncement(chap.name));
+      }
+      try {
+        const payloadOrder = chapters
+          .filter((c) => !c.is_deleted)
+          .map((c) => c.id);
+        const updated = await reorderChapters(moduleId, payloadOrder);
+        if (mountedRef.current) {
+          const updatedMap = new Map(updated.map((c) => [c.id, c]));
+          setChaptersByModule((prev) => ({
+            ...prev,
+            [moduleId]: {
+              ...prev[moduleId],
+              chapters: (prev[moduleId]?.chapters || []).map(
+                (c) => updatedMap.get(c.id) || c
+              ),
+            },
+          }));
+        }
+      } catch (err: unknown) {
+        if (mountedRef.current) {
+          setChaptersByModule((prev) => ({
+            ...prev,
+            [moduleId]: {
+              ...prev[moduleId],
+              chapters: initial,
+            },
+          }));
+          const msg = extractErrorMessage(
+            err,
+            'Échec du réordonnancement des chapitres.'
+          );
+          setReorderError(msg);
+          setLiveAnnouncement(`Erreur : ${msg}`);
+        }
+      }
+    }
+  };
+
+  const handleChapterCancel = (moduleId: string) => {
+    if (chaptersSnapshotRef.current[moduleId]) {
+      const initial = chaptersSnapshotRef.current[moduleId];
+      delete chaptersSnapshotRef.current[moduleId];
+      setChaptersByModule((prev) => ({
+        ...prev,
+        [moduleId]: {
+          ...prev[moduleId],
+          chapters: initial,
+        },
+      }));
+    }
+    setGrabbedChapterId(null);
+    setLiveAnnouncement(getCancelAnnouncement());
+  };
+
+  const handleChapterDragStart = (
+    moduleId: string,
+    chap: PublisherChapterItem,
+    _index: number,
+    e?: React.DragEvent
+  ) => {
+    const chapters = chaptersByModule[moduleId]?.chapters || [];
+    chaptersSnapshotRef.current[moduleId] = [...chapters];
+    draggedChapterIdRef.current = chap.id;
+    if (e?.dataTransfer) {
+      e.dataTransfer.setData('text/plain', chap.id);
+    }
+  };
+
+  const handleChapterDragOver = (moduleId: string, targetIndex: number) => {
+    setOverChapterState({ moduleId, index: targetIndex });
+  };
+
+  const handleChapterDrop = async (
+    moduleId: string,
+    targetIndex: number,
+    _targetChap: PublisherChapterItem,
+    e?: React.DragEvent
+  ) => {
+    setOverChapterState(null);
+    const sourceId =
+      e?.dataTransfer?.getData('text/plain') || draggedChapterIdRef.current;
+    draggedChapterIdRef.current = null;
+    const initial =
+      chaptersSnapshotRef.current[moduleId] ||
+      chaptersByModule[moduleId]?.chapters ||
+      [];
+    delete chaptersSnapshotRef.current[moduleId];
+    if (!sourceId) return;
+
+    const sourceIndex = initial.findIndex((c) => c.id === sourceId);
+    if (sourceIndex === -1 || sourceIndex === targetIndex) return;
+
+    const nextChapters = [...initial];
+    const [moved] = nextChapters.splice(sourceIndex, 1);
+    nextChapters.splice(targetIndex, 0, moved);
+
+    setChaptersByModule((prev) => ({
+      ...prev,
+      [moduleId]: {
+        ...prev[moduleId],
+        chapters: nextChapters,
+      },
+    }));
+
+    const initialIds = initial
+      .filter((c) => !c.is_deleted)
+      .map((c) => c.id)
+      .join(',');
+    const currentIds = nextChapters
+      .filter((c) => !c.is_deleted)
+      .map((c) => c.id)
+      .join(',');
+
+    if (initialIds !== currentIds) {
+      if (mountedRef.current) {
+        setLiveAnnouncement(getCommitAnnouncement(moved.name));
+      }
+      try {
+        const payloadOrder = nextChapters
+          .filter((c) => !c.is_deleted)
+          .map((c) => c.id);
+        const updated = await reorderChapters(moduleId, payloadOrder);
+        if (mountedRef.current) {
+          const updatedMap = new Map(updated.map((c) => [c.id, c]));
+          setChaptersByModule((prev) => ({
+            ...prev,
+            [moduleId]: {
+              ...prev[moduleId],
+              chapters: nextChapters.map((c) => updatedMap.get(c.id) || c),
+            },
+          }));
+        }
+      } catch (err: unknown) {
+        if (mountedRef.current) {
+          setChaptersByModule((prev) => ({
+            ...prev,
+            [moduleId]: {
+              ...prev[moduleId],
+              chapters: initial,
+            },
+          }));
+          const msg = extractErrorMessage(
+            err,
+            'Échec du réordonnancement des chapitres.'
+          );
+          setReorderError(msg);
+          setLiveAnnouncement(`Erreur : ${msg}`);
+        }
+      }
+    }
+  };
+
+  const handleChapterDragEnd = () => {
+    setOverChapterState(null);
+    draggedChapterIdRef.current = null;
+  };
+
+  // ================= LESSONS REORDERING =================
+
+  const handleLessonPickUp = (
+    chapterId: string,
+    lesson: PublisherLessonItem,
+    _index: number
+  ) => {
+    const lessons = lessonsByChapter[chapterId]?.lessons || [];
+    lessonsSnapshotRef.current[chapterId] = [...lessons];
+    setGrabbedLessonId(lesson.id);
+    setLiveAnnouncement(getPickUpAnnouncement(lesson.title));
+  };
+
+  const handleLessonMove = (
+    chapterId: string,
+    currentIndex: number,
+    direction: 'up' | 'down'
+  ) => {
+    const lessons = lessonsByChapter[chapterId]?.lessons || [];
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0) {
+      setLiveAnnouncement('Premier élément atteint.');
+      return;
+    }
+    if (targetIndex >= lessons.length) {
+      setLiveAnnouncement('Dernier élément atteint.');
+      return;
+    }
+
+    const movingLesson = lessons[currentIndex];
+    setLessonsByChapter((prev) => {
+      const list = prev[chapterId]?.lessons || [];
+      const copy = [...list];
+      const temp = copy[currentIndex];
+      copy[currentIndex] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return {
+        ...prev,
+        [chapterId]: {
+          ...prev[chapterId],
+          lessons: copy,
+        },
+      };
+    });
+
+    setLiveAnnouncement(getMovementAnnouncement(targetIndex + 1, lessons.length));
+    focusHandle(`drag-handle-${movingLesson.id}`);
+  };
+
+  const handleLessonCommit = async (
+    chapterId: string,
+    lesson: PublisherLessonItem
+  ) => {
+    setGrabbedLessonId(null);
+    const initial = lessonsSnapshotRef.current[chapterId];
+    delete lessonsSnapshotRef.current[chapterId];
+    if (!initial) return;
+
+    const lessons = lessonsByChapter[chapterId]?.lessons || [];
+    const initialIds = initial
+      .filter((l) => !l.is_deleted)
+      .map((l) => l.id)
+      .join(',');
+    const currentIds = lessons
+      .filter((l) => !l.is_deleted)
+      .map((l) => l.id)
+      .join(',');
+
+    if (initialIds !== currentIds) {
+      if (mountedRef.current) {
+        setLiveAnnouncement(getCommitAnnouncement(lesson.title));
+      }
+      try {
+        const payloadOrder = lessons
+          .filter((l) => !l.is_deleted)
+          .map((l) => l.id);
+        const updated = await reorderLessons(chapterId, payloadOrder);
+        if (mountedRef.current) {
+          const updatedMap = new Map(updated.map((l) => [l.id, l]));
+          setLessonsByChapter((prev) => ({
+            ...prev,
+            [chapterId]: {
+              ...prev[chapterId],
+              lessons: (prev[chapterId]?.lessons || []).map(
+                (l) => updatedMap.get(l.id) || l
+              ),
+            },
+          }));
+        }
+      } catch (err: unknown) {
+        if (mountedRef.current) {
+          setLessonsByChapter((prev) => ({
+            ...prev,
+            [chapterId]: {
+              ...prev[chapterId],
+              lessons: initial,
+            },
+          }));
+          const msg = extractErrorMessage(
+            err,
+            'Échec du réordonnancement des leçons.'
+          );
+          setReorderError(msg);
+          setLiveAnnouncement(`Erreur : ${msg}`);
+        }
+      }
+    }
+  };
+
+  const handleLessonCancel = (chapterId: string) => {
+    if (lessonsSnapshotRef.current[chapterId]) {
+      const initial = lessonsSnapshotRef.current[chapterId];
+      delete lessonsSnapshotRef.current[chapterId];
+      setLessonsByChapter((prev) => ({
+        ...prev,
+        [chapterId]: {
+          ...prev[chapterId],
+          lessons: initial,
+        },
+      }));
+    }
+    setGrabbedLessonId(null);
+    setLiveAnnouncement(getCancelAnnouncement());
+  };
+
+  const handleLessonDragStart = (
+    chapterId: string,
+    lesson: PublisherLessonItem,
+    _index: number,
+    e?: React.DragEvent
+  ) => {
+    const lessons = lessonsByChapter[chapterId]?.lessons || [];
+    lessonsSnapshotRef.current[chapterId] = [...lessons];
+    draggedLessonIdRef.current = lesson.id;
+    if (e?.dataTransfer) {
+      e.dataTransfer.setData('text/plain', lesson.id);
+    }
+  };
+
+  const handleLessonDragOver = (chapterId: string, targetIndex: number) => {
+    setOverLessonState({ chapterId, index: targetIndex });
+  };
+
+  const handleLessonDrop = async (
+    chapterId: string,
+    targetIndex: number,
+    _targetLesson: PublisherLessonItem,
+    e?: React.DragEvent
+  ) => {
+    setOverLessonState(null);
+    const sourceId =
+      e?.dataTransfer?.getData('text/plain') || draggedLessonIdRef.current;
+    draggedLessonIdRef.current = null;
+    const initial =
+      lessonsSnapshotRef.current[chapterId] ||
+      lessonsByChapter[chapterId]?.lessons ||
+      [];
+    delete lessonsSnapshotRef.current[chapterId];
+    if (!sourceId) return;
+
+    const sourceIndex = initial.findIndex((l) => l.id === sourceId);
+    if (sourceIndex === -1 || sourceIndex === targetIndex) return;
+
+    const nextLessons = [...initial];
+    const [moved] = nextLessons.splice(sourceIndex, 1);
+    nextLessons.splice(targetIndex, 0, moved);
+
+    setLessonsByChapter((prev) => ({
+      ...prev,
+      [chapterId]: {
+        ...prev[chapterId],
+        lessons: nextLessons,
+      },
+    }));
+
+    const initialIds = initial
+      .filter((l) => !l.is_deleted)
+      .map((l) => l.id)
+      .join(',');
+    const currentIds = nextLessons
+      .filter((l) => !l.is_deleted)
+      .map((l) => l.id)
+      .join(',');
+
+    if (initialIds !== currentIds) {
+      if (mountedRef.current) {
+        setLiveAnnouncement(getCommitAnnouncement(moved.title));
+      }
+      try {
+        const payloadOrder = nextLessons
+          .filter((l) => !l.is_deleted)
+          .map((l) => l.id);
+        const updated = await reorderLessons(chapterId, payloadOrder);
+        if (mountedRef.current) {
+          const updatedMap = new Map(updated.map((l) => [l.id, l]));
+          setLessonsByChapter((prev) => ({
+            ...prev,
+            [chapterId]: {
+              ...prev[chapterId],
+              lessons: nextLessons.map((l) => updatedMap.get(l.id) || l),
+            },
+          }));
+        }
+      } catch (err: unknown) {
+        if (mountedRef.current) {
+          setLessonsByChapter((prev) => ({
+            ...prev,
+            [chapterId]: {
+              ...prev[chapterId],
+              lessons: initial,
+            },
+          }));
+          const msg = extractErrorMessage(
+            err,
+            'Échec du réordonnancement des leçons.'
+          );
+          setReorderError(msg);
+          setLiveAnnouncement(`Erreur : ${msg}`);
+        }
+      }
+    }
+  };
+
+  const handleLessonDragEnd = () => {
+    setOverLessonState(null);
+    draggedLessonIdRef.current = null;
+  };
+
+  // ================= MODAL HANDLERS =================
+
   const openCreateModule = () => {
     if (!courseId) return;
     setFormModal({
@@ -339,6 +1087,11 @@ export function PublisherCoursePage() {
         }
         return next;
       });
+      setLessonsByChapter((prev) => {
+        const next = { ...prev };
+        delete next[deletedChap.id];
+        return next;
+      });
     }
   };
 
@@ -348,6 +1101,9 @@ export function PublisherCoursePage() {
       className="min-h-screen bg-background text-foreground flex flex-col min-w-[360px] w-full selection:bg-primary selection:text-primary-foreground"
     >
       <AppHeader />
+
+      {/* Screen reader live region */}
+      <SortableLiveRegion message={liveAnnouncement} />
 
       <main className="flex-1 max-w-page-max mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
         {/* Navigation Breadcrumbs */}
@@ -370,6 +1126,30 @@ export function PublisherCoursePage() {
             {course?.name || 'Chargement...'}
           </span>
         </nav>
+
+        {/* Global Reorder Error Alert */}
+        {reorderError && (
+          <div
+            role="alert"
+            data-testid="reorder-error-alert"
+            className="rounded-lg border border-destructive-border bg-destructive-surface p-4 flex items-center justify-between gap-3 text-destructive text-sm"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span data-testid="reorder-error-message">{reorderError}</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setReorderError(null)}
+              aria-label="Fermer l'alerte d'erreur"
+              className="text-xs text-destructive hover:bg-destructive/10"
+            >
+              Fermer
+            </Button>
+          </div>
+        )}
 
         {/* Course Header Banner */}
         {courseStatus === 'loading' && (
@@ -570,14 +1350,31 @@ export function PublisherCoursePage() {
                 const chapters = chapterState?.chapters || [];
 
                 return (
-                  <div
+                  <SortableItem
                     key={mod.id}
+                    id={mod.id}
+                    name={mod.name}
+                    index={index}
+                    total={modules.length}
+                    disabled={mod.is_deleted}
+                    isGrabbed={grabbedModuleId === mod.id}
+                    isOver={overModuleIndex === index}
+                    onPickUp={() => handleModulePickUp(mod, index)}
+                    onCommit={() => handleModuleCommit(mod)}
+                    onCancel={handleModuleCancel}
+                    onMoveUp={() => handleModuleMove(index, 'up')}
+                    onMoveDown={() => handleModuleMove(index, 'down')}
+                    onDragStart={(e) => handleModuleDragStart(mod, index, e)}
+                    onDragOver={() => handleModuleDragOver(index)}
+                    onDrop={(e) => handleModuleDrop(index, mod, e)}
+                    onDragEnd={handleModuleDragEnd}
                     data-testid={`publisher-module-card-${mod.id}`}
                     className="rounded-lg border border-border bg-card p-5 space-y-4 shadow-sm"
                   >
                     {/* Module Header Bar */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/70">
                       <div className="flex items-center gap-2.5 min-w-0">
+                        <SortableHandle testId={`drag-handle-${mod.id}`} />
                         <span className="flex items-center justify-center h-6 w-6 rounded bg-primary/10 text-primary text-xs font-mono font-bold shrink-0">
                           {index + 1}
                         </span>
@@ -684,67 +1481,289 @@ export function PublisherCoursePage() {
                           data-testid={`chapters-list-${mod.id}`}
                           className="divide-y divide-border/40 rounded-md border border-border/60 bg-surface/40 overflow-hidden"
                         >
-                          {chapters.map((chap, chapIndex) => (
-                            <div
-                              key={chap.id}
-                              data-testid={`publisher-chapter-item-${chap.id}`}
-                              className="p-3 flex items-center justify-between gap-3 hover:bg-surface transition-colors"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <FileText
-                                  className="h-4 w-4 text-foreground-muted shrink-0"
-                                  aria-hidden="true"
-                                />
-                                <span className="text-xs font-mono text-foreground-muted shrink-0">
-                                  {index + 1}.{chapIndex + 1}
-                                </span>
-                                <span
-                                  data-testid={`chapter-name-${chap.id}`}
-                                  className="text-xs sm:text-sm font-medium text-foreground truncate"
-                                >
-                                  {chap.name}
-                                </span>
-                                {chap.is_deleted && (
-                                  <span
-                                    data-testid={`chapter-deleted-badge-${chap.id}`}
-                                    className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#251719] text-[#F85149] border border-[#DA3633] shrink-0"
-                                  >
-                                    Supprimé
-                                  </span>
+                          {chapters.map((chap, chapIndex) => {
+                            const isExpanded = !!expandedChapters[chap.id];
+                            const lessonState = lessonsByChapter[chap.id];
+                            const lessons = lessonState?.lessons || [];
+
+                            return (
+                              <SortableItem
+                                key={chap.id}
+                                id={chap.id}
+                                name={chap.name}
+                                index={chapIndex}
+                                total={chapters.length}
+                                disabled={chap.is_deleted}
+                                isGrabbed={grabbedChapterId === chap.id}
+                                isOver={
+                                  overChapterState?.moduleId === mod.id &&
+                                  overChapterState.index === chapIndex
+                                }
+                                onPickUp={() =>
+                                  handleChapterPickUp(mod.id, chap, chapIndex)
+                                }
+                                onCommit={() => handleChapterCommit(mod.id, chap)}
+                                onCancel={() => handleChapterCancel(mod.id)}
+                                onMoveUp={() =>
+                                  handleChapterMove(mod.id, chapIndex, 'up')
+                                }
+                                onMoveDown={() =>
+                                  handleChapterMove(mod.id, chapIndex, 'down')
+                                }
+                                onDragStart={(e) =>
+                                  handleChapterDragStart(mod.id, chap, chapIndex, e)
+                                }
+                                onDragOver={() =>
+                                  handleChapterDragOver(mod.id, chapIndex)
+                                }
+                                onDrop={(e) =>
+                                  handleChapterDrop(mod.id, chapIndex, chap, e)
+                                }
+                                onDragEnd={handleChapterDragEnd}
+                                data-testid={`publisher-chapter-item-${chap.id}`}
+                                className="p-3 flex flex-col gap-2 hover:bg-surface/50 transition-colors"
+                              >
+                                <div className="flex items-center justify-between gap-3 w-full">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <SortableHandle testId={`drag-handle-${chap.id}`} />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      data-testid={`expand-chapter-btn-${chap.id}`}
+                                      onClick={() => toggleChapterExpand(chap.id)}
+                                      aria-expanded={isExpanded}
+                                      aria-label={
+                                        isExpanded
+                                          ? `Masquer les leçons de ${chap.name}`
+                                          : `Afficher les leçons de ${chap.name}`
+                                      }
+                                      className="p-1 h-7 w-7 text-foreground-muted hover:text-foreground inline-flex items-center justify-center shrink-0"
+                                    >
+                                      {isExpanded ? (
+                                        <ChevronDown className="h-4 w-4" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                    <FileText
+                                      className="h-4 w-4 text-foreground-muted shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                    <span className="text-xs font-mono text-foreground-muted shrink-0">
+                                      {index + 1}.{chapIndex + 1}
+                                    </span>
+                                    <span
+                                      data-testid={`chapter-name-${chap.id}`}
+                                      className="text-xs sm:text-sm font-medium text-foreground truncate"
+                                    >
+                                      {chap.name}
+                                    </span>
+                                    {chap.is_deleted && (
+                                      <span
+                                        data-testid={`chapter-deleted-badge-${chap.id}`}
+                                        className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#251719] text-[#F85149] border border-[#DA3633] shrink-0"
+                                      >
+                                        Supprimé
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      data-testid={`edit-chapter-btn-${chap.id}`}
+                                      onClick={() => openEditChapter(chap)}
+                                      aria-label={`Modifier le chapitre ${chap.name}`}
+                                      className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-foreground-muted hover:text-foreground"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      data-testid={`delete-chapter-btn-${chap.id}`}
+                                      onClick={() => openDeleteChapter(chap)}
+                                      aria-label={`Supprimer le chapitre ${chap.name}`}
+                                      className="min-h-[44px] min-w-[44px] text-xs hover:bg-destructive/10 text-destructive"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {/* Expandable Lessons section */}
+                                {isExpanded && (
+                                  <div className="pl-6 pt-2 pb-1 space-y-2 border-t border-border/40">
+                                    {lessonState?.status === 'loading' && (
+                                      <div
+                                        data-testid={`lessons-loading-${chap.id}`}
+                                        className="text-xs text-foreground-muted py-2 animate-pulse"
+                                      >
+                                        Chargement des leçons...
+                                      </div>
+                                    )}
+
+                                    {lessonState?.status === 'error' && (
+                                      <div
+                                        role="alert"
+                                        data-testid={`lessons-error-${chap.id}`}
+                                        className="flex items-center justify-between text-xs text-destructive py-2 px-3 bg-destructive-surface rounded border border-destructive-border"
+                                      >
+                                        <span>
+                                          {lessonState.error ||
+                                            'Erreur lors du chargement des leçons.'}
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          data-testid={`retry-lessons-btn-${chap.id}`}
+                                          onClick={() => loadLessonsForChapter(chap.id)}
+                                          className="text-xs border-destructive-border"
+                                        >
+                                          Réessayer
+                                        </Button>
+                                      </div>
+                                    )}
+
+                                    {lessonState?.status === 'success' &&
+                                      lessons.length === 0 && (
+                                        <div
+                                          data-testid={`lessons-empty-${chap.id}`}
+                                          className="text-xs text-foreground-muted py-2 italic"
+                                        >
+                                          Aucune leçon dans ce chapitre.
+                                        </div>
+                                      )}
+
+                                    {lessonState?.status === 'success' &&
+                                      lessons.length > 0 && (
+                                        <div
+                                          data-testid={`lessons-list-${chap.id}`}
+                                          className="divide-y divide-border/30 rounded-md border border-border/40 bg-surface/30 overflow-hidden"
+                                        >
+                                          {lessons.map((lesson, lessonIndex) => (
+                                            <SortableItem
+                                              key={lesson.id}
+                                              id={lesson.id}
+                                              name={lesson.title}
+                                              index={lessonIndex}
+                                              total={lessons.length}
+                                              disabled={lesson.is_deleted}
+                                              isGrabbed={grabbedLessonId === lesson.id}
+                                              isOver={
+                                                overLessonState?.chapterId === chap.id &&
+                                                overLessonState.index === lessonIndex
+                                              }
+                                              onPickUp={() =>
+                                                handleLessonPickUp(
+                                                  chap.id,
+                                                  lesson,
+                                                  lessonIndex
+                                                )
+                                              }
+                                              onCommit={() =>
+                                                handleLessonCommit(chap.id, lesson)
+                                              }
+                                              onCancel={() =>
+                                                handleLessonCancel(chap.id)
+                                              }
+                                              onMoveUp={() =>
+                                                handleLessonMove(
+                                                  chap.id,
+                                                  lessonIndex,
+                                                  'up'
+                                                )
+                                              }
+                                              onMoveDown={() =>
+                                                handleLessonMove(
+                                                  chap.id,
+                                                  lessonIndex,
+                                                  'down'
+                                                )
+                                              }
+                                              onDragStart={(e) =>
+                                                handleLessonDragStart(
+                                                  chap.id,
+                                                  lesson,
+                                                  lessonIndex,
+                                                  e
+                                                )
+                                              }
+                                              onDragOver={() =>
+                                                handleLessonDragOver(
+                                                  chap.id,
+                                                  lessonIndex
+                                                )
+                                              }
+                                              onDrop={(e) =>
+                                                handleLessonDrop(
+                                                  chap.id,
+                                                  lessonIndex,
+                                                  lesson,
+                                                  e
+                                                )
+                                              }
+                                              onDragEnd={handleLessonDragEnd}
+                                              data-testid={`publisher-lesson-item-${lesson.id}`}
+                                              className="p-2.5 flex items-center justify-between gap-3 hover:bg-surface transition-colors"
+                                            >
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                <SortableHandle
+                                                  testId={`drag-handle-${lesson.id}`}
+                                                />
+                                                <BookOpen
+                                                  className="h-3.5 w-3.5 text-foreground-muted shrink-0"
+                                                  aria-hidden="true"
+                                                />
+                                                <span className="text-xs font-mono text-foreground-muted shrink-0">
+                                                  {index + 1}.{chapIndex + 1}.
+                                                  {lessonIndex + 1}
+                                                </span>
+                                                <span
+                                                  data-testid={`lesson-title-${lesson.id}`}
+                                                  className="text-xs sm:text-sm font-medium text-foreground truncate"
+                                                >
+                                                  {lesson.title}
+                                                </span>
+                                                {lesson.is_deleted && (
+                                                  <span
+                                                    data-testid={`lesson-deleted-badge-${lesson.id}`}
+                                                    className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#251719] text-[#F85149] border border-[#DA3633] shrink-0"
+                                                  >
+                                                    Supprimé
+                                                  </span>
+                                                )}
+                                                {lesson.is_published && (
+                                                  <span
+                                                    data-testid={`lesson-published-badge-${lesson.id}`}
+                                                    className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#1F3A24] text-[#3FB950] border border-[#238636] shrink-0"
+                                                  >
+                                                    Publié
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="text-[11px] text-foreground-muted font-mono shrink-0">
+                                                {lesson.teacher}
+                                              </div>
+                                            </SortableItem>
+                                          ))}
+                                        </div>
+                                      )}
+                                  </div>
                                 )}
-                              </div>
-
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  data-testid={`edit-chapter-btn-${chap.id}`}
-                                  onClick={() => openEditChapter(chap)}
-                                  aria-label={`Modifier le chapitre ${chap.name}`}
-                                  className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-foreground-muted hover:text-foreground"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  data-testid={`delete-chapter-btn-${chap.id}`}
-                                  onClick={() => openDeleteChapter(chap)}
-                                  aria-label={`Supprimer le chapitre ${chap.name}`}
-                                  className="min-h-[44px] min-w-[44px] text-xs hover:bg-destructive/10 text-destructive"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
+                              </SortableItem>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
-                  </div>
+                  </SortableItem>
                 );
               })}
             </div>

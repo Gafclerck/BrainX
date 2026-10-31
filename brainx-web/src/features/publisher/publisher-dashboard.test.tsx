@@ -925,7 +925,7 @@ describe('Story FE-4.1: Tableau de Bord Éditeur & Navigation dans l\'Arborescen
         })
       );
 
-      const retryBtn = await screen.findByTestId('nav-analytics-link');
+      await screen.findByTestId('nav-analytics-link');
       // trigger retry
       const prevRetry = screen.queryByTestId('publisher-retry-btn');
       if (prevRetry) await user.click(prevRetry);

@@ -101,8 +101,6 @@ export function RemovalPreviewModal({
   }, [item?.id, type]);
 
   useEffect(() => {
-    let active = true;
-
     if (isOpen && item?.id) {
       loadPreview();
     } else {
@@ -111,10 +109,6 @@ export function RemovalPreviewModal({
       setDeleteError(null);
       setIsDeleting(false);
     }
-
-    return () => {
-      active = false;
-    };
   }, [isOpen, item?.id, loadPreview]);
 
   const handleOpenChange = (open: boolean) => {

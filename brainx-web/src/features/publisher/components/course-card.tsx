@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { Calendar, User, BookOpen, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import type { PublisherCourseItem, CourseStatus } from '../types';

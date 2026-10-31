@@ -40,6 +40,29 @@ export interface PublisherChapterItem {
   updated_at: string;
 }
 
+export interface PublisherLessonItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  keywords?: string | null;
+  teacher: string;
+  course_date: string;
+  position: number;
+  is_deleted: boolean;
+  is_published?: boolean;
+  last_modified_by: PublisherLastModifiedBy | null;
+  updated_at: string;
+}
+
+export interface ReorderPayload {
+  order: string[];
+}
+
+export interface ReorderState {
+  isReordering: boolean;
+  error: string | null;
+}
+
 export interface PaginatedPublisherResponse<T = PublisherCourseItem> {
   count: number;
   next: string | null;

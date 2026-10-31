@@ -4,6 +4,7 @@ import type {
   PublisherCourseItem,
   PublisherModuleItem,
   PublisherChapterItem,
+  PublisherLessonItem,
   RemovalPreviewResponse,
   CreateCoursePayload,
   UpdateCoursePayload,
@@ -11,6 +12,7 @@ import type {
   UpdateModulePayload,
   CreateChapterPayload,
   UpdateChapterPayload,
+  ReorderPayload,
 } from './types';
 
 /**
@@ -257,4 +259,100 @@ export async function fetchChapterRemovalPreview(
   return apiClient<RemovalPreviewResponse>(
     `/api/v1/chapters/${encodeURIComponent(id)}/removal-preview/`
   );
+}
+
+/**
+ * Reorder modules under a course.
+ * PUT /api/v1/courses/:courseId/modules/order/
+ * Submits exact permutation of all non-deleted direct module UUIDs.
+ */
+export async function reorderModules(
+  courseId: string,
+  order: string[]
+): Promise<PublisherModuleItem[]> {
+  const payload: ReorderPayload = { order };
+  return apiClient<PublisherModuleItem[]>(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/modules/order/`,
+    {
+      method: 'PUT',
+      data: payload,
+    }
+  );
+}
+
+/**
+ * Reorder chapters under a module.
+ * PUT /api/v1/modules/:moduleId/chapters/order/
+ * Submits exact permutation of all non-deleted direct chapter UUIDs.
+ */
+export async function reorderChapters(
+  moduleId: string,
+  order: string[]
+): Promise<PublisherChapterItem[]> {
+  const payload: ReorderPayload = { order };
+  return apiClient<PublisherChapterItem[]>(
+    `/api/v1/modules/${encodeURIComponent(moduleId)}/chapters/order/`,
+    {
+      method: 'PUT',
+      data: payload,
+    }
+  );
+}
+
+/**
+ * Reorder lessons under a chapter.
+ * PUT /api/v1/chapters/:chapterId/lessons/order/
+ * Submits exact permutation of all non-deleted direct lesson UUIDs.
+ */
+export async function reorderLessons(
+  chapterId: string,
+  order: string[]
+): Promise<PublisherLessonItem[]> {
+  const payload: ReorderPayload = { order };
+  return apiClient<PublisherLessonItem[]>(
+    `/api/v1/chapters/${encodeURIComponent(chapterId)}/lessons/order/`,
+    {
+      method: 'PUT',
+      data: payload,
+    }
+  );
+}
+
+/**
+ * Fetch manageable lessons under a chapter.
+ * Loops through all pages if next exists to ensure exhaustive list of children (Story FE-4.3).
+ * Queries backend manageable() port: GET /api/v1/chapters/:chapterId/lessons/?page=...
+ */
+export async function fetchManageableLessons(
+  chapterId: string,
+  page?: number
+): Promise<PaginatedPublisherResponse<PublisherLessonItem>> {
+  if (page !== undefined) {
+    const query = `?page=${encodeURIComponent(page)}`;
+    return apiClient<PaginatedPublisherResponse<PublisherLessonItem>>(
+      `/api/v1/chapters/${encodeURIComponent(chapterId)}/lessons/${query}`
+    );
+  }
+
+  let currentPage = 1;
+  let allResults: PublisherLessonItem[] = [];
+  let totalCount = 0;
+
+  while (true) {
+    const query = currentPage === 1 ? '' : `?page=${encodeURIComponent(currentPage)}`;
+    const res = await apiClient<PaginatedPublisherResponse<PublisherLessonItem>>(
+      `/api/v1/chapters/${encodeURIComponent(chapterId)}/lessons/${query}`
+    );
+    totalCount = res.count ?? allResults.length + (res.results?.length || 0);
+    allResults = allResults.concat(res.results || []);
+    if (!res.next) break;
+    currentPage++;
+  }
+
+  return {
+    count: totalCount,
+    next: null,
+    previous: null,
+    results: allResults,
+  };
 }
