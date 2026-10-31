@@ -5,3 +5,4 @@ export * from './search-session-store';
 export * from './highlight-text';
 export * from './search-result-card';
 export * from './search-dialog';
+export * from './search-feedback-prompt';

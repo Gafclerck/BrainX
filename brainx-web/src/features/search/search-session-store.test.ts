@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useSearchSessionStore } from './search-session-store';
-import { closeSearchSession, abandonSearchSession } from './api';
+import { useSearchSessionStore, FEEDBACK_DONE_STORAGE_PREFIX } from './search-session-store';
+import { closeSearchSession, abandonSearchSession, answerSearchSession } from './api';
 import { useAuthStore } from '@/features/auth/auth-store';
 
-describe('Story FE-3.3: useSearchSessionStore & Session API Unit Tests', () => {
+describe('Story FE-3.3 & FE-3.4: useSearchSessionStore & Session API Unit Tests', () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    sessionStorage.clear();
     useAuthStore.getState().setTokens({
       access: 'mock_token',
       refresh: 'mock_refresh',
@@ -261,6 +262,21 @@ describe('Story FE-3.3: useSearchSessionStore & Session API Unit Tests', () => {
     });
   });
 
+  describe('clearLastOpenedLessonId', () => {
+    it('sets lastOpenedLessonId to null without altering sessionId or status', async () => {
+      useSearchSessionStore.getState().setSessionId('sess-clear-test');
+      useSearchSessionStore.getState().closeSession('lesson-abc');
+
+      expect(useSearchSessionStore.getState().lastOpenedLessonId).toBe('lesson-abc');
+      useSearchSessionStore.getState().clearLastOpenedLessonId();
+
+      const state = useSearchSessionStore.getState();
+      expect(state.lastOpenedLessonId).toBeNull();
+      expect(state.sessionId).toBe('sess-clear-test');
+      expect(state.status).toBe('closed');
+    });
+  });
+
   describe('resetSession', () => {
     it('restores all state properties back to initial idle defaults', () => {
       useSearchSessionStore.getState().setSessionId('sess-123');
@@ -324,6 +340,188 @@ describe('Story FE-3.3: useSearchSessionStore & Session API Unit Tests', () => {
       const body = JSON.parse(passedInit?.body as string);
       expect(body.session_id).toBe('test-sess-2');
       expect(body.search_session_id).toBe('test-sess-2');
+    });
+
+    it('answerSearchSession sets headers, body, found boolean, and keepalive properly', async () => {
+      let passedInit: RequestInit | undefined;
+      let passedUrl = '';
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        passedUrl = url;
+        passedInit = init;
+        return Promise.resolve(
+          new Response(JSON.stringify({ search_session_id: 'test-sess-3', found: true }), {
+            status: 201,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        );
+      });
+
+      const res = await answerSearchSession({
+        session_id: 'test-sess-3',
+        found: true,
+      });
+
+      expect(passedUrl).toContain('/api/v1/search/sessions/answer/');
+      expect(passedInit?.method).toBe('POST');
+      expect(passedInit?.keepalive).toBe(true);
+      expect((passedInit?.headers as Record<string, string>)['X-Search-Session-Id']).toBe('test-sess-3');
+      const body = JSON.parse(passedInit?.body as string);
+      expect(body.session_id).toBe('test-sess-3');
+      expect(body.search_session_id).toBe('test-sess-3');
+      expect(body.found).toBe(true);
+      expect(res.found).toBe(true);
+    });
+  });
+
+  describe('Story FE-3.4: Feedback Lifecycle (dismissFeedback, isFeedbackDone, answerSession)', () => {
+    it('isFeedbackDone returns false initially for active session without storage flag', () => {
+      useSearchSessionStore.getState().setSessionId('sess-100');
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-100')).toBe(false);
+    });
+
+    it('isFeedbackDone returns true for empty or whitespace-only sessionId', () => {
+      expect(useSearchSessionStore.getState().isFeedbackDone('')).toBe(true);
+      expect(useSearchSessionStore.getState().isFeedbackDone('   ')).toBe(true);
+    });
+
+    it('dismissFeedback records session in store and sessionStorage without API calls', () => {
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy;
+
+      useSearchSessionStore.getState().setSessionId('sess-dismiss');
+      useSearchSessionStore.getState().dismissFeedback('sess-dismiss');
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-dismiss')).toBe(true);
+      expect(sessionStorage.getItem(`${FEEDBACK_DONE_STORAGE_PREFIX}sess-dismiss`)).toBe('true');
+    });
+
+    it('dismissFeedback defaults to current sessionId when no parameter is passed', () => {
+      useSearchSessionStore.getState().setSessionId('sess-default-dismiss');
+      useSearchSessionStore.getState().dismissFeedback();
+
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-default-dismiss')).toBe(true);
+      expect(sessionStorage.getItem(`${FEEDBACK_DONE_STORAGE_PREFIX}sess-default-dismiss`)).toBe('true');
+    });
+
+    it('isFeedbackDone returns true if sessionStorage contains the done flag', () => {
+      sessionStorage.setItem(`${FEEDBACK_DONE_STORAGE_PREFIX}persisted-session`, 'true');
+      expect(useSearchSessionStore.getState().isFeedbackDone('persisted-session')).toBe(true);
+    });
+
+    it('answerSession dispatches POST /answer/ with found=true and marks session done', async () => {
+      let requestedUrl = '';
+      let requestedInit: RequestInit | undefined;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        requestedUrl = url;
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              search_session_id: 'sess-yes',
+              found: true,
+            }),
+            { status: 201, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+      });
+
+      useSearchSessionStore.getState().setSessionId('sess-yes');
+      await useSearchSessionStore.getState().answerSession(true);
+
+      expect(requestedUrl).toContain('/api/v1/search/sessions/answer/');
+      expect(requestedInit?.method).toBe('POST');
+      expect((requestedInit?.headers as Record<string, string>)['X-Search-Session-Id']).toBe('sess-yes');
+
+      const body = JSON.parse(requestedInit?.body as string);
+      expect(body).toEqual({
+        session_id: 'sess-yes',
+        search_session_id: 'sess-yes',
+        found: true,
+      });
+
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-yes')).toBe(true);
+      expect(sessionStorage.getItem(`${FEEDBACK_DONE_STORAGE_PREFIX}sess-yes`)).toBe('true');
+    });
+
+    it('answerSession dispatches POST /answer/ with found=false for negative answer', async () => {
+      let requestedInit: RequestInit | undefined;
+
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              search_session_id: 'sess-no',
+              found: false,
+            }),
+            { status: 201, headers: { 'Content-Type': 'application/json' } }
+          )
+        );
+      });
+
+      useSearchSessionStore.getState().setSessionId('sess-no');
+      await useSearchSessionStore.getState().answerSession(false);
+
+      const body = JSON.parse(requestedInit?.body as string);
+      expect(body.found).toBe(false);
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-no')).toBe(true);
+    });
+
+    it('answerSession guards against duplicate submissions on rapid clicks', async () => {
+      const fetchSpy = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ search_session_id: 'sess-double', found: true }), {
+            status: 201,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        )
+      );
+      globalThis.fetch = fetchSpy;
+
+      useSearchSessionStore.getState().setSessionId('sess-double');
+
+      // Trigger two calls simultaneously
+      const call1 = useSearchSessionStore.getState().answerSession(true);
+      const call2 = useSearchSessionStore.getState().answerSession(true);
+
+      await Promise.all([call1, call2]);
+
+      // Only one API request must have been dispatched
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('answerSession silently swallows 404, 409 Conflict, and network errors (telemetry oracle immunity)', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: 'about:blank',
+              title: 'Conflict',
+              status: 409,
+              detail: 'An answer has already been recorded for this search session.',
+            }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } }
+          )
+        )
+      );
+
+      useSearchSessionStore.getState().setSessionId('sess-conflict');
+
+      await expect(useSearchSessionStore.getState().answerSession(true)).resolves.not.toThrow();
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-conflict')).toBe(true);
+    });
+
+    it('answerSession silently swallows network connection failures', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.reject(new Error('Network disconnected'))
+      );
+
+      useSearchSessionStore.getState().setSessionId('sess-net-err');
+
+      await expect(useSearchSessionStore.getState().answerSession(false)).resolves.not.toThrow();
+      expect(useSearchSessionStore.getState().isFeedbackDone('sess-net-err')).toBe(true);
     });
   });
 });

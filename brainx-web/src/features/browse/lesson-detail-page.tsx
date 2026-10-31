@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { ResourceBadge } from '@/components/ui/resource-badge';
 import { ResourceCard } from './resource-card';
 import { CodeBlock } from '@/components/ui/code-block';
+import { SearchFeedbackPrompt } from '@/features/search';
 import { cn } from '@/lib/utils';
 
 export function slugify(text: string): string {
@@ -301,7 +302,7 @@ export function LessonDetailPage() {
   return (
     <div
       data-testid="lesson-detail-page"
-      className="w-full min-w-[360px] overflow-x-hidden text-foreground"
+      className="w-full min-w-[360px] overflow-x-hidden text-foreground pb-20"
     >
       {/* Loading Skeleton */}
       {state.status === 'loading' && (
@@ -515,6 +516,9 @@ export function LessonDetailPage() {
               </div>
             </section>
           )}
+
+          {/* Discreet Floating Search Feedback Banner (Story FE-3.4) */}
+          <SearchFeedbackPrompt lessonId={lessonId} searchSessionId={searchSessionId} />
         </div>
       )}
     </div>

@@ -91,6 +91,15 @@ export interface AbandonSessionPayload {
 }
 
 /**
+ * Request payload for POST /api/v1/search/sessions/answer/ (Story FE-3.4).
+ */
+export interface AnswerSessionPayload {
+  session_id?: string;
+  search_session_id?: string;
+  found: boolean;
+}
+
+/**
  * Response payload from search session close/abandon endpoints.
  */
 export interface SearchSessionResponse {
@@ -100,15 +109,28 @@ export interface SearchSessionResponse {
 }
 
 /**
- * State and actions for the dedicated search session store (Story FE-3.3).
+ * Response payload from POST /api/v1/search/sessions/answer/ endpoint (Story FE-3.4).
+ */
+export interface SearchAnswerResponse {
+  search_session_id: string;
+  found: boolean;
+}
+
+/**
+ * State and actions for the dedicated search session store (Story FE-3.3, FE-3.4).
  */
 export interface SearchSessionState {
   sessionId: string | null;
   status: SearchSessionStatus;
   lastOpenedLessonId: string | null;
+  feedbackDoneSessionIds: string[];
 
   setSessionId: (sessionId: string | null | undefined) => void;
   closeSession: (lessonId?: string) => Promise<void>;
   abandonSession: () => Promise<void>;
+  clearLastOpenedLessonId: () => void;
   resetSession: () => void;
+  answerSession: (found: boolean, targetSessionId?: string) => Promise<void>;
+  dismissFeedback: (sessionId?: string) => void;
+  isFeedbackDone: (sessionId: string) => boolean;
 }

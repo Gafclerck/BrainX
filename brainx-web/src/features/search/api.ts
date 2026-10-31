@@ -1,8 +1,10 @@
 import { apiClient } from '@/lib/api';
 import type {
   AbandonSessionPayload,
+  AnswerSessionPayload,
   CloseSessionPayload,
   PaginatedSearchResponse,
+  SearchAnswerResponse,
   SearchOptions,
   SearchSessionResponse,
 } from './types';
@@ -90,6 +92,35 @@ export async function abandonSearchSession(
   };
 
   return apiClient<SearchSessionResponse>('/api/v1/search/sessions/abandon/', {
+    method: 'POST',
+    data,
+    headers,
+    keepalive: options?.keepalive ?? true,
+    signal: options?.signal,
+  });
+}
+
+/**
+ * Dispatches an authenticated POST /api/v1/search/sessions/answer/ request.
+ * Header X-Search-Session-Id and body payload are sent (Story FE-3.4).
+ */
+export async function answerSearchSession(
+  payload: AnswerSessionPayload,
+  options?: { keepalive?: boolean; signal?: AbortSignal }
+): Promise<SearchAnswerResponse> {
+  const sessionId = payload.session_id || payload.search_session_id;
+  const headers: Record<string, string> = {};
+  if (sessionId) {
+    headers['X-Search-Session-Id'] = sessionId;
+  }
+
+  const data: AnswerSessionPayload = {
+    session_id: payload.session_id ?? payload.search_session_id,
+    search_session_id: payload.search_session_id ?? payload.session_id,
+    found: payload.found,
+  };
+
+  return apiClient<SearchAnswerResponse>('/api/v1/search/sessions/answer/', {
     method: 'POST',
     data,
     headers,

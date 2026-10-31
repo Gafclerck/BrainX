@@ -17,6 +17,7 @@ describe('Story FE-2.4: Vue Détaillée d\'une Leçon & Fil d\'Ariane Contextuel
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    sessionStorage.clear();
     useSearchSessionStore.getState().resetSession();
     useAuthStore.getState().clearAuth();
     useAuthStore.getState().setTokens({
@@ -795,6 +796,7 @@ Contenu pédagogique sain.`,
       const page = screen.getByTestId('lesson-detail-page');
       expect(page.className).toContain('min-w-[360px]');
       expect(page.className).toContain('overflow-x-hidden');
+      expect(page.className).toContain('pb-20');
     });
 
     it('mounts within AppRoutes when authenticated', async () => {
@@ -924,6 +926,165 @@ Contenu pédagogique sain.`,
       // Video card should span full width (col-span-full)
       const videoCard = screen.getByTestId('resource-card-res-vid');
       expect(videoCard.className).toContain('col-span-full');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Story FE-3.4: Integration of SearchFeedbackPrompt in LessonDetailPage
+  // ---------------------------------------------------------------------------
+  describe('Story FE-3.4: SearchFeedbackPrompt Integration', () => {
+    it('renders the feedback banner when student navigates from a search session and submits answer', async () => {
+      let answerDispatched = false;
+      let answerPayload: Record<string, unknown> | null = null;
+      let sessionHeaderValue = '';
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (url.includes('/api/v1/search/sessions/answer/')) {
+          answerDispatched = true;
+          sessionHeaderValue = (init?.headers as Record<string, string>)?.['X-Search-Session-Id'] || '';
+          answerPayload = JSON.parse(init?.body as string);
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  search_session_id: 'search-sess-1',
+                  found: true,
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      // Simulate search session closed upon opening lesson-uuid-1
+      act(() => {
+        useSearchSessionStore.getState().setSessionId('search-sess-1');
+      });
+      await act(async () => {
+        await useSearchSessionStore.getState().closeSession('lesson-uuid-1');
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      // Feedback prompt is rendered
+      const prompt = screen.getByTestId('search-feedback-prompt');
+      expect(prompt).toBeInTheDocument();
+      expect(screen.getByText('Avez-vous trouvé ce que vous cherchiez ?')).toBeInTheDocument();
+
+      // Click [Oui]
+      const yesBtn = screen.getByTestId('search-feedback-yes');
+      const user = userEvent.setup();
+      await user.click(yesBtn);
+
+      // Prompt disappears
+      expect(screen.queryByTestId('search-feedback-prompt')).toBeNull();
+
+      // Verify answer endpoint called
+      await waitFor(() => {
+        expect(answerDispatched).toBe(true);
+      });
+      expect(sessionHeaderValue).toBe('search-sess-1');
+      expect(answerPayload).toEqual({
+        session_id: 'search-sess-1',
+        search_session_id: 'search-sess-1',
+        found: true,
+      });
+    });
+
+    it('does NOT render the feedback banner on direct navigation without a search session', async () => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      // No prompt rendered
+      expect(screen.queryByTestId('search-feedback-prompt')).toBeNull();
+    });
+
+    it('dismissing the prompt permanently hides it without dispatching to /answer/', async () => {
+      const fetchSpy = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+      globalThis.fetch = fetchSpy;
+
+      act(() => {
+        useSearchSessionStore.getState().setSessionId('search-sess-dismiss');
+      });
+      await act(async () => {
+        await useSearchSessionStore.getState().closeSession('lesson-uuid-1');
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('search-feedback-prompt')).toBeInTheDocument();
+      });
+
+      const closeBtn = screen.getByTestId('search-feedback-close');
+      const user = userEvent.setup();
+      await user.click(closeBtn);
+
+      expect(screen.queryByTestId('search-feedback-prompt')).toBeNull();
+
+      // Ensure no /answer/ call was made
+      const answerCalls = fetchSpy.mock.calls.filter((call) =>
+        String(call[0]).includes('/api/v1/search/sessions/answer/')
+      );
+      expect(answerCalls.length).toBe(0);
     });
   });
 });
