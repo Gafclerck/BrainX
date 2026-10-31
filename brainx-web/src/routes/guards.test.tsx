@@ -194,7 +194,7 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       ).not.toBeInTheDocument();
     });
 
-    it('redirects authenticated non-publisher (student) to / and displays informative banner without altering tokens', async () => {
+    it('redirects authenticated non-publisher (student) to /courses and displays informative banner without altering tokens', async () => {
       const user = userEvent.setup();
 
       // Set user as authenticated student (isPublisher: false)
@@ -216,8 +216,8 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
         </MemoryRouter>
       );
 
-      // Verify redirected to /
-      expect(screen.getByTestId('current-location')).toHaveTextContent('/');
+      // Verify redirected to /courses
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/courses');
 
       // Verify informative banner is surfaced with verbatim spec message
       const banner = screen.getByTestId('publisher-notice-banner');
@@ -315,7 +315,19 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       expect(publisherLink).toHaveAttribute('href', '/publisher/dashboard');
     });
 
-    it('grants access to authenticated publisher (isPublisher: true) without redirection', () => {
+    it('grants access to authenticated publisher (isPublisher: true) without redirection', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({ count: 0, next: null, previous: null, results: [] })
+            ),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        })
+      );
+
       useAuthStore.getState().setTokens({
         access: 'valid_publisher_jwt',
         refresh: 'valid_refresh_jwt',
@@ -327,12 +339,14 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       });
       useAuthStore.getState().setIsPublisher(true);
 
-      render(
-        <MemoryRouter initialEntries={['/publisher/dashboard']}>
-          <LocationTracker />
-          <AppRoutes />
-        </MemoryRouter>
-      );
+      await act(async () => {
+        render(
+          <MemoryRouter initialEntries={['/publisher/dashboard']}>
+            <LocationTracker />
+            <AppRoutes />
+          </MemoryRouter>
+        );
+      });
 
       expect(screen.getByTestId('current-location')).toHaveTextContent(
         '/publisher/dashboard'
@@ -428,21 +442,35 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       ).toBeInTheDocument();
     });
 
-    it('redirects authenticated user visiting /login with safe returnUrl to that destination', () => {
+    it('redirects authenticated user visiting /login with safe returnUrl to that destination', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({ count: 0, next: null, previous: null, results: [] })
+            ),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        })
+      );
+
       useAuthStore.getState().setTokens({
         access: 'publisher_jwt',
         refresh: 'publisher_refresh',
       });
       useAuthStore.getState().setIsPublisher(true);
 
-      render(
-        <MemoryRouter
-          initialEntries={['/login?returnUrl=%2Fpublisher%2Fdashboard']}
-        >
-          <LocationTracker />
-          <AppRoutes />
-        </MemoryRouter>
-      );
+      await act(async () => {
+        render(
+          <MemoryRouter
+            initialEntries={['/login?returnUrl=%2Fpublisher%2Fdashboard']}
+          >
+            <LocationTracker />
+            <AppRoutes />
+          </MemoryRouter>
+        );
+      });
 
       expect(screen.getByTestId('current-location')).toHaveTextContent(
         '/publisher/dashboard'

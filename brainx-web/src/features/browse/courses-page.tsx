@@ -1,12 +1,32 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertCircle, RefreshCw, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { AlertCircle, RefreshCw, BookOpen, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { fetchPublishedCourses } from './api';
 import type { BrowseContainerItem, BrowseViewState } from './types';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
 export function CoursesPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const notice = (location.state as { notice?: string } | null | undefined)?.notice;
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
+
+  useEffect(() => {
+    setNoticeDismissed(false);
+  }, [location.key]);
+
+  const handleDismissNotice = () => {
+    setNoticeDismissed(true);
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true,
+      state: {},
+    });
+  };
+
+  const isNoticeValid = typeof notice === 'string' && notice.trim().length > 0;
+  const showNotice = Boolean(isNoticeValid && !noticeDismissed);
+
   const [viewState, setViewState] = useState<BrowseViewState<BrowseContainerItem>>({
     status: 'loading',
   });
@@ -70,6 +90,32 @@ export function CoursesPage() {
     >
       {/* Hidden landmark for backwards compatibility with route guard test assertions */}
       <div data-testid="courses-page-placeholder" className="sr-only" aria-hidden="true" />
+
+      {/* Flash / Publisher Notice Banner */}
+      {showNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="publisher-notice-banner"
+          className="rounded-md border border-info-border bg-info-surface p-4 text-sm text-info flex items-start sm:items-center justify-between gap-3 shadow-sm min-w-0"
+        >
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <AlertCircle className="h-5 w-5 shrink-0 text-info mt-0.5 sm:mt-0" aria-hidden="true" />
+            <p className="font-medium text-info break-words">
+              {notice}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDismissNotice}
+            data-testid="dismiss-notice-button"
+            aria-label="Fermer la notification"
+            className="shrink-0 rounded p-1.5 text-info hover:text-foreground hover:bg-info-border/30 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary min-h-[44px] min-w-[44px] flex items-center justify-center"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {/* Header and Catalog Title */}
       <div className="space-y-1">

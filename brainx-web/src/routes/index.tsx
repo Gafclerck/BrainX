@@ -15,6 +15,7 @@ import {
   LessonDetailPage,
   BrowseTreeSidebar,
 } from '@/features/browse';
+import { PublisherDashboardPage } from '@/features/publisher';
 
 export function CoursesPagePlaceholder() {
   return (
@@ -93,7 +94,8 @@ export function AppRoutes() {
 
       {/* Authenticated publisher routes */}
       <Route element={<PublisherGuard />}>
-        <Route path="/publisher" element={<PublisherPagePlaceholder />} />
+        <Route path="/publisher" element={<PublisherDashboardPage />} />
+        <Route path="/publisher/dashboard" element={<PublisherDashboardPage />} />
         <Route path="/publisher/*" element={<PublisherPagePlaceholder />} />
       </Route>
 

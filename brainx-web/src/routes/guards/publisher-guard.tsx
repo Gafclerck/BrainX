@@ -23,7 +23,7 @@ export function PublisherGuard({ children }: PublisherGuardProps = {}) {
   if (!isPublisher) {
     return (
       <Navigate
-        to="/"
+        to="/courses"
         replace
         state={{ notice: PUBLISHER_NOTICE }}
       />
