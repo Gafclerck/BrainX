@@ -17,6 +17,8 @@ import { Input } from '@/components/ui/input';
 import { fetchManageableCourses } from '../api';
 import { fetchPublishedCourses } from '@/features/browse/api';
 import { PublisherCourseCard, computeCourseStatus } from './course-card';
+import { ContainerFormModal } from './container-form-modal';
+import { RemovalPreviewModal } from './removal-preview-modal';
 import type {
   PublisherCourseItem,
   PublisherViewState,
@@ -32,6 +34,28 @@ export function PublisherDashboardPage() {
   const [statusFilter, setStatusFilter] = useState<CourseStatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [publishedCourseIds, setPublishedCourseIds] = useState<Set<string>>(new Set());
+
+  // Modal states
+  const [formModal, setFormModal] = useState<{
+    isOpen: boolean;
+    mode: 'create' | 'edit';
+    initialData?: {
+      id?: string;
+      name?: string;
+      subject?: string;
+    };
+  }>({
+    isOpen: false,
+    mode: 'create',
+  });
+
+  const [removalModal, setRemovalModal] = useState<{
+    isOpen: boolean;
+    item: { id: string; name: string } | null;
+  }>({
+    isOpen: false,
+    item: null,
+  });
 
   const mountedRef = useRef(true);
 
@@ -183,18 +207,19 @@ export function PublisherDashboardPage() {
             </Button>
 
             <Button
-              asChild
+              type="button"
               variant="default"
-              className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm"
+              data-testid="publisher-create-course-btn"
+              onClick={() => {
+                setFormModal({
+                  isOpen: true,
+                  mode: 'create',
+                });
+              }}
+              className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm inline-flex items-center gap-2"
             >
-              <Link
-                to="/publisher/courses/new"
-                data-testid="publisher-create-course-btn"
-                className="inline-flex items-center gap-2"
-              >
-                <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>Nouveau Cours</span>
-              </Link>
+              <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Nouveau Cours</span>
             </Button>
           </div>
         </div>
@@ -376,18 +401,19 @@ export function PublisherDashboardPage() {
                   </p>
                 </div>
                 <Button
-                  asChild
+                  type="button"
                   variant="default"
-                  className="min-h-[44px] min-w-[44px] px-5"
+                  data-testid="publisher-empty-create-btn"
+                  onClick={() => {
+                    setFormModal({
+                      isOpen: true,
+                      mode: 'create',
+                    });
+                  }}
+                  className="min-h-[44px] min-w-[44px] px-5 inline-flex items-center gap-2"
                 >
-                  <Link
-                    to="/publisher/courses/new"
-                    data-testid="publisher-empty-create-btn"
-                    className="inline-flex items-center gap-2"
-                  >
-                    <Plus className="h-4 w-4" />
-                    <span>Créer un cours</span>
-                  </Link>
+                  <Plus className="h-4 w-4" />
+                  <span>Créer un cours</span>
                 </Button>
               </div>
             ) : filteredCourses.length === 0 ? (
@@ -419,12 +445,29 @@ export function PublisherDashboardPage() {
                     key={course.id}
                     course={course}
                     publishedCourseIds={publishedCourseIds}
+                    onEdit={(c) => {
+                      setFormModal({
+                        isOpen: true,
+                        mode: 'edit',
+                        initialData: {
+                          id: c.id,
+                          name: c.name,
+                          subject: c.subject,
+                        },
+                      });
+                    }}
+                    onDelete={(c) => {
+                      setRemovalModal({
+                        isOpen: true,
+                        item: { id: c.id, name: c.name },
+                      });
+                    }}
                   />
                 ))}
               </div>
             )}
 
-            {/* Pagination Controls - only rendered when filteredCourses.length > 0 and multiple pages exist */}
+            {/* Pagination Controls */}
             {filteredCourses.length > 0 &&
               (viewState.data.previous || viewState.data.next) && (
                 <div
@@ -468,6 +511,29 @@ export function PublisherDashboardPage() {
           </>
         )}
       </main>
+
+      {/* Container Creation / Edition Modal */}
+      <ContainerFormModal
+        isOpen={formModal.isOpen}
+        onClose={() => setFormModal((prev) => ({ ...prev, isOpen: false }))}
+        type="course"
+        mode={formModal.mode}
+        initialData={formModal.initialData}
+        onSuccess={() => {
+          loadCourses(currentPage);
+        }}
+      />
+
+      {/* Cascade Removal Confirmation Modal */}
+      <RemovalPreviewModal
+        isOpen={removalModal.isOpen}
+        onClose={() => setRemovalModal((prev) => ({ ...prev, isOpen: false }))}
+        type="course"
+        item={removalModal.item}
+        onSuccess={() => {
+          loadCourses(currentPage);
+        }}
+      />
     </div>
   );
 }

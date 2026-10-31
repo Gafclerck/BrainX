@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, User, BookOpen, ChevronRight } from 'lucide-react';
+import { Calendar, User, BookOpen, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import type { PublisherCourseItem, CourseStatus } from '../types';
 import { cn } from '@/lib/utils';
 
@@ -8,6 +8,8 @@ export interface PublisherCourseCardProps {
   course: PublisherCourseItem;
   publishedCourseIds?: Set<string>;
   className?: string;
+  onEdit?: (course: PublisherCourseItem) => void;
+  onDelete?: (course: PublisherCourseItem) => void;
 }
 
 /**
@@ -92,6 +94,8 @@ export function PublisherCourseCard({
   course,
   publishedCourseIds,
   className,
+  onEdit,
+  onDelete,
 }: PublisherCourseCardProps) {
   const status = computeCourseStatus(course, publishedCourseIds);
   const formattedDate = formatIsoDate(course.updated_at);
@@ -158,16 +162,43 @@ export function PublisherCourseCard({
           </div>
         </div>
 
-        {/* Action Link: Manage Course */}
-        <Link
-          to={`/publisher/courses/${course.id}`}
-          data-testid={`publisher-manage-course-${course.id}`}
-          aria-label={`Gérer le cours ${course.name}`}
-          className="inline-flex items-center justify-center gap-1 self-start sm:self-auto px-3 py-1.5 text-xs font-medium rounded-md bg-surface hover:bg-border text-foreground hover:text-primary border border-border transition-colors min-h-[44px] min-w-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          <span>Gérer</span>
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        </Link>
+        {/* Action Buttons: Edit, Delete, Manage */}
+        <div className="flex items-center gap-1.5 self-start sm:self-auto shrink-0">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(course)}
+              data-testid={`publisher-edit-course-${course.id}`}
+              aria-label={`Modifier le cours ${course.name}`}
+              className="inline-flex items-center justify-center p-2 text-foreground-muted hover:text-foreground hover:bg-surface rounded-md border border-border min-h-[44px] min-w-[44px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          )}
+
+          {onDelete && (
+            <button
+              type="button"
+              onClick={() => onDelete(course)}
+              data-testid={`publisher-delete-course-${course.id}`}
+              aria-label={`Supprimer le cours ${course.name}`}
+              className="inline-flex items-center justify-center p-2 text-destructive hover:bg-destructive/10 rounded-md border border-destructive-border/50 min-h-[44px] min-w-[44px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          )}
+
+          {/* Action Link: Manage Course */}
+          <Link
+            to={`/publisher/courses/${course.id}`}
+            data-testid={`publisher-manage-course-${course.id}`}
+            aria-label={`Gérer le cours ${course.name}`}
+            className="inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-surface hover:bg-border text-foreground hover:text-primary border border-border transition-colors min-h-[44px] min-w-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <span>Gérer</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          </Link>
+        </div>
       </div>
     </div>
   );

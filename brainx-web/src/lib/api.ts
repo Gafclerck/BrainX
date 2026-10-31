@@ -115,7 +115,9 @@ export async function apiClient<T = unknown>(
       };
     }
 
-    const retryAfter = parseRetryAfter(response.headers.get('Retry-After'));
+    const retryAfter = parseRetryAfter(
+      response.headers?.get ? response.headers.get('Retry-After') : null
+    );
 
     const PUBLIC_ROUTES = [
       '/login',

@@ -1,7 +1,7 @@
 /**
- * Data contracts for Publisher back-office curriculum management (Story FE-4.1).
- * Strictly mirrors the backend manageable() port (GET /api/v1/courses/),
- * CourseSerializer, and standard pagination envelope.
+ * Data contracts for Publisher back-office curriculum management (Story FE-4.1, FE-4.2).
+ * Strictly mirrors the backend manageable() port (GET /api/v1/courses/, modules/, chapters/),
+ * CourseSerializer, ModuleSerializer, ChapterSerializer, and standard pagination envelope.
  */
 
 export interface PublisherLastModifiedBy {
@@ -18,6 +18,24 @@ export interface PublisherCourseItem {
   position: number;
   is_deleted: boolean;
   is_published?: boolean;
+  last_modified_by: PublisherLastModifiedBy | null;
+  updated_at: string;
+}
+
+export interface PublisherModuleItem {
+  id: string;
+  name: string;
+  position: number;
+  is_deleted: boolean;
+  last_modified_by: PublisherLastModifiedBy | null;
+  updated_at: string;
+}
+
+export interface PublisherChapterItem {
+  id: string;
+  name: string;
+  position: number;
+  is_deleted: boolean;
   last_modified_by: PublisherLastModifiedBy | null;
   updated_at: string;
 }
@@ -39,3 +57,56 @@ export type PublisherViewState<T = PublisherCourseItem> =
       message: string;
       is404?: boolean;
     };
+
+export interface RemovalPreviewCounts {
+  course?: number;
+  module?: number;
+  chapter?: number;
+  lesson?: number;
+  total: number;
+}
+
+export interface RemovalPreviewItem {
+  level: 'course' | 'module' | 'chapter' | 'lesson';
+  id: string;
+  name: string;
+  position: number;
+}
+
+export interface RemovalPreviewResponse {
+  would_remove: RemovalPreviewCounts;
+  items?: RemovalPreviewItem[];
+}
+
+export type ContainerType = 'course' | 'module' | 'chapter';
+
+export interface CreateCoursePayload {
+  name: string;
+  subject: string;
+}
+
+export interface UpdateCoursePayload {
+  name?: string;
+  subject?: string;
+}
+
+export interface CreateModulePayload {
+  name: string;
+}
+
+export interface UpdateModulePayload {
+  name?: string;
+}
+
+export interface CreateChapterPayload {
+  name: string;
+}
+
+export interface UpdateChapterPayload {
+  name?: string;
+}
+
+export interface ContainerFormData {
+  name: string;
+  subject?: string;
+}

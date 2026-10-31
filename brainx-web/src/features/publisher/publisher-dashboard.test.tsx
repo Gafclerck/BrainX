@@ -628,6 +628,7 @@ describe('Story FE-4.1: Tableau de Bord Éditeur & Navigation dans l\'Arborescen
   // ---------------------------------------------------------------------------
   describe('Empty State', () => {
     it('displays empty state card with guidance and creation action when API returns results: []', async () => {
+      const user = userEvent.setup();
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
@@ -656,10 +657,13 @@ describe('Story FE-4.1: Tableau de Bord Éditeur & Navigation dans l\'Arborescen
       expect(
         screen.getByText('Aucun cours disponible dans le catalogue.')
       ).toBeInTheDocument();
-      expect(screen.getByTestId('publisher-empty-create-btn')).toHaveAttribute(
-        'href',
-        '/publisher/courses/new'
-      );
+      const emptyCreateBtn = screen.getByTestId('publisher-empty-create-btn');
+      expect(emptyCreateBtn).toBeInTheDocument();
+
+      await user.click(emptyCreateBtn);
+      await waitFor(() => {
+        expect(screen.getByTestId('container-form-modal')).toBeInTheDocument();
+      });
     });
   });
 
@@ -984,6 +988,257 @@ describe('Story FE-4.1: Tableau de Bord Éditeur & Navigation dans l\'Arborescen
       );
       expect(manageBtn.className).toContain('min-h-[44px]');
       expect(manageBtn.className).toContain('min-w-[44px]');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Dashboard Authoring Triggers (Create / Edit / Delete Course)
+  // ---------------------------------------------------------------------------
+  describe('Dashboard Authoring Triggers (Create / Edit / Delete Course)', () => {
+    it('opens create modal on clicking "Nouveau Cours" and creates course', async () => {
+      const user = userEvent.setup();
+      let createCalled = false;
+      let loadCount = 0;
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+        if (opts?.method === 'POST' && url.includes('/api/v1/courses/')) {
+          createCalled = true;
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  id: 'c-new-id',
+                  name: 'Nouveau Cours Test',
+                  subject: 'Nouvelle Matière',
+                  position: 1,
+                  is_deleted: false,
+                  is_published: false,
+                  last_modified_by: { id: 'u1', email: 'publisher@brainx.edu' },
+                  updated_at: '2026-10-31T09:00:00Z',
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (url.includes('/api/v1/courses/')) {
+          loadCount++;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  count: 1,
+                  next: null,
+                  previous: null,
+                  results: [mockCoursesList[0]],
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ results: [] })),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        });
+      });
+
+      render(
+        <MemoryRouter>
+          <PublisherDashboardPage />
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('publisher-create-course-btn')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('publisher-create-course-btn'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('container-form-modal')).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByTestId('container-name-input'), 'Nouveau Cours Test');
+      await user.type(screen.getByTestId('container-subject-input'), 'Nouvelle Matière');
+      await user.click(screen.getByTestId('container-submit-btn'));
+
+      await waitFor(() => {
+        expect(createCalled).toBe(true);
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId('container-form-modal')).not.toBeInTheDocument();
+      });
+      expect(loadCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it('opens edit modal on clicking card edit button and updates course', async () => {
+      const user = userEvent.setup();
+      let patchCalled = false;
+      const targetCourse = mockCoursesList[0];
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+        if (opts?.method === 'PATCH' && url.includes(`/api/v1/courses/${targetCourse.id}/`)) {
+          patchCalled = true;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  ...targetCourse,
+                  name: 'Algorithmique Modifiée',
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (url.includes('/api/v1/courses/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  count: 1,
+                  next: null,
+                  previous: null,
+                  results: [targetCourse],
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ results: [] })),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        });
+      });
+
+      render(
+        <MemoryRouter>
+          <PublisherDashboardPage />
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId(`publisher-edit-course-${targetCourse.id}`)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId(`publisher-edit-course-${targetCourse.id}`));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('container-form-modal')).toBeInTheDocument();
+      });
+
+      const nameInput = screen.getByTestId('container-name-input');
+      expect(nameInput).toHaveValue(targetCourse.name);
+
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Algorithmique Modifiée');
+      await user.click(screen.getByTestId('container-submit-btn'));
+
+      await waitFor(() => {
+        expect(patchCalled).toBe(true);
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId('container-form-modal')).not.toBeInTheDocument();
+      });
+    });
+
+    it('opens removal preview modal on clicking card delete button and soft-deletes course', async () => {
+      const user = userEvent.setup();
+      let deleteCalled = false;
+      const targetCourse = mockCoursesList[0];
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+        if (url.includes(`/api/v1/courses/${targetCourse.id}/removal-preview/`)) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  would_remove: { course: 1, module: 2, chapter: 3, lesson: 5, total: 11 },
+                  items: [{ level: 'course', id: targetCourse.id, name: targetCourse.name, position: 1 }],
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (opts?.method === 'DELETE' && url.includes(`/api/v1/courses/${targetCourse.id}/`)) {
+          deleteCalled = true;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  ...targetCourse,
+                  is_deleted: true,
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (url.includes('/api/v1/courses/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  count: 1,
+                  next: null,
+                  previous: null,
+                  results: [targetCourse],
+                })
+              ),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ results: [] })),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        });
+      });
+
+      render(
+        <MemoryRouter>
+          <PublisherDashboardPage />
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId(`publisher-delete-course-${targetCourse.id}`)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId(`publisher-delete-course-${targetCourse.id}`));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('removal-preview-modal')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('removal-confirm-btn')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByTestId('removal-confirm-btn'));
+
+      await waitFor(() => {
+        expect(deleteCalled).toBe(true);
+      });
+      await waitFor(() => {
+        expect(screen.queryByTestId('removal-preview-modal')).not.toBeInTheDocument();
+      });
     });
   });
 });
