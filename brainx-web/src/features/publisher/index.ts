@@ -7,4 +7,5 @@ export * from './components/removal-preview-modal';
 export * from './components/sortable-item';
 export * from './components/publisher-course-page';
 export * from './components/move-lesson-modal';
+export * from './components/resource-form-modal';
 export * from './components/publisher-lesson-page';

@@ -16,6 +16,8 @@ import type {
   UpdateLessonPayload,
   MoveLessonPayload,
   ChapterOptionItem,
+  PublisherResourceItem,
+  CreateResourcePayload,
 } from './types';
 
 /**
@@ -464,3 +466,101 @@ export async function fetchAllManageableChapters(): Promise<ChapterOptionItem[]>
 
   return chapterOptions;
 }
+
+/**
+ * Fetch manageable pedagogical resources attached to a lesson.
+ * Unwraps all paginated results to ensure exhaustive list of resources (Story FE-4.5).
+ * GET /api/v1/lessons/:lessonId/resources/?page=...
+ */
+export async function fetchManageableResources(
+  lessonId: string
+): Promise<PublisherResourceItem[]> {
+  let currentPage = 1;
+  let allResults: PublisherResourceItem[] = [];
+
+  while (true) {
+    const query = currentPage === 1 ? '' : `?page=${encodeURIComponent(currentPage)}`;
+    const res = await apiClient<
+      PaginatedPublisherResponse<PublisherResourceItem> | PublisherResourceItem[]
+    >(
+      `/api/v1/lessons/${encodeURIComponent(lessonId)}/resources/${query}`
+    );
+
+    if (Array.isArray(res)) {
+      return res;
+    }
+
+    allResults = allResults.concat(res.results || []);
+    if (!res.next) break;
+    currentPage++;
+  }
+
+  return allResults;
+}
+
+/**
+ * Create a pedagogical resource attached to a lesson.
+ * POST /api/v1/lessons/:lessonId/resources/
+ * Handles multipart/form-data for document/image, JSON for video/external_link.
+ */
+export async function createResource(
+  lessonId: string,
+  payload: CreateResourcePayload
+): Promise<PublisherResourceItem> {
+  const isFileUpload = payload.type === 'document' || payload.type === 'image';
+
+  if (isFileUpload) {
+    const formData = new FormData();
+    formData.append('type', payload.type);
+    if (payload.title !== undefined) {
+      formData.append('title', payload.title);
+    }
+    if (payload.note !== undefined && payload.note !== null) {
+      formData.append('note', payload.note);
+    }
+    if (payload.file) {
+      formData.append('file', payload.file);
+    }
+
+    return apiClient<PublisherResourceItem>(
+      `/api/v1/lessons/${encodeURIComponent(lessonId)}/resources/`,
+      {
+        method: 'POST',
+        data: formData,
+      }
+    );
+  }
+
+  const jsonPayload: Record<string, unknown> = {
+    type: payload.type,
+    title: payload.title,
+    url: payload.url,
+  };
+  if (payload.note !== undefined && payload.note !== null) {
+    jsonPayload.note = payload.note;
+  }
+
+  return apiClient<PublisherResourceItem>(
+    `/api/v1/lessons/${encodeURIComponent(lessonId)}/resources/`,
+    {
+      method: 'POST',
+      data: jsonPayload,
+    }
+  );
+}
+
+/**
+ * Soft-delete an existing resource.
+ * DELETE /api/v1/resources/:resourceId/
+ */
+export async function deleteResource(
+  resourceId: string
+): Promise<PublisherResourceItem> {
+  return apiClient<PublisherResourceItem>(
+    `/api/v1/resources/${encodeURIComponent(resourceId)}/`,
+    {
+      method: 'DELETE',
+    }
+  );
+}
+

@@ -9,13 +9,32 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  Plus,
+  Trash2,
+  ExternalLink,
+  FileText,
 } from 'lucide-react';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ResourceBadge } from '@/components/ui/resource-badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { MoveLessonModal } from './move-lesson-modal';
-import { fetchManageableLesson, updateLesson } from '../api';
-import type { PublisherLessonItem } from '../types';
+import { ResourceFormModal } from './resource-form-modal';
+import {
+  fetchManageableLesson,
+  updateLesson,
+  fetchManageableResources,
+  deleteResource,
+} from '../api';
+import type { PublisherLessonItem, PublisherResourceItem } from '../types';
 import { ApiError } from '@/lib/api';
 
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -58,6 +77,21 @@ export function PublisherLessonPage() {
   const [isMoveModalOpen, setIsMoveModalOpen] = useState<boolean>(false);
   const [moveSuccessMessage, setMoveSuccessMessage] = useState<string | null>(null);
 
+  // Pedagogical Resources State
+  const [resources, setResources] = useState<PublisherResourceItem[]>([]);
+  const [resourcesStatus, setResourcesStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [resourcesError, setResourcesError] = useState<string | null>(null);
+  const [isResourceModalOpen, setIsResourceModalOpen] = useState<boolean>(false);
+  const [resourceSuccessMessage, setResourceSuccessMessage] = useState<string | null>(null);
+
+  const currentLessonIdRef = useRef<string | undefined>(lessonId);
+
+  // Delete Resource Modal State
+  const [resourceToDelete, setResourceToDelete] = useState<PublisherResourceItem | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
+  const [isDeletingResource, setIsDeletingResource] = useState<boolean>(false);
+  const [deleteResourceError, setDeleteResourceError] = useState<string | null>(null);
+
   // Field element refs for focus on error
   const titleInputRef = useRef<HTMLInputElement>(null);
   const teacherInputRef = useRef<HTMLInputElement>(null);
@@ -97,11 +131,67 @@ export function PublisherLessonPage() {
     }
   };
 
+  const loadResourcesData = async (id: string) => {
+    setResourcesStatus('loading');
+    setResourcesError(null);
+    try {
+      const items = await fetchManageableResources(id);
+      if (!isMountedRef.current || id !== lessonId || currentLessonIdRef.current !== id) return;
+      setResources(items.filter((r) => !r.is_deleted));
+      setResourcesStatus('success');
+    } catch (err: unknown) {
+      if (!isMountedRef.current || id !== lessonId || currentLessonIdRef.current !== id) return;
+      if (err instanceof ApiError) {
+        setResourcesError(
+          err.envelope.detail ||
+            'Erreur lors de la récupération des ressources pédagogiques.'
+        );
+      } else if (err instanceof Error) {
+        setResourcesError(err.message);
+      } else {
+        setResourcesError('Erreur lors de la récupération des ressources.');
+      }
+      setResourcesStatus('error');
+    }
+  };
+
   useEffect(() => {
+    currentLessonIdRef.current = lessonId;
     if (lessonId) {
       loadLessonData(lessonId);
+      loadResourcesData(lessonId);
     }
   }, [lessonId]);
+
+  const handleConfirmDelete = async () => {
+    if (!resourceToDelete) return;
+    setIsDeletingResource(true);
+    setDeleteResourceError(null);
+    try {
+      await deleteResource(resourceToDelete.id);
+      if (!isMountedRef.current) return;
+      setResources((prev) => prev.filter((r) => r.id !== resourceToDelete.id));
+      setIsDeleteModalOpen(false);
+      setResourceToDelete(null);
+      setResourceSuccessMessage('Ressource supprimée avec succès.');
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      if (err instanceof ApiError) {
+        setDeleteResourceError(
+          err.envelope.detail ||
+            'Erreur lors de la suppression de la ressource.'
+        );
+      } else if (err instanceof Error) {
+        setDeleteResourceError(err.message);
+      } else {
+        setDeleteResourceError('Erreur inattendue lors de la suppression.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeletingResource(false);
+      }
+    }
+  };
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
@@ -750,6 +840,199 @@ export function PublisherLessonPage() {
                 </div>
               </form>
             </div>
+
+            {/* Pedagogical Resources Section (Story FE-4.5) */}
+            <div
+              data-testid="lesson-resources-section"
+              className="rounded-lg border border-border bg-card p-6 shadow-sm space-y-6"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/70 pb-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-primary" aria-hidden="true" />
+                    <h2
+                      data-testid="resources-section-heading"
+                      className="text-base sm:text-lg font-bold text-foreground"
+                    >
+                      Ressources Pédagogiques
+                    </h2>
+                  </div>
+                  <p className="text-xs text-foreground-muted">
+                    Gérez les documents, supports, vidéos et liens externes attachés à cette leçon.
+                  </p>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="default"
+                  data-testid="add-resource-btn"
+                  onClick={() => setIsResourceModalOpen(true)}
+                  className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary-hover inline-flex items-center gap-2 shrink-0 shadow-sm"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Ajouter une ressource</span>
+                </Button>
+              </div>
+
+              {/* Resource Success Banner */}
+              {resourceSuccessMessage && (
+                <div
+                  role="status"
+                  data-testid="resource-action-success"
+                  className="rounded-lg border border-[#238636] bg-[#1F3A24]/40 p-4 flex items-center justify-between gap-3 text-[#3FB950] text-sm"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="h-5 w-5 shrink-0" />
+                    <span>{resourceSuccessMessage}</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setResourceSuccessMessage(null)}
+                    className="text-xs text-[#3FB950] hover:bg-[#238636]/20"
+                  >
+                    Fermer
+                  </Button>
+                </div>
+              )}
+
+              {/* Resource Fetch Error Banner */}
+              {resourcesStatus === 'error' && (
+                <div
+                  role="alert"
+                  data-testid="resources-error-banner"
+                  className="rounded-lg border border-destructive-border bg-destructive-surface p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-destructive text-sm"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <AlertCircle className="h-5 w-5 shrink-0" />
+                    <span>
+                      {resourcesError || 'Impossible de charger les ressources pédagogiques.'}
+                    </span>
+                  </div>
+                  {lessonId && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="retry-resources-btn"
+                      onClick={() => loadResourcesData(lessonId)}
+                      className="text-xs border-destructive-border hover:bg-destructive/10 shrink-0"
+                    >
+                      Réessayer
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {/* Loading State */}
+              {resourcesStatus === 'loading' && (
+                <div
+                  data-testid="resources-loading"
+                  className="p-8 text-center space-y-3 animate-pulse"
+                >
+                  <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
+                  <p className="text-xs text-foreground-muted">
+                    Chargement des ressources pédagogiques...
+                  </p>
+                </div>
+              )}
+
+              {/* Loaded Resources State */}
+              {resourcesStatus === 'success' && (
+                <>
+                  {resources.length === 0 ? (
+                    <div
+                      data-testid="resources-empty-state"
+                      className="rounded-md border border-dashed border-border p-8 text-center space-y-2 bg-surface/30"
+                    >
+                      <p className="text-sm font-medium text-foreground">
+                        Aucune ressource pédagogique attachée à cette leçon.
+                      </p>
+                      <p className="text-xs text-foreground-muted">
+                        Cliquez sur &quot;Ajouter une ressource&quot; pour attacher un document PDF, une image ou une adresse web.
+                      </p>
+                    </div>
+                  ) : (
+                    <div data-testid="resources-list" className="space-y-3">
+                      {resources.map((res) => (
+                        <div
+                          key={res.id}
+                          data-testid={`resource-card-${res.id}`}
+                          className="rounded-lg border border-border bg-surface p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors hover:border-border-focus"
+                        >
+                          <div
+                            data-testid={`resource-item-${res.id}`}
+                            className="space-y-1.5 min-w-0 flex-1"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <ResourceBadge type={res.type} />
+                              <h3
+                                data-testid={`resource-title-${res.id}`}
+                                className="text-sm font-bold text-foreground break-words"
+                              >
+                                {res.title}
+                              </h3>
+                            </div>
+
+                            {res.note && (
+                              <p
+                                data-testid={`resource-note-${res.id}`}
+                                className="text-xs text-foreground-muted break-words line-clamp-2"
+                              >
+                                {res.note}
+                              </p>
+                            )}
+
+                            {res.url && /^https?:\/\//i.test(res.url) && (
+                              <div className="pt-0.5">
+                                <a
+                                  href={res.url}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
+                                  data-testid={`resource-link-${res.id}`}
+                                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-mono break-all focus:outline-none focus-visible:ring-1 focus-visible:ring-primary rounded"
+                                >
+                                  <span>{res.url}</span>
+                                  <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                </a>
+                              </div>
+                            )}
+
+                            {(res.type === 'document' || res.type === 'image') && !res.url && (
+                              <div
+                                data-testid={`resource-file-indicator-${res.id}`}
+                                className="text-[11px] text-foreground-muted flex items-center gap-1 font-mono pt-0.5"
+                              >
+                                <span>Fichier joint ({res.type === 'document' ? 'PDF' : 'Image'})</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center sm:self-center shrink-0">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              data-testid={`delete-resource-btn-${res.id}`}
+                              onClick={() => {
+                                setResourceToDelete(res);
+                                setDeleteResourceError(null);
+                                setIsDeleteModalOpen(true);
+                              }}
+                              className="min-h-[44px] min-w-[44px] text-xs font-medium text-destructive hover:bg-destructive/10 hover:text-destructive inline-flex items-center gap-1.5"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span>Supprimer</span>
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
       </main>
@@ -764,6 +1047,102 @@ export function PublisherLessonPage() {
           onSuccess={handleMoveSuccess}
         />
       )}
+
+      {/* Resource Form Modal (Story FE-4.5) */}
+      {lesson && (
+        <ResourceFormModal
+          isOpen={isResourceModalOpen}
+          onClose={() => setIsResourceModalOpen(false)}
+          lessonId={lesson.id}
+          onSuccess={(newResource) => {
+            setResources((prev) => [...prev, newResource]);
+            setResourcesStatus('success');
+            setResourcesError(null);
+            setResourceSuccessMessage('Ressource ajoutée avec succès.');
+          }}
+        />
+      )}
+
+      {/* Delete Resource Confirmation Dialog (Story FE-4.5) */}
+      <Dialog
+        open={isDeleteModalOpen}
+        onOpenChange={(open) => {
+          if (!isDeletingResource) {
+            setIsDeleteModalOpen(open);
+            if (!open) {
+              setResourceToDelete(null);
+              setDeleteResourceError(null);
+            }
+          }
+        }}
+      >
+        <DialogContent
+          data-testid="delete-resource-modal"
+          className="w-[calc(100%-2rem)] sm:max-w-md bg-card border-border text-foreground p-6 rounded-lg shadow-xl"
+        >
+          <DialogHeader className="space-y-2">
+            <DialogTitle
+              data-testid="delete-resource-modal-title"
+              className="text-lg sm:text-xl font-bold text-foreground flex items-center gap-2"
+            >
+              <Trash2 className="h-5 w-5 text-destructive" aria-hidden="true" />
+              <span>Supprimer la ressource</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm text-foreground-muted">
+              Êtes-vous sûr de vouloir supprimer la ressource{' '}
+              <span className="font-semibold text-foreground">
+                &quot;{resourceToDelete?.title}&quot;
+              </span>{' '}
+              ? Cette action retirera la ressource de la leçon.
+            </DialogDescription>
+          </DialogHeader>
+
+          {deleteResourceError && (
+            <div
+              role="alert"
+              data-testid="resource-delete-error"
+              className="rounded-lg border border-destructive-border bg-destructive-surface p-3 flex items-start gap-2.5 text-xs text-destructive my-2"
+            >
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+              <span className="flex-1 leading-relaxed">{deleteResourceError}</span>
+            </div>
+          )}
+
+          <DialogFooter className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2.5 pt-4 border-t border-border">
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="cancel-delete-resource-btn"
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setResourceToDelete(null);
+                setDeleteResourceError(null);
+              }}
+              disabled={isDeletingResource}
+              className="min-h-[44px] min-w-[44px] border-border text-xs sm:text-sm"
+            >
+              Annuler
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              data-testid="confirm-delete-resource-btn"
+              onClick={handleConfirmDelete}
+              disabled={isDeletingResource}
+              className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium inline-flex items-center justify-center gap-2"
+            >
+              {isDeletingResource ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Suppression...</span>
+                </>
+              ) : (
+                <span>Supprimer</span>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

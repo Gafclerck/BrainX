@@ -158,3 +158,29 @@ export interface ChapterOptionItem {
   courseName?: string;
   moduleName?: string;
 }
+
+export type PublisherResourceType =
+  | 'document'
+  | 'image'
+  | 'video'
+  | 'external_link';
+
+export interface PublisherResourceItem {
+  id: string;
+  type: PublisherResourceType;
+  title: string;
+  note?: string | null;
+  url?: string | null;
+  is_deleted: boolean;
+  last_modified_by: PublisherLastModifiedBy | null;
+  updated_at: string;
+}
+
+export interface CreateResourcePayload {
+  type: PublisherResourceType;
+  title: string;
+  note?: string | null;
+  url?: string | null;
+  file?: File | Blob | null;
+}
+

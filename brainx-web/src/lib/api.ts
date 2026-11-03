@@ -75,8 +75,14 @@ export async function apiClient<T = unknown>(
 
   let body: BodyInit | undefined;
   if (data !== undefined) {
-    requestHeaders['Content-Type'] = 'application/json';
-    body = JSON.stringify(data);
+    if (typeof FormData !== 'undefined' && data instanceof FormData) {
+      body = data;
+      delete requestHeaders['Content-Type'];
+      delete requestHeaders['content-type'];
+    } else {
+      requestHeaders['Content-Type'] = 'application/json';
+      body = JSON.stringify(data);
+    }
   }
 
   const baseUrl = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/$/, '');
