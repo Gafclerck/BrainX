@@ -42,6 +42,7 @@ export interface PublisherChapterItem {
 
 export interface PublisherLessonItem {
   id: string;
+  chapter_id?: string;
   title: string;
   description?: string | null;
   keywords?: string | null;
@@ -132,4 +133,28 @@ export interface UpdateChapterPayload {
 export interface ContainerFormData {
   name: string;
   subject?: string;
+}
+
+export interface UpdateLessonPayload {
+  title?: string;
+  description?: string | null;
+  teacher?: string;
+  course_date?: string;
+  keywords?: string | null;
+}
+
+export interface MoveLessonPayload {
+  new_chapter_id?: string;
+  chapter?: string;
+}
+
+export interface ChapterOptionItem {
+  id: string;
+  name: string;
+  course_name: string;
+  module_name: string;
+  course_id?: string;
+  module_id?: string;
+  courseName?: string;
+  moduleName?: string;
 }

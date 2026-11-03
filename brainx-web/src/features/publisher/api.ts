@@ -13,6 +13,9 @@ import type {
   CreateChapterPayload,
   UpdateChapterPayload,
   ReorderPayload,
+  UpdateLessonPayload,
+  MoveLessonPayload,
+  ChapterOptionItem,
 } from './types';
 
 /**
@@ -355,4 +358,109 @@ export async function fetchManageableLessons(
     previous: null,
     results: allResults,
   };
+}
+
+/**
+ * Fetch a single manageable lesson by ID.
+ * GET /api/v1/lessons/:lessonId/
+ */
+export async function fetchManageableLesson(
+  lessonId: string
+): Promise<PublisherLessonItem> {
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/lessons/${encodeURIComponent(lessonId)}/`
+  );
+}
+
+/**
+ * Update metadata on an existing Lesson.
+ * PATCH /api/v1/lessons/:lessonId/
+ */
+export async function updateLesson(
+  lessonId: string,
+  payload: UpdateLessonPayload
+): Promise<PublisherLessonItem> {
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/lessons/${encodeURIComponent(lessonId)}/`,
+    {
+      method: 'PATCH',
+      data: payload,
+    }
+  );
+}
+
+/**
+ * Move a lesson to another destination chapter.
+ * POST /api/v1/lessons/:lessonId/move/
+ */
+export async function moveLesson(
+  lessonId: string,
+  target: string | MoveLessonPayload
+): Promise<PublisherLessonItem> {
+  const data = typeof target === 'string'
+    ? { new_chapter_id: target }
+    : target;
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/lessons/${encodeURIComponent(lessonId)}/move/`,
+    {
+      method: 'POST',
+      data,
+    }
+  );
+}
+
+/**
+ * Fetch all chapters across courses and modules for the chapter move modal.
+ * Returns hierarchical option list: [Course] > [Module] > [Chapter].
+ */
+export async function fetchAllManageableChapters(): Promise<ChapterOptionItem[]> {
+  const chapterOptions: ChapterOptionItem[] = [];
+  let coursePage = 1;
+  const allCourses: PublisherCourseItem[] = [];
+  while (true) {
+    const res = await fetchManageableCourses(coursePage);
+    allCourses.push(...(res.results || []));
+    if (!res.next) break;
+    coursePage++;
+  }
+
+  for (const course of allCourses) {
+    if (course.is_deleted) continue;
+    let modPage = 1;
+    const allModules: PublisherModuleItem[] = [];
+    while (true) {
+      const res = await fetchManageableModules(course.id, modPage);
+      allModules.push(...(res.results || []));
+      if (!res.next) break;
+      modPage++;
+    }
+
+    for (const mod of allModules) {
+      if (mod.is_deleted) continue;
+      let chapPage = 1;
+      const allChapters: PublisherChapterItem[] = [];
+      while (true) {
+        const res = await fetchManageableChapters(mod.id, chapPage);
+        allChapters.push(...(res.results || []));
+        if (!res.next) break;
+        chapPage++;
+      }
+
+      for (const chap of allChapters) {
+        if (chap.is_deleted) continue;
+        chapterOptions.push({
+          id: chap.id,
+          name: chap.name,
+          course_name: course.name,
+          module_name: mod.name,
+          courseName: course.name,
+          moduleName: mod.name,
+          course_id: course.id,
+          module_id: mod.id,
+        });
+      }
+    }
+  }
+
+  return chapterOptions;
 }

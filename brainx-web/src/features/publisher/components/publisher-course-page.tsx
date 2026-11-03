@@ -1748,8 +1748,24 @@ export function PublisherCoursePage() {
                                                   </span>
                                                 )}
                                               </div>
-                                              <div className="text-[11px] text-foreground-muted font-mono shrink-0">
-                                                {lesson.teacher}
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                <div className="text-[11px] text-foreground-muted font-mono shrink-0">
+                                                  {lesson.teacher}
+                                                </div>
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  data-testid={`edit-lesson-btn-${lesson.id}`}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    navigate(`/publisher/lessons/${lesson.id}`);
+                                                  }}
+                                                  aria-label={`Modifier la leçon ${lesson.title}`}
+                                                  className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-foreground-muted hover:text-foreground inline-flex items-center justify-center"
+                                                >
+                                                  <Pencil className="h-3.5 w-3.5" />
+                                                </Button>
                                               </div>
                                             </SortableItem>
                                           ))}

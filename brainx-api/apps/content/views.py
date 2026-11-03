@@ -700,6 +700,24 @@ class LessonUpdateView(APIView):
     permission_classes = [IsAuthenticated, IsPublisher]
 
     @extend_schema(
+        responses={
+            200: LessonSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        """Retrieve a Lesson by its UUID through the manageable port."""
+        lesson = get_object_or_404(
+            Lesson.objects.manageable().select_related(
+                'last_modified_by', 'chapter'
+            ),
+            pk=lesson_id,
+        )
+        return Response(LessonSerializer(lesson).data)
+
+    @extend_schema(
         request=LessonSerializer,
         responses={
             200: LessonSerializer,
@@ -862,17 +880,7 @@ class LessonMoveView(APIView):
 
     permission_classes = [IsAuthenticated, IsPublisher]
 
-    @extend_schema(
-        request=LessonMoveSerializer,
-        responses={
-            200: LessonSerializer,
-            400: ENVELOPE_RESPONSE,
-            401: ENVELOPE_RESPONSE,
-            403: ENVELOPE_RESPONSE,
-            404: ENVELOPE_RESPONSE,
-        },
-    )
-    def patch(self, request, lesson_id):
+    def _move(self, request, lesson_id):
         lesson = get_object_or_404(Lesson, pk=lesson_id)
         serializer = LessonMoveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -886,6 +894,32 @@ class LessonMoveView(APIView):
             actor=request.user, lesson=lesson, target_chapter=target
         )
         return Response(LessonSerializer(moved).data)
+
+    @extend_schema(
+        request=LessonMoveSerializer,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, lesson_id):
+        return self._move(request, lesson_id)
+
+    @extend_schema(
+        request=LessonMoveSerializer,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, lesson_id):
+        return self._move(request, lesson_id)
 
 
 class LessonPublishView(APIView):

@@ -236,11 +236,13 @@ class LessonSerializer(serializers.ModelSerializer):
     """
 
     last_modified_by = LastModifiedBySerializer(read_only=True)
+    chapter_id = serializers.UUIDField(read_only=True)
 
     class Meta:
         model = Lesson
         fields = (
             'id',
+            'chapter_id',
             'title',
             'description',
             'keywords',
@@ -254,6 +256,7 @@ class LessonSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             'id',
+            'chapter_id',
             'position',
             'is_deleted',
             'is_published',
@@ -480,7 +483,17 @@ class ReorderSerializer(serializers.Serializer):
 class LessonMoveSerializer(serializers.Serializer):
     """The request contract of a Lesson move: the target Chapter."""
 
-    chapter = serializers.UUIDField()
+    chapter = serializers.UUIDField(required=False)
+    new_chapter_id = serializers.UUIDField(required=False)
+
+    def validate(self, attrs):
+        chapter = attrs.get('chapter') or attrs.get('new_chapter_id')
+        if not chapter:
+            raise serializers.ValidationError(
+                {'chapter': ['This field is required.']}
+            )
+        attrs['chapter'] = chapter
+        return attrs
 
 
 class ResourceRetrievalSerializer(serializers.Serializer):

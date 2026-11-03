@@ -139,6 +139,33 @@ class EditTests(UpdateEndpointTestCase):
         )
 
 
+class LessonGetTests(UpdateEndpointTestCase):
+    def test_a_publisher_retrieves_a_lesson_by_uuid(self):
+        url = self.update_url(Lesson, self.lesson.pk)
+        response = self.publisher_client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['id'], str(self.lesson.pk))
+        self.assertEqual(body['chapter_id'], str(self.chapter.pk))
+        self.assertEqual(body['title'], self.lesson.title)
+        self.assertEqual(body['teacher'], self.lesson.teacher)
+        self.assertEqual(body['course_date'], str(self.lesson.course_date))
+
+    def test_an_unauthenticated_or_student_caller_cannot_get_lesson(self):
+        url = self.update_url(Lesson, self.lesson.pk)
+        anonymous_res = self.anonymous_client.get(url)
+        assert_envelope(self, anonymous_res, 'unauthenticated', 401)
+
+        student_res = self.student_client.get(url)
+        assert_envelope(self, student_res, 'permission_denied', 403)
+
+    def test_a_nonexistent_lesson_get_is_a_404(self):
+        url = self.update_url(Lesson, uuid.uuid4())
+        response = self.publisher_client.get(url)
+        assert_envelope(self, response, 'not_found', 404)
+
+
 class RenameTests(UpdateEndpointTestCase):
     def test_renaming_a_module_keeps_its_uuid_and_parent(self):
         original_id = self.module.pk
