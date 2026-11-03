@@ -18,6 +18,8 @@ import type {
   ChapterOptionItem,
   PublisherResourceItem,
   CreateResourcePayload,
+  TrashItem,
+  RestoredItemResult,
 } from './types';
 
 /**
@@ -563,4 +565,242 @@ export async function deleteResource(
     }
   );
 }
+
+/**
+ * Restore a soft-deleted course.
+ * POST /api/v1/courses/:id/restore/
+ */
+export async function restoreCourse(id: string): Promise<PublisherCourseItem> {
+  return apiClient<PublisherCourseItem>(
+    `/api/v1/courses/${encodeURIComponent(id)}/restore/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Restore a soft-deleted module.
+ * POST /api/v1/modules/:id/restore/
+ */
+export async function restoreModule(id: string): Promise<PublisherModuleItem> {
+  return apiClient<PublisherModuleItem>(
+    `/api/v1/modules/${encodeURIComponent(id)}/restore/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Restore a soft-deleted chapter.
+ * POST /api/v1/chapters/:id/restore/
+ */
+export async function restoreChapter(id: string): Promise<PublisherChapterItem> {
+  return apiClient<PublisherChapterItem>(
+    `/api/v1/chapters/${encodeURIComponent(id)}/restore/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Restore a soft-deleted lesson.
+ * POST /api/v1/lessons/:id/restore/
+ */
+export async function restoreLesson(id: string): Promise<PublisherLessonItem> {
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/lessons/${encodeURIComponent(id)}/restore/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Restore a soft-deleted resource.
+ * POST /api/v1/resources/:id/restore/
+ */
+export async function restoreResource(
+  id: string
+): Promise<PublisherResourceItem> {
+  return apiClient<PublisherResourceItem>(
+    `/api/v1/resources/${encodeURIComponent(id)}/restore/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Restore a trash item by dispatching to the type-specific restore API function.
+ */
+export async function restoreTrashItem(item: TrashItem): Promise<RestoredItemResult> {
+  if (!item || !item.type) {
+    throw new Error('Élément invalide pour la restauration');
+  }
+
+  switch (item.type) {
+    case 'course':
+      return restoreCourse(item.id);
+    case 'module':
+      return restoreModule(item.id);
+    case 'chapter':
+      return restoreChapter(item.id);
+    case 'lesson':
+      return restoreLesson(item.id);
+    case 'resource':
+      return restoreResource(item.id);
+    default:
+      throw new Error(`Type d'élément inconnu: ${(item as TrashItem).type}`);
+  }
+}
+
+/**
+ * Aggregates all soft-deleted items (is_deleted === true) across courses, modules,
+ * chapters, lessons, and resources by traversing the backend manageable() hierarchy.
+ * Results are sorted descending by deleted_at (updated_at).
+ * Individual branch failures are handled gracefully without aborting the entire scrape.
+ */
+export async function fetchTrashItems(): Promise<TrashItem[]> {
+  const trashItems: TrashItem[] = [];
+
+  // 1. Fetch all courses (both active and deleted)
+  let coursePage = 1;
+  const allCourses: PublisherCourseItem[] = [];
+  while (true) {
+    const res = await fetchManageableCourses(coursePage);
+    allCourses.push(...(res.results || []));
+    if (!res.next) break;
+    coursePage++;
+  }
+
+  for (const course of allCourses) {
+    if (course.is_deleted) {
+      trashItems.push({
+        id: course.id,
+        type: 'course',
+        name: course.name,
+        deleted_at: course.updated_at,
+        last_modified_by: course.last_modified_by,
+        parent_path: undefined,
+      });
+    }
+
+    // 2. Fetch all modules under this course
+    let modPage = 1;
+    const allModules: PublisherModuleItem[] = [];
+    while (true) {
+      try {
+        const res = await fetchManageableModules(course.id, modPage);
+        allModules.push(...(res.results || []));
+        if (!res.next) break;
+        modPage++;
+      } catch {
+        break;
+      }
+    }
+
+    for (const mod of allModules) {
+      const modulePath = `[Cours] ${course.name}`;
+      if (mod.is_deleted) {
+        trashItems.push({
+          id: mod.id,
+          type: 'module',
+          name: mod.name,
+          deleted_at: mod.updated_at,
+          last_modified_by: mod.last_modified_by,
+          parent_path: modulePath,
+        });
+      }
+
+      // 3. Fetch all chapters under this module
+      let chapPage = 1;
+      const allChapters: PublisherChapterItem[] = [];
+      while (true) {
+        try {
+          const res = await fetchManageableChapters(mod.id, chapPage);
+          allChapters.push(...(res.results || []));
+          if (!res.next) break;
+          chapPage++;
+        } catch {
+          break;
+        }
+      }
+
+      for (const chap of allChapters) {
+        const chapterPath = `[Cours] ${course.name} > [Module] ${mod.name}`;
+        if (chap.is_deleted) {
+          trashItems.push({
+            id: chap.id,
+            type: 'chapter',
+            name: chap.name,
+            deleted_at: chap.updated_at,
+            last_modified_by: chap.last_modified_by,
+            parent_path: chapterPath,
+          });
+        }
+
+        // 4. Fetch all lessons under this chapter
+        let allLessons: PublisherLessonItem[] = [];
+        try {
+          const lessonsRes = await fetchManageableLessons(chap.id);
+          allLessons = lessonsRes.results || [];
+        } catch {
+          allLessons = [];
+        }
+
+        for (const lesson of allLessons) {
+          const lessonPath = `[Cours] ${course.name} > [Module] ${mod.name} > [Chapitre] ${chap.name}`;
+          if (lesson.is_deleted) {
+            trashItems.push({
+              id: lesson.id,
+              type: 'lesson',
+              name: lesson.title,
+              deleted_at: lesson.updated_at,
+              last_modified_by: lesson.last_modified_by,
+              parent_path: lessonPath,
+            });
+          }
+
+          // 5. Fetch all resources under this lesson
+          let allResources: PublisherResourceItem[] = [];
+          try {
+            allResources = await fetchManageableResources(lesson.id);
+          } catch {
+            allResources = [];
+          }
+
+          for (const resource of allResources) {
+            const resourcePath = `[Cours] ${course.name} > [Module] ${mod.name} > [Chapitre] ${chap.name} > [Leçon] ${lesson.title}`;
+            if (resource.is_deleted) {
+              trashItems.push({
+                id: resource.id,
+                type: 'resource',
+                name: resource.title,
+                deleted_at: resource.updated_at,
+                last_modified_by: resource.last_modified_by,
+                parent_path: resourcePath,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Sort descending by deleted_at (most recently deleted first)
+  trashItems.sort((a, b) => {
+    const timeA = new Date(a.deleted_at).getTime();
+    const timeB = new Date(b.deleted_at).getTime();
+    if (!isNaN(timeA) && !isNaN(timeB)) {
+      return timeB - timeA;
+    }
+    return (b.deleted_at || '').localeCompare(a.deleted_at || '');
+  });
+
+  return trashItems;
+}
+
 

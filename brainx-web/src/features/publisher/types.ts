@@ -184,3 +184,24 @@ export interface CreateResourcePayload {
   file?: File | Blob | null;
 }
 
+export type TrashItemType = 'course' | 'module' | 'chapter' | 'lesson' | 'resource';
+
+export type TrashFilterType = 'all' | TrashItemType;
+
+export type RestoredItemResult =
+  | PublisherCourseItem
+  | PublisherModuleItem
+  | PublisherChapterItem
+  | PublisherLessonItem
+  | PublisherResourceItem;
+
+export interface TrashItem {
+  id: string;
+  type: TrashItemType;
+  name: string;
+  deleted_at: string;
+  last_modified_by: PublisherLastModifiedBy | null;
+  parent_path?: string;
+}
+
+

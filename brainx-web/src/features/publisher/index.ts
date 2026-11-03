@@ -9,3 +9,5 @@ export * from './components/publisher-course-page';
 export * from './components/move-lesson-modal';
 export * from './components/resource-form-modal';
 export * from './components/publisher-lesson-page';
+export * from './components/restore-confirmation-modal';
+export * from './components/publisher-trash-page';
