@@ -414,6 +414,36 @@ export async function moveLesson(
 }
 
 /**
+ * Publish an existing Lesson.
+ * POST /api/v1/lessons/:lessonId/publish/
+ */
+export async function publishLesson(
+  lessonId: string
+): Promise<PublisherLessonItem> {
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/lessons/${encodeURIComponent(lessonId)}/publish/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Unpublish an existing Lesson.
+ * POST /api/v1/lessons/:lessonId/unpublish/
+ */
+export async function unpublishLesson(
+  lessonId: string
+): Promise<PublisherLessonItem> {
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/lessons/${encodeURIComponent(lessonId)}/unpublish/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
  * Fetch all chapters across courses and modules for the chapter move modal.
  * Returns hierarchical option list: [Course] > [Module] > [Chapter].
  */

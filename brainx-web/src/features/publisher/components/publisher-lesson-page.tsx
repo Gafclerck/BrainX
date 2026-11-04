@@ -13,6 +13,8 @@ import {
   Trash2,
   ExternalLink,
   FileText,
+  Globe,
+  EyeOff,
 } from 'lucide-react';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
@@ -33,11 +35,21 @@ import {
   updateLesson,
   fetchManageableResources,
   deleteResource,
+  publishLesson,
+  unpublishLesson,
 } from '../api';
 import type { PublisherLessonItem, PublisherResourceItem } from '../types';
 import { ApiError } from '@/lib/api';
+import { useAuthStore } from '@/features/auth/auth-store';
 
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+const FIELD_LABELS: Record<string, string> = {
+  title: 'Titre',
+  description: 'Description',
+  teacher: 'Enseignant',
+  course_date: 'Date du cours',
+};
 
 function isValidIsoDate(dateStr: string): boolean {
   if (!ISO_DATE_REGEX.test(dateStr)) return false;
@@ -72,6 +84,20 @@ export function PublisherLessonPage() {
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  // Publisher auth
+  const isPublisher = useAuthStore((state) => state.isPublisher);
+
+  // Publication State
+  const [isPublishing, setIsPublishing] = useState<boolean>(false);
+  const [publishSuccessMessage, setPublishSuccessMessage] = useState<string | null>(null);
+  const [publishSuccessType, setPublishSuccessType] = useState<'publish' | 'unpublish' | null>(null);
+  const [publishError, setPublishError] = useState<{
+    message: string;
+    fields?: string[];
+    action: 'publish' | 'unpublish';
+    canRetry?: boolean;
+  } | null>(null);
 
   // Move Modal State
   const [isMoveModalOpen, setIsMoveModalOpen] = useState<boolean>(false);
@@ -242,12 +268,15 @@ export function PublisherLessonPage() {
     setSuccessMessage(null);
     setGeneralError(null);
     setMoveSuccessMessage(null);
+    setPublishSuccessMessage(null);
+    setPublishSuccessType(null);
+    setPublishError(null);
 
     if (!validateForm()) {
       return;
     }
 
-    if (!lessonId) return;
+    if (!lessonId || isSaving || isPublishing) return;
 
     setIsSaving(true);
     try {
@@ -330,6 +359,160 @@ export function PublisherLessonPage() {
       'La leçon a été déplacée avec succès vers le chapitre sélectionné.'
     );
     setSuccessMessage(null);
+  };
+
+  const handlePublish = async () => {
+    if (!lessonId || isPublishing || isSaving || !isPublisher) return;
+    setIsPublishing(true);
+    setPublishSuccessMessage(null);
+    setPublishSuccessType(null);
+    setPublishError(null);
+    setGeneralError(null);
+    setSuccessMessage(null);
+    setMoveSuccessMessage(null);
+
+    try {
+      // If form inputs differ from saved lesson, validate and update lesson first
+      const hasUnsavedChanges = Boolean(
+        lesson && (
+          title.trim() !== (lesson.title || '').trim() ||
+          teacher.trim() !== (lesson.teacher || '').trim() ||
+          courseDate.trim() !== (lesson.course_date || '').trim() ||
+          description.trim() !== (lesson.description || '').trim() ||
+          keywords.trim() !== (lesson.keywords || '').trim()
+        )
+      );
+
+      if (hasUnsavedChanges) {
+        if (!validateForm()) {
+          setIsPublishing(false);
+          return;
+        }
+
+        const saved = await updateLesson(lessonId, {
+          title: title.trim(),
+          teacher: teacher.trim(),
+          course_date: courseDate.trim(),
+          description: description.trim(),
+          keywords: keywords.trim(),
+        });
+        if (!isMountedRef.current) return;
+        setLesson(saved);
+        setTitle(saved.title || '');
+        setTeacher(saved.teacher || '');
+        setCourseDate(saved.course_date || '');
+        setDescription(saved.description || '');
+        setKeywords(saved.keywords || '');
+      }
+
+      const updated = await publishLesson(lessonId);
+      if (!isMountedRef.current) return;
+      setLesson(updated);
+      setFieldErrors({});
+      setPublishSuccessType('publish');
+      setPublishSuccessMessage('La leçon a été publiée avec succès.');
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      if (err instanceof ApiError) {
+        const is400 = err.envelope.status === 400;
+        const errors = err.envelope.errors || {};
+        const newFieldErrors: Record<string, string> = {};
+        const missingLabels: string[] = [];
+
+        for (const [key, msgs] of Object.entries(errors)) {
+          const firstMsg = Array.isArray(msgs) ? msgs[0] : String(msgs);
+          newFieldErrors[key] = firstMsg;
+          missingLabels.push(FIELD_LABELS[key] || key);
+        }
+
+        setFieldErrors(newFieldErrors);
+
+        if (newFieldErrors.title) {
+          titleInputRef.current?.focus();
+        } else if (newFieldErrors.teacher) {
+          teacherInputRef.current?.focus();
+        } else if (newFieldErrors.course_date) {
+          dateInputRef.current?.focus();
+        } else if (newFieldErrors.description) {
+          descInputRef.current?.focus();
+        }
+
+        const summaryText =
+          missingLabels.length > 0
+            ? `Impossible de publier la leçon : les champs suivants sont obligatoires : ${missingLabels.join(', ')}.`
+            : err.envelope.detail || 'Impossible de publier la leçon.';
+
+        setPublishError({
+          message: summaryText,
+          fields: missingLabels,
+          action: 'publish',
+          canRetry: !is400,
+        });
+      } else if (err instanceof Error) {
+        setPublishError({
+          message: err.message,
+          action: 'publish',
+          canRetry: true,
+        });
+      } else {
+        setPublishError({
+          message: 'Erreur inattendue lors de la publication.',
+          action: 'publish',
+          canRetry: true,
+        });
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsPublishing(false);
+      }
+    }
+  };
+
+  const handleUnpublish = async () => {
+    if (!lessonId || isPublishing || isSaving || !isPublisher) return;
+    setIsPublishing(true);
+    setPublishSuccessMessage(null);
+    setPublishSuccessType(null);
+    setPublishError(null);
+    setGeneralError(null);
+    setSuccessMessage(null);
+    setMoveSuccessMessage(null);
+
+    try {
+      const updated = await unpublishLesson(lessonId);
+      if (!isMountedRef.current) return;
+      setLesson(updated);
+      setPublishSuccessType('unpublish');
+      setPublishSuccessMessage('La leçon a été dépubliée avec succès.');
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      if (err instanceof ApiError) {
+        const is400 = err.envelope.status === 400;
+        setPublishError({
+          message:
+            err.envelope.detail ||
+            'Erreur lors de la dépublication de la leçon.',
+          action: 'unpublish',
+          canRetry: !is400,
+        });
+      } else if (err instanceof Error) {
+        setPublishError({
+          message: err.message,
+          action: 'unpublish',
+          canRetry: true,
+        });
+      } else {
+        setPublishError({
+          message: 'Erreur inattendue lors de la dépublication.',
+          action: 'unpublish',
+          canRetry: true,
+        });
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsPublishing(false);
+      }
+    }
   };
 
   return (
@@ -480,10 +663,45 @@ export function PublisherLessonPage() {
 
               {/* Actions Header Bar */}
               <div className="flex flex-wrap items-center gap-2.5">
+                {lesson.is_published ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    data-testid="unpublish-lesson-btn"
+                    disabled={isPublishing || isSaving || !isPublisher}
+                    onClick={handleUnpublish}
+                    className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium border-border inline-flex items-center gap-2 hover:bg-surface text-amber-500 hover:text-amber-400"
+                  >
+                    {isPublishing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <EyeOff className="h-4 w-4" />
+                    )}
+                    <span>Dépublier la leçon</span>
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="default"
+                    data-testid="publish-lesson-btn"
+                    disabled={isPublishing || isSaving || !isPublisher}
+                    onClick={handlePublish}
+                    className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm inline-flex items-center gap-2"
+                  >
+                    {isPublishing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Globe className="h-4 w-4" />
+                    )}
+                    <span>Publier la leçon</span>
+                  </Button>
+                )}
+
                 <Button
                   type="button"
                   variant="outline"
                   data-testid="move-lesson-btn"
+                  disabled={isPublishing || isSaving}
                   onClick={() => setIsMoveModalOpen(true)}
                   className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium border-border inline-flex items-center gap-2 hover:bg-surface"
                 >
@@ -494,6 +712,102 @@ export function PublisherLessonPage() {
             </div>
 
             {/* Notification Banners */}
+            {publishSuccessMessage && publishSuccessType === 'publish' && (
+              <div
+                role="status"
+                data-testid="publish-success-alert"
+                className="rounded-lg border border-[#238636] bg-[#1F3A24]/40 p-4 flex items-center justify-between gap-3 text-[#3FB950] text-sm"
+              >
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="h-5 w-5 shrink-0" />
+                  <span>{publishSuccessMessage}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPublishSuccessMessage(null)}
+                  className="text-xs text-[#3FB950] hover:bg-[#238636]/20"
+                >
+                  Fermer
+                </Button>
+              </div>
+            )}
+
+            {publishSuccessMessage && publishSuccessType === 'unpublish' && (
+              <div
+                role="status"
+                data-testid="unpublish-success-alert"
+                className="rounded-lg border border-[#238636] bg-[#1F3A24]/40 p-4 flex items-center justify-between gap-3 text-[#3FB950] text-sm"
+              >
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="h-5 w-5 shrink-0" />
+                  <span>{publishSuccessMessage}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPublishSuccessMessage(null)}
+                  className="text-xs text-[#3FB950] hover:bg-[#238636]/20"
+                >
+                  Fermer
+                </Button>
+              </div>
+            )}
+
+            {publishError && (
+              <div
+                role="alert"
+                data-testid="publish-error-alert"
+                className="rounded-lg border border-destructive-border bg-destructive-surface p-4 space-y-2 text-destructive text-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-medium" data-testid="publish-error-message">
+                        {publishError.message}
+                      </p>
+                      {publishError.fields && publishError.fields.length > 0 && (
+                        <ul className="list-disc list-inside text-xs space-y-0.5">
+                          {publishError.fields.map((field) => (
+                            <li key={field}>{field}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {publishError.canRetry && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isPublishing || isSaving}
+                        onClick={
+                          publishError.action === 'publish'
+                            ? handlePublish
+                            : handleUnpublish
+                        }
+                        className="text-xs border-destructive-border hover:bg-destructive/10"
+                      >
+                        Réessayer
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPublishError(null)}
+                      className="text-xs text-destructive hover:bg-destructive/10"
+                    >
+                      Fermer
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {successMessage && (
               <div
                 role="status"
@@ -822,7 +1136,7 @@ export function PublisherLessonPage() {
                     type="submit"
                     variant="default"
                     data-testid="save-lesson-btn"
-                    disabled={isSaving}
+                    disabled={isSaving || isPublishing}
                     className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm inline-flex items-center justify-center gap-2"
                   >
                     {isSaving ? (

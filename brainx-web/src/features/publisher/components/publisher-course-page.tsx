@@ -12,6 +12,9 @@ import {
   AlertCircle,
   RefreshCw,
   FolderPlus,
+  Globe,
+  EyeOff,
+  Loader2,
 } from 'lucide-react';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
@@ -34,6 +37,8 @@ import {
   reorderModules,
   reorderChapters,
   reorderLessons,
+  publishLesson,
+  unpublishLesson,
 } from '../api';
 import type {
   PublisherCourseItem,
@@ -43,6 +48,7 @@ import type {
   ContainerType,
 } from '../types';
 import { ApiError } from '@/lib/api';
+import { useAuthStore } from '@/features/auth/auth-store';
 
 export function PublisherCoursePage() {
   const { courseId } = useParams<{ courseId: string }>();
@@ -115,6 +121,10 @@ export function PublisherCoursePage() {
   } | null>(null);
   const lessonsSnapshotRef = useRef<Record<string, PublisherLessonItem[]>>({});
   const draggedLessonIdRef = useRef<string | null>(null);
+
+  // Lesson Publication State & Auth
+  const isPublisher = useAuthStore((state) => state.isPublisher);
+  const [publishingLessonId, setPublishingLessonId] = useState<string | null>(null);
 
   // Modals state
   const [formModal, setFormModal] = useState<{
@@ -940,6 +950,107 @@ export function PublisherCoursePage() {
     draggedLessonIdRef.current = null;
   };
 
+  // ================= LESSON PUBLISH / UNPUBLISH =================
+
+  const handlePublishLesson = async (lesson: PublisherLessonItem) => {
+    if (!isPublisher || publishingLessonId) return;
+    setPublishingLessonId(lesson.id);
+    setCourseError(null);
+    try {
+      const updated = await publishLesson(lesson.id);
+      if (!mountedRef.current) return;
+      setLessonsByChapter((prev) => {
+        const next = { ...prev };
+        for (const [chapId, state] of Object.entries(next)) {
+          if (state.lessons.some((l) => l.id === lesson.id)) {
+            next[chapId] = {
+              ...state,
+              lessons: state.lessons.map((l) =>
+                l.id === lesson.id ? updated : l
+              ),
+            };
+            break;
+          }
+        }
+        return next;
+      });
+      setLiveAnnouncement(`La leçon "${lesson.title}" a été publiée avec succès.`);
+    } catch (err: unknown) {
+      if (!mountedRef.current) return;
+      if (err instanceof ApiError) {
+        if (err.envelope?.errors && Object.keys(err.envelope.errors).length > 0) {
+          const FIELD_LABELS: Record<string, string> = {
+            title: 'Titre',
+            description: 'Description',
+            teacher: 'Enseignant',
+            course_date: 'Date du cours',
+          };
+          const missing = Object.keys(err.envelope.errors)
+            .map((k) => FIELD_LABELS[k] || k)
+            .join(', ');
+          setCourseError(
+            `Impossible de publier la leçon "${lesson.title}" : les champs suivants sont obligatoires : ${missing}.`
+          );
+        } else {
+          setCourseError(
+            err.envelope?.detail ||
+              `Erreur lors de la publication de la leçon "${lesson.title}".`
+          );
+        }
+      } else if (err instanceof Error) {
+        setCourseError(err.message);
+      } else {
+        setCourseError(`Erreur inattendue lors de la publication de la leçon.`);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setPublishingLessonId(null);
+      }
+    }
+  };
+
+  const handleUnpublishLesson = async (lesson: PublisherLessonItem) => {
+    if (!isPublisher || publishingLessonId) return;
+    setPublishingLessonId(lesson.id);
+    setCourseError(null);
+    try {
+      const updated = await unpublishLesson(lesson.id);
+      if (!mountedRef.current) return;
+      setLessonsByChapter((prev) => {
+        const next = { ...prev };
+        for (const [chapId, state] of Object.entries(next)) {
+          if (state.lessons.some((l) => l.id === lesson.id)) {
+            next[chapId] = {
+              ...state,
+              lessons: state.lessons.map((l) =>
+                l.id === lesson.id ? updated : l
+              ),
+            };
+            break;
+          }
+        }
+        return next;
+      });
+      setLiveAnnouncement(`La leçon "${lesson.title}" a été dépubliée avec succès.`);
+    } catch (err: unknown) {
+      if (!mountedRef.current) return;
+      if (err instanceof ApiError) {
+        setCourseError(
+          err.envelope?.detail ||
+            `Erreur lors de la dépublication de la leçon "${lesson.title}".`
+        );
+      } else if (err instanceof Error) {
+        setCourseError(err.message);
+      } else {
+        setCourseError(`Erreur inattendue lors de la dépublication de la leçon.`);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setPublishingLessonId(null);
+      }
+    }
+  };
+
   // ================= MODAL HANDLERS =================
 
   const openCreateModule = () => {
@@ -1143,6 +1254,30 @@ export function PublisherCoursePage() {
               variant="ghost"
               size="sm"
               onClick={() => setReorderError(null)}
+              aria-label="Fermer l'alerte d'erreur"
+              className="text-xs text-destructive hover:bg-destructive/10"
+            >
+              Fermer
+            </Button>
+          </div>
+        )}
+
+        {/* Course Error Alert */}
+        {courseError && courseStatus === 'success' && (
+          <div
+            role="alert"
+            data-testid="course-error-alert"
+            className="rounded-lg border border-destructive-border bg-destructive-surface p-4 flex items-center justify-between gap-3 text-destructive text-sm"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span data-testid="course-error-message">{courseError}</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setCourseError(null)}
               aria-label="Fermer l'alerte d'erreur"
               className="text-xs text-destructive hover:bg-destructive/10"
             >
@@ -1739,12 +1874,19 @@ export function PublisherCoursePage() {
                                                     Supprimé
                                                   </span>
                                                 )}
-                                                {lesson.is_published && (
+                                                {lesson.is_published ? (
                                                   <span
                                                     data-testid={`lesson-published-badge-${lesson.id}`}
                                                     className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#1F3A24] text-[#3FB950] border border-[#238636] shrink-0"
                                                   >
                                                     Publié
+                                                  </span>
+                                                ) : (
+                                                  <span
+                                                    data-testid={`lesson-draft-badge-${lesson.id}`}
+                                                    className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#2C1F03] text-[#D29922] border border-[#9E6A03] shrink-0"
+                                                  >
+                                                    Brouillon
                                                   </span>
                                                 )}
                                               </div>
@@ -1752,6 +1894,47 @@ export function PublisherCoursePage() {
                                                 <div className="text-[11px] text-foreground-muted font-mono shrink-0">
                                                   {lesson.teacher}
                                                 </div>
+                                                {lesson.is_published ? (
+                                                  <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    data-testid={`unpublish-lesson-btn-${lesson.id}`}
+                                                    disabled={Boolean(publishingLessonId) || !isPublisher}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleUnpublishLesson(lesson);
+                                                    }}
+                                                    aria-label={`Dépublier la leçon ${lesson.title}`}
+                                                    className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-amber-500 hover:text-amber-400 inline-flex items-center justify-center"
+                                                  >
+                                                    {publishingLessonId === lesson.id ? (
+                                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                    ) : (
+                                                      <EyeOff className="h-3.5 w-3.5" />
+                                                    )}
+                                                  </Button>
+                                                ) : (
+                                                  <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    data-testid={`publish-lesson-btn-${lesson.id}`}
+                                                    disabled={Boolean(publishingLessonId) || !isPublisher}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handlePublishLesson(lesson);
+                                                    }}
+                                                    aria-label={`Publier la leçon ${lesson.title}`}
+                                                    className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-[#3FB950] hover:text-[#2ea043] inline-flex items-center justify-center"
+                                                  >
+                                                    {publishingLessonId === lesson.id ? (
+                                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                    ) : (
+                                                      <Globe className="h-3.5 w-3.5" />
+                                                    )}
+                                                  </Button>
+                                                )}
                                                 <Button
                                                   type="button"
                                                   variant="ghost"
