@@ -204,4 +204,25 @@ export interface TrashItem {
   parent_path?: string;
 }
 
+export interface BlockedLessonPreviewItem {
+  id: string;
+  missing: string[];
+  title?: string;
+}
+
+export interface BulkPublishPreviewResponse {
+  would_change: number;
+  blocked: BlockedLessonPreviewItem[];
+}
+
+export interface BulkPublishModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  type: 'module' | 'chapter';
+  item: {
+    id: string;
+    name: string;
+  } | null;
+}
+
 

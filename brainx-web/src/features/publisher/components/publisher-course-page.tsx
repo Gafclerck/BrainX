@@ -20,6 +20,7 @@ import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { ContainerFormModal } from './container-form-modal';
 import { RemovalPreviewModal } from './removal-preview-modal';
+import { BulkPublishModal } from './bulk-publish-modal';
 import {
   SortableItem,
   SortableHandle,
@@ -152,6 +153,11 @@ export function PublisherCoursePage() {
     type: 'course',
     item: null,
   });
+
+  const [bulkPublishTarget, setBulkPublishTarget] = useState<{
+    type: 'module' | 'chapter';
+    item: { id: string; name: string };
+  } | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1535,6 +1541,26 @@ export function PublisherCoursePage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          data-testid={`bulk-publish-module-btn-${mod.id}`}
+                          disabled={!isPublisher || Boolean(mod.is_deleted)}
+                          onClick={() => {
+                            if (!isPublisher || mod.is_deleted) return;
+                            setBulkPublishTarget({
+                              type: 'module',
+                              item: { id: mod.id, name: mod.name },
+                            });
+                          }}
+                          aria-label={`Publier le module en masse ${mod.name}`}
+                          className="min-h-[44px] min-w-[44px] text-xs font-medium border-border inline-flex items-center gap-1.5"
+                        >
+                          <Globe className="h-3.5 w-3.5" />
+                          <span className="sr-only sm:not-sr-only">Publier en masse</span>
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
                           data-testid={`create-chapter-btn-${mod.id}`}
                           onClick={() => openCreateChapter(mod.id)}
                           className="min-h-[44px] min-w-[44px] text-xs font-medium border-border inline-flex items-center gap-1.5"
@@ -1705,6 +1731,27 @@ export function PublisherCoursePage() {
                                   </div>
 
                                   <div className="flex items-center gap-1.5 shrink-0">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      data-testid={`bulk-publish-chapter-btn-${chap.id}`}
+                                      disabled={!isPublisher || Boolean(chap.is_deleted)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!isPublisher || chap.is_deleted) return;
+                                        setBulkPublishTarget({
+                                          type: 'chapter',
+                                          item: { id: chap.id, name: chap.name },
+                                        });
+                                      }}
+                                      aria-label={`Publier le chapitre en masse ${chap.name}`}
+                                      className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-foreground-muted hover:text-foreground inline-flex items-center gap-1"
+                                    >
+                                      <Globe className="h-3.5 w-3.5" />
+                                      <span className="sr-only sm:not-sr-only">Publier en masse</span>
+                                    </Button>
+
                                     <Button
                                       type="button"
                                       variant="ghost"
@@ -1988,6 +2035,14 @@ export function PublisherCoursePage() {
         type={removalModal.type}
         item={removalModal.item}
         onSuccess={handleRemovalSuccess}
+      />
+
+      {/* Bulk Publish Inspection Modal */}
+      <BulkPublishModal
+        isOpen={Boolean(bulkPublishTarget)}
+        onClose={() => setBulkPublishTarget(null)}
+        type={bulkPublishTarget?.type ?? 'module'}
+        item={bulkPublishTarget?.item ?? null}
       />
     </div>
   );

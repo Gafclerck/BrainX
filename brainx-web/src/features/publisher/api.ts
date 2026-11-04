@@ -20,6 +20,8 @@ import type {
   CreateResourcePayload,
   TrashItem,
   RestoredItemResult,
+  BlockedLessonPreviewItem,
+  BulkPublishPreviewResponse,
 } from './types';
 
 /**
@@ -196,6 +198,18 @@ export async function fetchModuleRemovalPreview(
 }
 
 /**
+ * Preview bulk publish impact on all descendant lessons in a Module.
+ * GET /api/v1/modules/:id/bulk-publish/preview/
+ */
+export async function fetchModuleBulkPublishPreview(
+  moduleId: string
+): Promise<BulkPublishPreviewResponse> {
+  return apiClient<BulkPublishPreviewResponse>(
+    `/api/v1/modules/${encodeURIComponent(moduleId)}/bulk-publish/preview/`
+  );
+}
+
+/**
  * Fetch manageable chapters under a Module.
  * GET /api/v1/modules/:moduleId/chapters/?page=...
  */
@@ -265,6 +279,18 @@ export async function fetchChapterRemovalPreview(
 ): Promise<RemovalPreviewResponse> {
   return apiClient<RemovalPreviewResponse>(
     `/api/v1/chapters/${encodeURIComponent(id)}/removal-preview/`
+  );
+}
+
+/**
+ * Preview bulk publish impact on all descendant lessons in a Chapter.
+ * GET /api/v1/chapters/:id/bulk-publish/preview/
+ */
+export async function fetchChapterBulkPublishPreview(
+  chapterId: string
+): Promise<BulkPublishPreviewResponse> {
+  return apiClient<BulkPublishPreviewResponse>(
+    `/api/v1/chapters/${encodeURIComponent(chapterId)}/bulk-publish/preview/`
   );
 }
 

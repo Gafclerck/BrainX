@@ -11,3 +11,4 @@ export * from './components/resource-form-modal';
 export * from './components/publisher-lesson-page';
 export * from './components/restore-confirmation-modal';
 export * from './components/publisher-trash-page';
+export * from './components/bulk-publish-modal';
