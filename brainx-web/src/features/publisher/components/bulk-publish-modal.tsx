@@ -19,6 +19,8 @@ import type {
 } from '../types';
 import { ApiError } from '@/lib/api';
 import { useAuthStore } from '@/features/auth/auth-store';
+import { BlockedLessonsTable } from './blocked-lessons-table';
+import { QuickEditLessonDrawer } from './quick-edit-lesson-drawer';
 
 export function BulkPublishModal({
   isOpen,
@@ -30,6 +32,7 @@ export function BulkPublishModal({
   const [preview, setPreview] = useState<BulkPublishPreviewResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
@@ -76,12 +79,13 @@ export function BulkPublishModal({
       setPreview(null);
       setError(null);
       setIsLoading(false);
+      setEditingLessonId(null);
     }
   }, [isOpen, item?.id, loadPreview]);
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
-      if (isLoading) return;
+      if (isLoading || !!editingLessonId) return;
       onClose();
     }
   };
@@ -105,12 +109,12 @@ export function BulkPublishModal({
       {item && (
         <DialogContent
           data-testid="bulk-publish-modal"
-          className="sm:max-w-lg bg-surface border-border text-foreground"
+          className="sm:max-w-xl bg-surface border-border text-foreground"
           onPointerDownOutside={(e) => {
-            if (isLoading) e.preventDefault();
+            if (isLoading || !!editingLessonId) e.preventDefault();
           }}
           onEscapeKeyDown={(e) => {
-            if (isLoading) e.preventDefault();
+            if (isLoading || !!editingLessonId) e.preventDefault();
           }}
         >
           <DialogHeader>
@@ -188,14 +192,22 @@ export function BulkPublishModal({
                       </div>
                     )}
 
-                    {/* Blocked Lessons Summary */}
+                    {/* Blocked Lessons Summary & Table */}
                     {blockedCount > 0 && (
-                      <div
-                        data-testid="bulk-publish-blocked-summary"
-                        className="flex items-center gap-3 rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-warning"
-                      >
-                        <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
-                        <span className="font-semibold">{blockedSummaryText}</span>
+                      <div className="space-y-3">
+                        <div
+                          data-testid="bulk-publish-blocked-summary"
+                          className="flex items-center gap-3 rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-warning"
+                        >
+                          <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
+                          <span className="font-semibold">{blockedSummaryText}</span>
+                        </div>
+
+                        <BlockedLessonsTable
+                          blocked={preview.blocked}
+                          onEditLesson={(lessonId) => setEditingLessonId(lessonId)}
+                          isUpdating={isLoading}
+                        />
                       </div>
                     )}
                   </div>
@@ -210,7 +222,7 @@ export function BulkPublishModal({
               variant="outline"
               data-testid="bulk-publish-close-btn"
               onClick={onClose}
-              disabled={isLoading}
+              disabled={isLoading || !!editingLessonId}
               className="min-h-[44px] min-w-[44px]"
             >
               Fermer
@@ -218,6 +230,17 @@ export function BulkPublishModal({
           </DialogFooter>
         </DialogContent>
       )}
+
+      {/* Quick Edit Lesson Drawer for fast in-place resolution */}
+      <QuickEditLessonDrawer
+        isOpen={!!editingLessonId}
+        lessonId={editingLessonId}
+        onClose={() => setEditingLessonId(null)}
+        onSaveSuccess={() => {
+          setEditingLessonId(null);
+          loadPreview();
+        }}
+      />
     </Dialog>
   );
 }

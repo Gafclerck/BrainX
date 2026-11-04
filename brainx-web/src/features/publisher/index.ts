@@ -12,3 +12,5 @@ export * from './components/publisher-lesson-page';
 export * from './components/restore-confirmation-modal';
 export * from './components/publisher-trash-page';
 export * from './components/bulk-publish-modal';
+export * from './components/blocked-lessons-table';
+export * from './components/quick-edit-lesson-drawer';

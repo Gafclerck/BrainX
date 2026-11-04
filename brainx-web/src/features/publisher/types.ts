@@ -208,6 +208,22 @@ export interface BlockedLessonPreviewItem {
   id: string;
   missing: string[];
   title?: string;
+  teacher?: string;
+  course_date?: string;
+  description?: string | null;
+}
+
+export interface BlockedLessonsTableProps {
+  blocked: BlockedLessonPreviewItem[];
+  onEditLesson: (lessonId: string) => void;
+  isUpdating?: boolean;
+}
+
+export interface QuickEditLessonDrawerProps {
+  isOpen: boolean;
+  onClose: () => void;
+  lessonId: string | null;
+  onSaveSuccess: () => void;
 }
 
 export interface BulkPublishPreviewResponse {
