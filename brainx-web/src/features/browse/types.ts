@@ -42,6 +42,18 @@ export interface BrowseLessonDetailItem extends BrowseLessonItem {
   description: string;
 }
 
+export interface LessonNavNeighbor {
+  id: string;
+  title: string;
+  chapter_name: string;
+}
+
+export interface LessonNavigationResponse {
+  current_lesson_id: string;
+  previous_lesson: LessonNavNeighbor | null;
+  next_lesson: LessonNavNeighbor | null;
+}
+
 export interface BrowseLessonFilterParams {
   course_date_from?: string;
   course_date_to?: string;

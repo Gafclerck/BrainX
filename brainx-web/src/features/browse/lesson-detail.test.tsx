@@ -7,7 +7,7 @@ import { useSearchSessionStore } from '@/features/search';
 import { LessonDetailPage, extractHeadings } from './lesson-detail-page';
 import { StudentLayout } from '@/components/layout/student-layout';
 import { AppRoutes } from '@/routes';
-import type { BrowseLessonDetailItem } from './types';
+import type { BrowseLessonDetailItem, LessonNavigationResponse } from './types';
 
 describe('Story FE-2.4: Vue Détaillée d\'une Leçon & Fil d\'Ariane Contextuel', () => {
   const originalFetch = globalThis.fetch;
@@ -161,6 +161,14 @@ Pour finir, testez vos connaissances.
       let sessionHeader = '';
 
       globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (typeof url === 'string' && url.includes('/navigation/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ previous_lesson: null, next_lesson: null })),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
         sessionHeader = (init?.headers as Record<string, string>)?.['X-Search-Session-Id'] || '';
         if (url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
           return Promise.resolve({
@@ -483,7 +491,9 @@ Contenu pédagogique sain.`,
       expect(h2Anchor1.className).toContain('min-h-[44px]');
 
       // Simulate IntersectionObserver detecting section 2 entering viewport
-      expect(observerCallback).not.toBeNull();
+      await waitFor(() => {
+        expect(observerCallback).not.toBeNull();
+      });
       act(() => {
         if (observerCallback) {
           observerCallback([
@@ -648,7 +658,15 @@ Contenu pédagogique sain.`,
 
     it('renders retryable alert on 500 or network failure and allows retry', async () => {
       let callCount = 0;
-      globalThis.fetch = vi.fn().mockImplementation(() => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/navigation/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ previous_lesson: null, next_lesson: null })),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
         callCount++;
         if (callCount === 1) {
           return Promise.resolve({
@@ -1085,6 +1103,221 @@ Contenu pédagogique sain.`,
         String(call[0]).includes('/api/v1/search/sessions/answer/')
       );
       expect(answerCalls.length).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Course Lesson Navigation (Previous / Next)
+  // ---------------------------------------------------------------------------
+  describe('Course Lesson Navigation (Previous / Next)', () => {
+    it('renders both previous and next buttons when both neighbors exist', async () => {
+      const mockNavigation: LessonNavigationResponse = {
+        current_lesson_id: 'lesson-uuid-1',
+        previous_lesson: {
+          id: 'lesson-uuid-prev',
+          title: 'Introduction et Architecture',
+          chapter_name: 'Fondations',
+        },
+        next_lesson: {
+          id: 'lesson-uuid-next',
+          title: 'Contrôleurs et Services',
+          chapter_name: 'Approfondissement',
+        },
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/navigation/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockNavigation)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (typeof url === 'string' && url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-navigation-footer')).toBeInTheDocument();
+      });
+
+      const prevBtn = screen.getByTestId('lesson-prev-button');
+      expect(prevBtn).toHaveAttribute('href', '/lessons/lesson-uuid-prev');
+      expect(prevBtn).toHaveTextContent('Leçon précédente');
+      expect(prevBtn).toHaveTextContent('Introduction et Architecture');
+      expect(prevBtn).toHaveTextContent('Fondations');
+
+      const nextBtn = screen.getByTestId('lesson-next-button');
+      expect(nextBtn).toHaveAttribute('href', '/lessons/lesson-uuid-next');
+      expect(nextBtn).toHaveTextContent('Leçon suivante');
+      expect(nextBtn).toHaveTextContent('Contrôleurs et Services');
+      expect(nextBtn).toHaveTextContent('Approfondissement');
+    });
+
+    it('renders only next button on the first lesson of a course', async () => {
+      const mockNavigation: LessonNavigationResponse = {
+        current_lesson_id: 'lesson-uuid-1',
+        previous_lesson: null,
+        next_lesson: {
+          id: 'lesson-uuid-next',
+          title: 'Deuxième Leçon',
+          chapter_name: 'Chapitre 1',
+        },
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/navigation/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockNavigation)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (typeof url === 'string' && url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-navigation-footer')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('lesson-prev-button')).toBeNull();
+      const nextBtn = screen.getByTestId('lesson-next-button');
+      expect(nextBtn).toBeInTheDocument();
+      expect(nextBtn).toHaveAttribute('href', '/lessons/lesson-uuid-next');
+      expect(nextBtn).toHaveTextContent('Deuxième Leçon');
+    });
+
+    it('renders only previous button on the last lesson of a course', async () => {
+      const mockNavigation: LessonNavigationResponse = {
+        current_lesson_id: 'lesson-uuid-1',
+        previous_lesson: {
+          id: 'lesson-uuid-prev',
+          title: 'Avant-dernière Leçon',
+          chapter_name: 'Chapitre Final',
+        },
+        next_lesson: null,
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/navigation/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockNavigation)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (typeof url === 'string' && url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-navigation-footer')).toBeInTheDocument();
+      });
+
+      const prevBtn = screen.getByTestId('lesson-prev-button');
+      expect(prevBtn).toBeInTheDocument();
+      expect(prevBtn).toHaveAttribute('href', '/lessons/lesson-uuid-prev');
+      expect(prevBtn).toHaveTextContent('Avant-dernière Leçon');
+      expect(screen.queryByTestId('lesson-next-button')).toBeNull();
+    });
+
+    it('does not render navigation footer when course has only one lesson or navigation fails', async () => {
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === 'string' && url.includes('/navigation/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ previous_lesson: null, next_lesson: null })),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        if (typeof url === 'string' && url.includes('/api/v1/browse/lessons/lesson-uuid-1/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify(mockLessonDetail)),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/lessons/lesson-uuid-1']}>
+          <Routes>
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('lesson-title')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('lesson-navigation-footer')).toBeNull();
+      });
     });
   });
 });

@@ -4,6 +4,7 @@ import type {
   BrowseLessonItem,
   BrowseLessonDetailItem,
   BrowseLessonFilterParams,
+  LessonNavigationResponse,
   PaginatedBrowseResponse,
   ResourceRetrievalResponse,
 } from './types';
@@ -105,6 +106,18 @@ export async function fetchResourceRetrieval(
   const query = disposition ? `?disposition=${encodeURIComponent(disposition)}` : '';
   return apiClient<ResourceRetrievalResponse>(
     `/api/v1/resources/${encodeURIComponent(resourceId)}/retrieval/${query}`
+  );
+}
+
+/**
+ * Fetch the navigation links (previous & next lesson) in the same course.
+ * Queries GET /api/v1/browse/lessons/:lessonId/navigation/
+ */
+export async function fetchLessonNavigation(
+  lessonId: string
+): Promise<LessonNavigationResponse> {
+  return apiClient<LessonNavigationResponse>(
+    `/api/v1/browse/lessons/${encodeURIComponent(lessonId)}/navigation/`
   );
 }
 

@@ -11,8 +11,8 @@ import {
   RefreshCw,
   BookOpen,
 } from 'lucide-react';
-import { fetchLessonDetail } from './api';
-import type { BrowseLessonDetailItem } from './types';
+import { fetchLessonDetail, fetchLessonNavigation } from './api';
+import type { BrowseLessonDetailItem, LessonNavigationResponse } from './types';
 import { LessonToc } from './lesson-toc';
 import { useToc, type TocItem } from '@/components/layout/toc-context';
 import { ApiError } from '@/lib/api';
@@ -107,6 +107,7 @@ export function LessonDetailPage() {
   const { setToc } = useToc();
 
   const [state, setState] = useState<LessonDetailState>({ status: 'loading' });
+  const [navigation, setNavigation] = useState<LessonNavigationResponse | null>(null);
   const contentRef = useRef<HTMLElement>(null);
 
   const searchSessionId =
@@ -206,6 +207,30 @@ export function LessonDetailPage() {
       setToc(null);
     };
   }, [state.status, headings, setToc]);
+
+  // Fetch previous & next lesson navigation for current course
+  useEffect(() => {
+    let isCancelled = false;
+    if (state.status === 'success' && lessonId) {
+      fetchLessonNavigation(lessonId)
+        .then((nav) => {
+          if (!isCancelled) {
+            setNavigation(nav);
+          }
+        })
+        .catch(() => {
+          if (!isCancelled) {
+            setNavigation(null);
+          }
+        });
+    } else {
+      setNavigation(null);
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [state.status, lessonId]);
 
   // Stamp matching IDs on rendered heading DOM elements for intersection observer synchronization
   useEffect(() => {
@@ -382,7 +407,7 @@ export function LessonDetailPage() {
 
       {/* Success State */}
       {state.status === 'success' && (
-        <div>
+        <div className="w-full min-w-0 space-y-6">
           {/* Desktop Breadcrumbs: [Cours] > [Module] > [Chapitre] > [Leçon] */}
           <nav
             aria-label="Fil d'Ariane"
@@ -515,6 +540,68 @@ export function LessonDetailPage() {
                 ))}
               </div>
             </section>
+          )}
+
+          {/* Bottom Course Navigation (Previous / Next) */}
+          {navigation && (navigation.previous_lesson || navigation.next_lesson) && (
+            <nav
+              aria-label="Navigation du cours"
+              data-testid="lesson-navigation-footer"
+              className="mt-12 pt-8 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-4 w-full min-w-0"
+            >
+              {navigation.previous_lesson ? (
+                <Link
+                  to={`/lessons/${navigation.previous_lesson.id}`}
+                  data-testid="lesson-prev-button"
+                  className="group flex items-center gap-3 p-3.5 sm:p-4 rounded-xl border border-border bg-card hover:bg-surface hover:border-primary/50 transition-all text-left min-h-[60px] min-w-0 w-full overflow-hidden shadow-sm"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background group-hover:border-primary/50 group-hover:bg-primary/10 transition-colors">
+                    <ChevronLeft className="h-5 w-5 text-foreground-muted group-hover:text-primary transition-transform group-hover:-translate-x-0.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[11px] uppercase tracking-wider text-foreground-muted font-medium">
+                      Leçon précédente
+                    </span>
+                    <span className="block text-sm font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                      {navigation.previous_lesson.title}
+                    </span>
+                    <span className="block text-xs text-foreground-subtle truncate">
+                      {navigation.previous_lesson.chapter_name}
+                    </span>
+                  </div>
+                </Link>
+              ) : (
+                <div className="hidden sm:block" />
+              )}
+
+              {navigation.next_lesson ? (
+                <Link
+                  to={`/lessons/${navigation.next_lesson.id}`}
+                  data-testid="lesson-next-button"
+                  className={cn(
+                    'group flex items-center justify-end text-right gap-3 p-3.5 sm:p-4 rounded-xl border border-border bg-card hover:bg-surface hover:border-primary/50 transition-all min-h-[60px] min-w-0 w-full overflow-hidden shadow-sm',
+                    !navigation.previous_lesson && 'sm:col-start-2'
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-[11px] uppercase tracking-wider text-foreground-muted font-medium">
+                      Leçon suivante
+                    </span>
+                    <span className="block text-sm font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                      {navigation.next_lesson.title}
+                    </span>
+                    <span className="block text-xs text-foreground-subtle truncate">
+                      {navigation.next_lesson.chapter_name}
+                    </span>
+                  </div>
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background group-hover:border-primary/50 group-hover:bg-primary/10 transition-colors">
+                    <ChevronRight className="h-5 w-5 text-foreground-muted group-hover:text-primary transition-transform group-hover:translate-x-0.5" />
+                  </div>
+                </Link>
+              ) : (
+                <div className="hidden sm:block" />
+              )}
+            </nav>
           )}
 
           {/* Discreet Floating Search Feedback Banner (Story FE-3.4) */}

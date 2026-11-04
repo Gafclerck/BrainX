@@ -35,27 +35,22 @@ export function ChapterLessonsPage() {
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   const prevChapterIdRef = useRef<string | undefined>(chapterId);
-  const lastFetchedRef = useRef<{
-    chapterId: string;
-    filters: BrowseLessonFilterParams;
-    page: number;
-  } | null>(null);
 
   const loadLessons = useCallback(
     async (
       cid: string,
       filters: BrowseLessonFilterParams,
       page: number,
-      isMountedRef: { current: boolean }
+      checkCancelled?: () => boolean
     ) => {
       setViewState({ status: 'loading' });
       try {
         const response = await fetchChapterLessons(cid, filters, page);
-        if (isMountedRef.current) {
+        if (!checkCancelled || !checkCancelled()) {
           setViewState({ status: 'success', data: response });
         }
       } catch (err: unknown) {
-        if (!isMountedRef.current) return;
+        if (checkCancelled && checkCancelled()) return;
 
         const isApiError = err instanceof ApiError;
         const status = isApiError
@@ -92,7 +87,7 @@ export function ChapterLessonsPage() {
   );
 
   useEffect(() => {
-    const isMountedRef = { current: true };
+    let isCancelled = false;
 
     if (!chapterId) {
       setViewState({
@@ -101,7 +96,7 @@ export function ChapterLessonsPage() {
         message: 'Contenu introuvable ou non publié.',
       });
       return () => {
-        isMountedRef.current = false;
+        isCancelled = true;
       };
     }
 
@@ -118,29 +113,10 @@ export function ChapterLessonsPage() {
       targetPage = 1;
     }
 
-    const isSameQuery =
-      lastFetchedRef.current !== null &&
-      lastFetchedRef.current.chapterId === chapterId &&
-      lastFetchedRef.current.page === targetPage &&
-      lastFetchedRef.current.filters.course_date_from === targetFilters.course_date_from &&
-      lastFetchedRef.current.filters.course_date_to === targetFilters.course_date_to;
-
-    if (isSameQuery) {
-      return () => {
-        isMountedRef.current = false;
-      };
-    }
-
-    lastFetchedRef.current = {
-      chapterId,
-      filters: targetFilters,
-      page: targetPage,
-    };
-
-    loadLessons(chapterId, targetFilters, targetPage, isMountedRef);
+    loadLessons(chapterId, targetFilters, targetPage, () => isCancelled);
 
     return () => {
-      isMountedRef.current = false;
+      isCancelled = true;
     };
   }, [chapterId, appliedFilters, currentPage, loadLessons]);
 
@@ -165,8 +141,7 @@ export function ChapterLessonsPage() {
 
   const handleRetry = () => {
     if (chapterId) {
-      lastFetchedRef.current = null;
-      loadLessons(chapterId, appliedFilters, currentPage, { current: true });
+      loadLessons(chapterId, appliedFilters, currentPage);
     }
   };
 
