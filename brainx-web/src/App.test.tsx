@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import { useAuthStore } from '@/features/auth/auth-store';
 
@@ -7,6 +7,7 @@ describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
   beforeEach(() => {
     useAuthStore.getState().clearAuth();
   });
+
   it('renders root view with dark-only theme classes and no light theme', () => {
     render(<App />);
     const rootElement = screen.getByTestId('app-root');
@@ -26,89 +27,39 @@ describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
     // Root container must enforce 360px floor and hidden horizontal document overflow
     expect(rootElement.className).toContain('min-w-[360px]');
     expect(rootElement.className).toContain('overflow-x-hidden');
-
-    // Code block container must isolate its own horizontal scrolling
-    const codeScroll = screen.getByTestId('code-block-scroll');
-    expect(codeScroll.className).toContain('overflow-x-auto');
   });
 
   it('renders UI primitive: Card containers with dark surface and border tokens', () => {
     render(<App />);
-    const cardButtons = screen.getByTestId('card-buttons');
+    const cardMulticlass = screen.getByTestId('card-feature-multiclass');
 
-    expect(cardButtons).toBeInTheDocument();
-    expect(cardButtons.className).toContain('bg-card');
-    expect(cardButtons.className).toContain('border-border');
-    expect(cardButtons.className).toContain('rounded-lg');
+    expect(cardMulticlass).toBeInTheDocument();
+    expect(cardMulticlass.className).toContain('bg-card');
+    expect(cardMulticlass.className).toContain('border-border');
+    expect(cardMulticlass.className).toContain('rounded-lg');
   });
 
-  it('renders UI primitive: Button variants with accessible dark styling', () => {
+  it('renders upcoming roadmap sections (multi-classes, interactions, blogs, formations, emails, quiz)', () => {
     render(<App />);
-    const primaryButton = screen.getByRole('button', { name: /primary/i });
-    const secondaryButton = screen.getByRole('button', { name: /secondary/i });
-    const destructiveButton = screen.getByRole('button', { name: /destructive/i });
 
-    expect(primaryButton).toBeInTheDocument();
-    expect(primaryButton.className).toContain('bg-primary');
-    expect(primaryButton.className).toContain('text-primary-foreground');
-
-    expect(secondaryButton).toBeInTheDocument();
-    expect(secondaryButton.className).toContain('bg-surface');
-
-    expect(destructiveButton).toBeInTheDocument();
-    expect(destructiveButton.className).toContain('bg-destructive');
-    expect(destructiveButton.className).toContain('text-destructive-foreground');
+    expect(screen.getByTestId('section-upcoming-features')).toBeInTheDocument();
+    expect(screen.getByTestId('card-feature-multiclass')).toHaveTextContent(/multi-classe/i);
+    expect(screen.getByTestId('card-feature-interactions')).toHaveTextContent(/interactions/i);
+    expect(screen.getByTestId('card-feature-blogs')).toHaveTextContent(/blogs/i);
+    expect(screen.getByTestId('card-feature-formations')).toHaveTextContent(/formations/i);
+    expect(screen.getByTestId('card-feature-emails')).toHaveTextContent(/emails/i);
+    expect(screen.getByTestId('card-feature-evaluations')).toHaveTextContent(/quiz/i);
   });
 
-  it('renders UI primitive: Radix Dialog modal and handles open/close cycle', async () => {
+  it('renders navigation action buttons with accessible dark styling', () => {
     render(<App />);
-    const openTrigger = screen.getByRole('button', { name: /ouvrir la modale/i });
-    expect(openTrigger).toBeInTheDocument();
+    const loginLink = screen.getByTestId('nav-login-link');
+    const registerLink = screen.getByTestId('nav-register-link');
 
-    // Dialog content should not be visible before clicking trigger
-    expect(screen.queryByTestId('test-dialog-content')).not.toBeInTheDocument();
-
-    // Click trigger to open modal
-    fireEvent.click(openTrigger);
-
-    // Dialog should now be mounted
-    const dialogContent = await screen.findByTestId('test-dialog-content');
-    expect(dialogContent).toBeInTheDocument();
-    expect(dialogContent.className).toContain('bg-dialog');
-    expect(dialogContent.className).toContain('border-border');
-
-    // Title and description must be rendered
-    expect(screen.getByText('BrainX Architecture Dialog')).toBeInTheDocument();
-
-    // Close button should close modal
-    const closeButtons = screen.getAllByRole('button', { name: /fermer/i });
-    expect(closeButtons.length).toBeGreaterThanOrEqual(1);
-    fireEvent.click(closeButtons[0]);
-    expect(screen.queryByTestId('test-dialog-content')).not.toBeInTheDocument();
-  });
-
-  it('renders verbatim resource discriminator badges (CAP-2)', () => {
-    render(<App />);
-    const docBadge = screen.getByTestId('badge-document');
-    const imgBadge = screen.getByTestId('badge-image');
-    const vidBadge = screen.getByTestId('badge-video');
-    const linkBadge = screen.getByTestId('badge-link');
-
-    expect(docBadge).toHaveTextContent('document');
-    expect(docBadge.className).toContain('text-resource-document');
-    expect(docBadge.className).toContain('border-resource-document-border');
-
-    expect(imgBadge).toHaveTextContent('image');
-    expect(imgBadge.className).toContain('text-resource-image');
-    expect(imgBadge.className).toContain('border-resource-image-border');
-
-    expect(vidBadge).toHaveTextContent('video');
-    expect(vidBadge.className).toContain('text-resource-video');
-    expect(vidBadge.className).toContain('border-resource-video-border');
-
-    expect(linkBadge).toHaveTextContent('external_link');
-    expect(linkBadge.className).toContain('text-resource-link');
-    expect(linkBadge.className).toContain('border-resource-link-border');
+    expect(loginLink).toBeInTheDocument();
+    expect(loginLink).toHaveAttribute('href', '/login');
+    expect(registerLink).toBeInTheDocument();
+    expect(registerLink).toHaveAttribute('href', '/register');
   });
 
   it('binds Inter and JetBrains Mono typography families', () => {
@@ -116,8 +67,8 @@ describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
     const rootElement = screen.getByTestId('app-root');
     expect(rootElement.className).toContain('font-sans');
 
-    const codeContainer = screen.getByTestId('code-block-scroll');
-    expect(codeContainer.className).toContain('font-mono');
+    const versionBadge = screen.getByTestId('version-badge');
+    expect(versionBadge.className).toContain('font-mono');
   });
 
   it('redirects authenticated user to /courses when visiting landing page', async () => {

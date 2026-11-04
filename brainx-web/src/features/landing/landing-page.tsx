@@ -7,27 +7,10 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
-  CardFooter,
 } from '@/components/ui/card';
 import {
-  Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from '@/components/ui/dialog';
-import {
   BookOpen,
-  FileText,
-  Image as ImageIcon,
-  Video,
-  ExternalLink,
   Search,
-  Code2,
-  Terminal,
   UserPlus,
   LogIn,
   LogOut,
@@ -38,12 +21,18 @@ import {
   ArrowRight,
   ShieldCheck,
   Cpu,
+  Users,
+  MessageSquare,
+  Newspaper,
+  Award,
+  MailCheck,
+  CheckCircle2,
+  Zap,
 } from 'lucide-react';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { BrainXLogo } from '@/components/ui/brainx-logo';
 
 export function LandingPage() {
-  const [dialogOpen, setDialogOpen] = React.useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const notice = (location.state as { notice?: string } | null | undefined)?.notice;
@@ -98,7 +87,10 @@ export function LandingPage() {
                 <span className="font-semibold text-foreground text-base tracking-tight font-sans">
                   BrainX
                 </span>
-                <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-primary/10 border border-primary/30 text-primary uppercase font-bold tracking-wider">
+                <span
+                  data-testid="version-badge"
+                  className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-primary/10 border border-primary/30 text-primary uppercase font-bold tracking-wider"
+                >
                   v1.0
                 </span>
               </div>
@@ -190,7 +182,7 @@ export function LandingPage() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-page-max mx-auto px-4 sm:px-6 py-12 space-y-16 relative z-10">
+      <main className="max-w-page-max mx-auto px-4 sm:px-6 py-12 space-y-20 relative z-10">
         {/* Flash / Publisher Notice Banner */}
         {showNotice && (
           <div
@@ -219,14 +211,14 @@ export function LandingPage() {
 
         {/* Futuristic Hero Section */}
         <section className="text-center max-w-3xl mx-auto space-y-6 pt-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border shadow-inner text-xs font-mono text-primary animate-pulse">
-            <Cpu className="h-3.5 w-3.5" />
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface border border-border shadow-inner text-xs font-mono text-primary">
+            <Cpu className="h-3.5 w-3.5 text-primary animate-pulse" />
             <span>PLATEFORME PÉDAGOGIQUE CENTRALISÉE</span>
             <span className="text-foreground-muted">|</span>
             <span className="text-foreground-muted">MODE SOMBRE NATIF</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-foreground leading-tight">
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-foreground leading-tight">
             L'apprentissage et le rattrapage de cours,{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-sky-300 to-indigo-400">
               réinventés.
@@ -264,21 +256,24 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Platform Capabilities & Pillars */}
-        <section className="space-y-6">
+        {/* Section 1 : Platform Pillars (Déjà Disponibles) */}
+        <section className="space-y-6" data-testid="section-current-features">
           <div className="text-center space-y-2">
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center justify-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
-              <span>Trois Piliers pour Réussir vos Études</span>
+            <div className="inline-flex items-center gap-1.5 text-xs font-mono text-primary uppercase tracking-wider font-semibold">
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Socle Opérationnel</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              Trois Piliers pour Réussir vos Études
             </h2>
-            <p className="text-sm text-foreground-muted">
-              Une expérience fluide, conçue pour les étudiants développeurs et les équipes enseignantes.
+            <p className="text-sm text-foreground-muted max-w-xl mx-auto">
+              Une infrastructure robuste et fluide, pensée pour les étudiants développeurs et les équipes enseignantes.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Feature 1: Recherche Instantanée */}
-            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-colors">
+            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-all hover:-translate-y-0.5">
               <CardHeader>
                 <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-2">
                   <Search className="h-5 w-5" />
@@ -294,7 +289,7 @@ export function LandingPage() {
             </Card>
 
             {/* Feature 2: Arborescence Structurée */}
-            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-colors">
+            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-all hover:-translate-y-0.5">
               <CardHeader>
                 <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-2">
                   <Layers className="h-5 w-5" />
@@ -310,7 +305,7 @@ export function LandingPage() {
             </Card>
 
             {/* Feature 3: Sécurité & Fiabilité */}
-            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-colors">
+            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-all hover:-translate-y-0.5">
               <CardHeader>
                 <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-2">
                   <ShieldCheck className="h-5 w-5" />
@@ -327,166 +322,189 @@ export function LandingPage() {
           </div>
         </section>
 
-        {/* Technical Showcase & Foundation Primitives (Tested Primitives) */}
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-4 border-t border-border/60">
-          {/* Button Variants Card */}
-          <Card data-testid="card-buttons" className="border-border bg-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Terminal className="h-4 w-4 text-primary" />
-                Primitives Boutons
-              </CardTitle>
-              <CardDescription>
-                Boutons Radix avec variantes sémantiques et cible tactile &ge; 44px
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Button variant="default">Primary</Button>
-                <Button variant="secondary">Secondary</Button>
-                <Button variant="outline">Outline</Button>
-                <Button variant="destructive">Destructive</Button>
-                <Button variant="ghost">Ghost</Button>
-              </div>
-            </CardContent>
-            <CardFooter className="text-xs text-foreground-muted font-mono">
-              focus-ring: #38BDF8
-            </CardFooter>
-          </Card>
-
-          {/* Modal / Dialog Card */}
-          <Card data-testid="card-dialog" className="border-border bg-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <BookOpen className="h-4 w-4 text-primary" />
-                Modale Radix UI
-              </CardTitle>
-              <CardDescription>
-                Dialogue accessible au clavier avec fond ardoise et contraste sombre
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="w-full">
-                    Ouvrir la Modale
-                  </Button>
-                </DialogTrigger>
-                <DialogContent data-testid="test-dialog-content">
-                  <DialogHeader>
-                    <DialogTitle>BrainX Architecture Dialog</DialogTitle>
-                    <DialogDescription>
-                      Cette modale respecte le contrat de style sombre avec surface #161B22 et bordure #30363D.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="py-2 text-sm text-foreground">
-                    <p>
-                      Conformité accessibilité : navigation Tab/Shift-Tab, touche Escape et focus automatique.
-                    </p>
-                  </div>
-                  <DialogFooter>
-                    <DialogClose asChild>
-                      <Button variant="secondary">Fermer</Button>
-                    </DialogClose>
-                    <Button variant="default" onClick={() => setDialogOpen(false)}>
-                      Confirmer
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </CardContent>
-            <CardFooter className="text-xs text-foreground-muted font-mono">
-              surface: #161B22 | border: #30363D
-            </CardFooter>
-          </Card>
-
-          {/* Resource Discriminators Card */}
-          <Card data-testid="card-resources" className="border-border bg-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <FileText className="h-4 w-4 text-primary" />
-                Types de Ressources (CAP-2)
-              </CardTitle>
-              <CardDescription>
-                Les 4 types immuables de ressources pédagogiques
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-2">
-                <div
-                  data-testid="badge-document"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm bg-resource-document-surface border border-resource-document-border text-resource-document text-xs font-mono font-medium"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                  <span>document</span>
-                </div>
-                <div
-                  data-testid="badge-image"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm bg-resource-image-surface border border-resource-image-border text-resource-image text-xs font-mono font-medium"
-                >
-                  <ImageIcon className="h-3.5 w-3.5" />
-                  <span>image</span>
-                </div>
-                <div
-                  data-testid="badge-video"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm bg-resource-video-surface border border-resource-video-border text-resource-video text-xs font-mono font-medium"
-                >
-                  <Video className="h-3.5 w-3.5" />
-                  <span>video</span>
-                </div>
-                <div
-                  data-testid="badge-link"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm bg-resource-link-surface border border-resource-link-border text-resource-link text-xs font-mono font-medium"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  <span>external_link</span>
-                </div>
-              </div>
-            </CardContent>
-            <CardFooter className="text-xs text-foreground-muted font-mono">
-              Vocabulaire verbatim PRD
-            </CardFooter>
-          </Card>
-        </section>
-
-        {/* Code Block & 360px Isolation Showcase */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
-              <Code2 className="h-5 w-5 text-primary" />
-              Isolation Technique &amp; Scroll Horizontal
+        {/* Section 2 : Upcoming Features (Fonctionnalités à Venir / Roadmap) */}
+        <section className="space-y-8 pt-4 border-t border-border/60" data-testid="section-upcoming-features">
+          <div className="text-center space-y-2">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/30 text-xs font-mono text-primary font-bold uppercase tracking-wider">
+              <Zap className="h-3.5 w-3.5" />
+              <span>Prochaines Frontières &bull; Roadmap BrainX</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              Fonctionnalités à Venir
             </h2>
-            <span className="text-xs font-mono text-foreground-muted">
-              overflow-x: auto isolé
-            </span>
+            <p className="text-sm text-foreground-muted max-w-2xl mx-auto">
+              L'écosystème s'agrandit pour offrir une expérience académique collaborative, engageante et automatisée.
+            </p>
           </div>
 
-          <div
-            data-testid="code-block-container"
-            className="rounded-lg border border-code-border bg-code-bg overflow-hidden shadow-sm"
-          >
-            <div className="h-9 px-4 bg-code-header-bg border-b border-code-border flex items-center justify-between">
-              <span className="text-xs font-mono text-foreground-muted font-semibold tracking-wider">
-                TYPESCRIPT
-              </span>
-              <span className="text-xs font-mono text-foreground-subtle">
-                src/lib/utils.ts
-              </span>
-            </div>
-            <div
-              data-testid="code-block-scroll"
-              className="p-4 overflow-x-auto text-xs font-mono leading-relaxed"
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Upcoming 1: Multi-classes & Promotions */}
+            <Card
+              data-testid="card-feature-multiclass"
+              className="border-border bg-card/40 hover:bg-card/70 backdrop-blur-sm hover:border-primary/40 transition-all relative group"
             >
-              <pre className="text-code-text">
-                <code>
-                  <span className="text-code-keyword">import</span> &#123; clsx, <span className="text-code-keyword">type</span> ClassValue &#125; <span className="text-code-keyword">from</span> <span className="text-code-string">'clsx'</span>;{'\n'}
-                  <span className="text-code-keyword">import</span> &#123; twMerge &#125; <span className="text-code-keyword">from</span> <span className="text-code-string">'tailwind-merge'</span>;{'\n\n'}
-                  <span className="text-code-comment">&#47;&#47; Helper combinant clsx et tailwind-merge pour la gestion des classes sémantiques</span>{'\n'}
-                  <span className="text-code-keyword">export function</span> <span className="text-code-function">cn</span>(...inputs: ClassValue[]): <span className="text-code-keyword">string</span> &#123;{'\n'}
-                  {'  '}<span className="text-code-keyword">return</span> <span className="text-code-function">twMerge</span>(<span className="text-code-function">clsx</span>(inputs));{'\n'}
-                  &#125;
-                </code>
-              </pre>
+              <CardHeader>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-10 w-10 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 group-hover:scale-105 transition-transform">
+                    <Users className="h-5 w-5" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-sky-500/10 border border-sky-500/30 text-sky-300 font-bold uppercase tracking-wider">
+                    MULTI-CLASSE
+                  </span>
+                </div>
+                <CardTitle className="text-lg">Gestion Multi-Classes &amp; Promos</CardTitle>
+                <CardDescription>
+                  Cloisonnement étanche par promotions, filières et groupes de travaux dirigés.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted leading-relaxed">
+                Assignez les cours et ressources de manière ciblée selon la classe (L1, L2, L3, Masters) avec des plannings et des droits adaptés à chaque cohorte.
+              </CardContent>
+            </Card>
+
+            {/* Upcoming 2: Interactions sur les Leçons */}
+            <Card
+              data-testid="card-feature-interactions"
+              className="border-border bg-card/40 hover:bg-card/70 backdrop-blur-sm hover:border-primary/40 transition-all relative group"
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-10 w-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-105 transition-transform">
+                    <MessageSquare className="h-5 w-5" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 font-bold uppercase tracking-wider">
+                    COMMUNAUTÉ
+                  </span>
+                </div>
+                <CardTitle className="text-lg">Interactions &amp; Entraide en Direct</CardTitle>
+                <CardDescription>
+                  Fils de discussion, questions/réponses contextuelles et annotations sous les leçons.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted leading-relaxed">
+                Posez vos questions directement sous le point du cours concerné. Les étudiants s'entraident et les enseignants certifient les meilleures réponses.
+              </CardContent>
+            </Card>
+
+            {/* Upcoming 3: Blogs & Veille Pédagogique */}
+            <Card
+              data-testid="card-feature-blogs"
+              className="border-border bg-card/40 hover:bg-card/70 backdrop-blur-sm hover:border-primary/40 transition-all relative group"
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-10 w-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform">
+                    <Newspaper className="h-5 w-5" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-bold uppercase tracking-wider">
+                    BLOGS
+                  </span>
+                </div>
+                <CardTitle className="text-lg">Blogs &amp; Publications Pédagogiques</CardTitle>
+                <CardDescription>
+                  Articles de veille, retours d'expérience et tutoriels de l'équipe enseignante.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted leading-relaxed">
+                Un espace dédié pour approfondir les concepts : condensés technologiques, astuces d'ingénierie et bonnes pratiques partagées par vos intervenants.
+              </CardContent>
+            </Card>
+
+            {/* Upcoming 4: Formations Spécialisées & Certifications */}
+            <Card
+              data-testid="card-feature-formations"
+              className="border-border bg-card/40 hover:bg-card/70 backdrop-blur-sm hover:border-primary/40 transition-all relative group"
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-10 w-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
+                    <Award className="h-5 w-5" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold uppercase tracking-wider">
+                    FORMATIONS
+                  </span>
+                </div>
+                <CardTitle className="text-lg">Formations &amp; Parcours Certifiants</CardTitle>
+                <CardDescription>
+                  Cursus complets guidés par compétences avec validation et attestation.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted leading-relaxed">
+                Suivez des parcours thématiques structurés (Symfony avancé, Architecture Django REST, DevOps Docker) et validez vos acquis avec des badges certifiés.
+              </CardContent>
+            </Card>
+
+            {/* Upcoming 5: Réception d'Emails Automatiques */}
+            <Card
+              data-testid="card-feature-emails"
+              className="border-border bg-card/40 hover:bg-card/70 backdrop-blur-sm hover:border-primary/40 transition-all relative group"
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-10 w-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-105 transition-transform">
+                    <MailCheck className="h-5 w-5" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-purple-500/10 border border-purple-500/30 text-purple-300 font-bold uppercase tracking-wider">
+                    AUTOMATISATION
+                  </span>
+                </div>
+                <CardTitle className="text-lg">Emails &amp; Notifications Automatiques</CardTitle>
+                <CardDescription>
+                  Alertes instantanées dès qu'une leçon ou une ressource est publiée.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted leading-relaxed">
+                Recevez un récapitulatif par email dès qu'un cours est mis à jour par votre enseignant. Ne manquez plus aucun support de révision ni date importante.
+              </CardContent>
+            </Card>
+
+            {/* Upcoming 6: Évaluations & Exercices Pratiques */}
+            <Card
+              data-testid="card-feature-evaluations"
+              className="border-border bg-card/40 hover:bg-card/70 backdrop-blur-sm hover:border-primary/40 transition-all relative group"
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-10 w-10 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 group-hover:scale-105 transition-transform">
+                    <CheckCircle2 className="h-5 w-5" />
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 font-bold uppercase tracking-wider">
+                    PRATIQUE
+                  </span>
+                </div>
+                <CardTitle className="text-lg">Quiz &amp; Évaluations Continues</CardTitle>
+                <CardDescription>
+                  Auto-évaluations interactives et exercices pratiques à la fin des leçons.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted leading-relaxed">
+                Mesurez votre compréhension instantanément grâce à des questionnaires ciblés et des exercices avec rétroaction immédiate.
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        {/* Section 3 : Bottom Call-To-Action */}
+        <section className="text-center rounded-2xl border border-primary/30 bg-gradient-to-b from-primary/10 via-surface/80 to-surface p-8 sm:p-12 space-y-6 relative overflow-hidden">
+          <div className="max-w-xl mx-auto space-y-3 relative z-10">
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground tracking-tight">
+              Prêt à accélérer vos apprentissages ?
+            </h2>
+            <p className="text-sm sm:text-base text-foreground-muted">
+              Rejoignez BrainX dès aujourd'hui et accédez à l'ensemble des cours et ressources pédagogiques.
+            </p>
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Button asChild variant="default" size="lg" className="min-h-[48px] px-8 text-base shadow-lg shadow-primary/20">
+                <Link to="/register">
+                  <span>Créer mon compte</span>
+                  <ArrowRight className="h-4 w-4 ml-1" />
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="lg" className="min-h-[48px] px-8 text-base bg-surface">
+                <Link to="/login">
+                  <span>Se connecter</span>
+                </Link>
+              </Button>
             </div>
           </div>
         </section>
