@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -25,6 +25,7 @@ import {
   Image as ImageIcon,
   Video,
   ExternalLink,
+  Search,
   Code2,
   Terminal,
   UserPlus,
@@ -32,8 +33,14 @@ import {
   LogOut,
   AlertCircle,
   X,
+  Layers,
+  Sparkles,
+  ArrowRight,
+  ShieldCheck,
+  Cpu,
 } from 'lucide-react';
 import { useAuthStore } from '@/features/auth/auth-store';
+import { BrainXLogo } from '@/components/ui/brainx-logo';
 
 export function LandingPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
@@ -42,9 +49,18 @@ export function LandingPage() {
   const notice = (location.state as { notice?: string } | null | undefined)?.notice;
   const [dismissed, setDismissed] = React.useState(false);
 
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const isPublisher = useAuthStore((s) => s.isPublisher);
+  const logout = useAuthStore((s) => s.logout);
+
   React.useEffect(() => {
     setDismissed(false);
   }, [location.key]);
+
+  // Authenticated non-publisher students are immediately redirected to courses
+  if (accessToken && !isPublisher) {
+    return <Navigate to="/courses" replace />;
+  }
 
   const handleDismissNotice = () => {
     setDismissed(true);
@@ -57,31 +73,38 @@ export function LandingPage() {
   const isNoticeValid = typeof notice === 'string' && notice.trim().length > 0;
   const showNotice = Boolean(isNoticeValid && !dismissed);
 
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const isPublisher = useAuthStore((s) => s.isPublisher);
-  const logout = useAuthStore((s) => s.logout);
-
   return (
     <div
       data-testid="app-root"
-      className="min-h-screen bg-background text-foreground font-sans min-w-[360px] w-full overflow-x-hidden selection:bg-primary selection:text-primary-foreground"
+      className="min-h-screen bg-background text-foreground font-sans min-w-[360px] w-full overflow-x-hidden selection:bg-primary selection:text-primary-foreground relative"
     >
-      {/* Top Navbar */}
-      <header className="border-b border-border bg-surface sticky top-0 z-30">
+      {/* Subtle Geometric Background Grid */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-20 bg-[linear-gradient(to_right,#30363D_1px,transparent_1px),linear-gradient(to_bottom,#30363D_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]"
+        aria-hidden="true"
+      />
+
+      {/* Top Futuristic Navbar */}
+      <header className="border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-page-max mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="h-8 w-8 rounded-md bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg font-mono">
-              BX
-            </div>
-            <div>
-              <span className="font-semibold text-foreground text-base tracking-tight">
-                BrainX
-              </span>
-              <span className="ml-2 px-1.5 py-0.5 text-xs font-mono rounded-sm bg-surface border border-border text-foreground-muted">
-                v1.0
-              </span>
-            </div>
+            <Link
+              to="/"
+              className="flex items-center gap-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
+              aria-label="Accueil BrainX"
+            >
+              <BrainXLogo size="md" />
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-foreground text-base tracking-tight font-sans">
+                  BrainX
+                </span>
+                <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-primary/10 border border-primary/30 text-primary uppercase font-bold tracking-wider">
+                  v1.0
+                </span>
+              </div>
+            </Link>
           </div>
+
           <div className="flex items-center space-x-2 sm:space-x-3">
             {Boolean(accessToken && isPublisher) && (
               <Button
@@ -122,7 +145,7 @@ export function LandingPage() {
                   size="default"
                   onClick={logout}
                   data-testid="nav-logout-btn"
-                  className="min-h-[44px]"
+                  className="min-h-[44px] flex items-center gap-1.5"
                 >
                   <LogOut className="h-4 w-4" />
                   <span>Se déconnecter</span>
@@ -149,7 +172,7 @@ export function LandingPage() {
                   asChild
                   variant="default"
                   size="default"
-                  className="min-h-[44px]"
+                  className="min-h-[44px] shadow-sm shadow-primary/20"
                 >
                   <Link
                     to="/register"
@@ -162,18 +185,12 @@ export function LandingPage() {
                 </Button>
               </>
             )}
-            <span className="text-xs font-mono text-foreground-muted hidden sm:inline-block">
-              2026-10-29
-            </span>
-            <span className="text-xs px-2.5 py-1 rounded-full border border-border text-foreground-muted bg-surface font-mono hidden md:inline-block">
-              Dark-Only
-            </span>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-page-max mx-auto px-4 sm:px-6 py-8 space-y-8">
+      <main className="max-w-page-max mx-auto px-4 sm:px-6 py-12 space-y-16 relative z-10">
         {/* Flash / Publisher Notice Banner */}
         {showNotice && (
           <div
@@ -200,41 +217,123 @@ export function LandingPage() {
           </div>
         )}
 
-        {/* Hero Section */}
-        <section className="space-y-3">
-          <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-info-surface border border-info-border text-info text-xs font-mono">
-            <span>● Mode Sombre Exclusif</span>
+        {/* Futuristic Hero Section */}
+        <section className="text-center max-w-3xl mx-auto space-y-6 pt-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border shadow-inner text-xs font-mono text-primary animate-pulse">
+            <Cpu className="h-3.5 w-3.5" />
+            <span>PLATEFORME PÉDAGOGIQUE CENTRALISÉE</span>
             <span className="text-foreground-muted">|</span>
-            <span>Plancher 360px</span>
+            <span className="text-foreground-muted">MODE SOMBRE NATIF</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-            Socle Frontend BrainX
+
+          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-foreground leading-tight">
+            L'apprentissage et le rattrapage de cours,{' '}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-sky-300 to-indigo-400">
+              réinventés.
+            </span>
           </h1>
-          <p className="text-sm sm:text-base text-foreground-muted max-w-content-max leading-relaxed">
-            Plateforme d'apprentissage pour étudiants développeurs. Retrouvez en quelques secondes le cours manqué et son matériel pédagogique.
+
+          <p className="text-base sm:text-lg text-foreground-muted leading-relaxed max-w-2xl mx-auto">
+            Retrouvez en quelques secondes le cours manqué, son plan détaillé et tout le matériel pédagogique associé (documents PDF, vidéos, code source et schémas).
           </p>
-          <div className="pt-2">
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             <Button
               asChild
               variant="default"
-              size="default"
-              className="gap-2 min-h-[44px]"
+              size="lg"
+              className="w-full sm:w-auto min-h-[48px] px-8 text-base shadow-lg shadow-primary/25 gap-2"
             >
               <Link to="/register">
-                <UserPlus className="h-4 w-4" />
+                <UserPlus className="h-5 w-5" />
                 <span>Créer un compte étudiant</span>
+                <ArrowRight className="h-4 w-4 ml-1" />
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              size="lg"
+              className="w-full sm:w-auto min-h-[48px] px-8 text-base gap-2 bg-surface/50 border-border hover:bg-surface"
+            >
+              <Link to="/login">
+                <LogIn className="h-5 w-5" />
+                <span>Se connecter</span>
               </Link>
             </Button>
           </div>
         </section>
 
-        {/* UI Primitives Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Platform Capabilities & Pillars */}
+        <section className="space-y-6">
+          <div className="text-center space-y-2">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center justify-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <span>Trois Piliers pour Réussir vos Études</span>
+            </h2>
+            <p className="text-sm text-foreground-muted">
+              Une expérience fluide, conçue pour les étudiants développeurs et les équipes enseignantes.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Feature 1: Recherche Instantanée */}
+            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-colors">
+              <CardHeader>
+                <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-2">
+                  <Search className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-lg">Recherche Globale Cmd+K</CardTitle>
+                <CardDescription>
+                  Indexation multi-champs instantanée des leçons, enseignants et mots-clés.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted">
+                Déclenchez la palette à tout instant au clavier pour localiser immédiatement un concept technique ou une séance spécifique.
+              </CardContent>
+            </Card>
+
+            {/* Feature 2: Arborescence Structurée */}
+            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-colors">
+              <CardHeader>
+                <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-2">
+                  <Layers className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-lg">Arborescence Pédagogique</CardTitle>
+                <CardDescription>
+                  Navigation rigoureuse : Cours &rarr; Modules &rarr; Chapitres &rarr; Leçons.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted">
+                Suivez la progression séquentielle des enseignements avec navigation précédente/suivante et repérage visuel dynamique.
+              </CardContent>
+            </Card>
+
+            {/* Feature 3: Sécurité & Fiabilité */}
+            <Card className="border-border bg-card/60 backdrop-blur-sm hover:border-primary/50 transition-colors">
+              <CardHeader>
+                <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-2">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-lg">Espace Éditeur Dédié</CardTitle>
+                <CardDescription>
+                  Outils de publication unitaire ou en masse sous verrou de conteneur.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-foreground-muted">
+                Tableau de bord de gestion, détection des leçons bloquées, restauration depuis la corbeille et analytique des recherches.
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        {/* Technical Showcase & Foundation Primitives (Tested Primitives) */}
+        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-4 border-t border-border/60">
           {/* Button Variants Card */}
-          <Card data-testid="card-buttons">
+          <Card data-testid="card-buttons" className="border-border bg-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Terminal className="h-5 w-5 text-primary" />
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Terminal className="h-4 w-4 text-primary" />
                 Primitives Boutons
               </CardTitle>
               <CardDescription>
@@ -256,10 +355,10 @@ export function LandingPage() {
           </Card>
 
           {/* Modal / Dialog Card */}
-          <Card data-testid="card-dialog">
+          <Card data-testid="card-dialog" className="border-border bg-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-primary" />
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BookOpen className="h-4 w-4 text-primary" />
                 Modale Radix UI
               </CardTitle>
               <CardDescription>
@@ -302,10 +401,10 @@ export function LandingPage() {
           </Card>
 
           {/* Resource Discriminators Card */}
-          <Card data-testid="card-resources">
+          <Card data-testid="card-resources" className="border-border bg-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileText className="h-4 w-4 text-primary" />
                 Types de Ressources (CAP-2)
               </CardTitle>
               <CardDescription>
@@ -394,10 +493,13 @@ export function LandingPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-surface py-6 mt-12">
-        <div className="max-w-page-max mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between text-xs text-foreground-muted space-y-2 sm:space-y-0">
-          <p>BrainX &copy; 2026 &mdash; Socle UI Mode Sombre</p>
-          <p className="font-mono">
+      <footer className="border-t border-border bg-surface py-8 mt-12 relative z-10">
+        <div className="max-w-page-max mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between text-xs text-foreground-muted gap-4">
+          <div className="flex items-center gap-2">
+            <BrainXLogo size="sm" />
+            <span>BrainX &copy; 2026 &mdash; Plateforme Pédagogique</span>
+          </div>
+          <p className="font-mono text-foreground-subtle">
             WCAG 2.1 AAA &bull; Canvas #0D1117 &bull; Inter &amp; JetBrains Mono
           </p>
         </div>

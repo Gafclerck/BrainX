@@ -131,6 +131,13 @@ function StudentLayoutInner({
     }
   };
 
+  const activeToc =
+    tocProp !== undefined
+      ? tocProp
+      : dynamicToc !== null
+        ? dynamicToc
+        : <DefaultTocContent />;
+
   // Mobile drawer trigger buttons (minimum 48x48px touch targets)
   const leftDrawerTrigger = (
     <button
@@ -199,7 +206,7 @@ function StudentLayoutInner({
           aria-label="Sur cette page"
           className="hidden lg:block w-toc-width shrink-0 sticky top-14 h-full overflow-y-auto border-l border-border p-4 bg-surface/30"
         >
-          {tocProp ?? dynamicToc ?? <DefaultTocContent />}
+          {activeToc}
         </aside>
       </div>
 
@@ -269,7 +276,7 @@ function StudentLayoutInner({
               Table des matières et ressources de la leçon pour appareils mobiles
             </DialogPrimitive.Description>
             <div className="flex-1 overflow-y-auto py-4">
-              {tocProp ?? dynamicToc ?? <DefaultTocContent onLinkClick={() => setIsRightDrawerOpen(false)} />}
+              {activeToc}
             </div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>

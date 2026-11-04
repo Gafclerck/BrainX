@@ -21,7 +21,10 @@ export function BrowseTreeSidebar({ onLinkClick }: BrowseTreeSidebarProps) {
   const moduleMatch = location.pathname.match(/^\/modules\/([^/?#]+)/);
   const chapterMatch = location.pathname.match(/^\/chapters\/([^/?#]+)/);
   const lessonMatch = location.pathname.match(/^\/lessons\/([^/?#]+)/);
-  const activeCourseId = courseMatch ? courseMatch[1] : undefined;
+  const activeCourseId = courseMatch
+    ? courseMatch[1]
+    : ((location.state as { courseId?: string; course_id?: string } | null)?.courseId ||
+       (location.state as { courseId?: string; course_id?: string } | null)?.course_id);
   const activeModuleId = moduleMatch ? moduleMatch[1] : undefined;
   const activeChapterId = chapterMatch ? chapterMatch[1] : undefined;
   const activeLessonId = lessonMatch ? lessonMatch[1] : undefined;

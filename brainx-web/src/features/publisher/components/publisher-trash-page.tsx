@@ -28,6 +28,7 @@ import {
 import type { TrashItem, TrashFilterType, TrashItemType } from '../types';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { PublisherSubNav } from './publisher-sub-nav';
 
 export type TrashViewState =
   | { status: 'loading' }
@@ -124,6 +125,9 @@ export function PublisherTrashPage() {
       <AppHeader />
 
       <main className="flex-1 max-w-page-max mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
+        {/* Publisher Shared Secondary Navigation */}
+        <PublisherSubNav />
+
         {/* Breadcrumb & Header Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border">
           <div className="space-y-1">

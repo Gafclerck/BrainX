@@ -5,13 +5,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { AppRoutes } from '@/routes';
 import {
-  PublisherLessonPage,
   ResourceFormModal,
   fetchManageableResources,
   createResource,
   deleteResource,
 } from './index';
-import { apiClient, ApiError } from '@/lib/api';
 import type {
   PublisherLessonItem,
   PublisherResourceItem,

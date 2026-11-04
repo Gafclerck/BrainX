@@ -5,7 +5,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { AppRoutes } from '@/routes';
 import {
-  PublisherTrashPage,
   RestoreConfirmationModal,
   fetchTrashItems,
   restoreCourse,
@@ -22,7 +21,6 @@ import type {
   PublisherLessonItem,
   PublisherResourceItem,
   TrashItem,
-  PaginatedPublisherResponse,
 } from './types';
 
 // Mock Data
@@ -589,7 +587,7 @@ describe('Story FE-4.6: Espace Corbeille & Restauration de Contenu (/publisher/t
     it('displays empty state illustration and link to dashboard when trash is empty', async () => {
       setupPublisherAuth();
 
-      const mockFetch = vi.fn().mockImplementation((url: string) => {
+      const mockFetch = vi.fn().mockImplementation((_url: string) => {
         return Promise.resolve({
           ok: true,
           status: 200,

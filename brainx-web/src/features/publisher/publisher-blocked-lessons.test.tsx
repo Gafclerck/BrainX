@@ -499,7 +499,7 @@ describe('Story FE-5.3: Tableau Interactif des Leçons Bloquées (errors.blocked
       const onSaveSuccessMock = vi.fn();
       const onCloseMock = vi.fn();
 
-      const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      const fetchSpy = vi.fn().mockImplementation((_url: string, opts?: RequestInit) => {
         if (opts?.method === 'PATCH') {
           return Promise.resolve({
             ok: true,
@@ -568,7 +568,7 @@ describe('Story FE-5.3: Tableau Interactif des Leçons Bloquées (errors.blocked
     it('displays server RFC 9457 error alert when PATCH request fails and keeps drawer open', async () => {
       const user = userEvent.setup();
 
-      const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      const fetchSpy = vi.fn().mockImplementation((_url: string, opts?: RequestInit) => {
         if (opts?.method === 'PATCH') {
           return Promise.resolve({
             ok: false,
@@ -622,7 +622,7 @@ describe('Story FE-5.3: Tableau Interactif des Leçons Bloquées (errors.blocked
     it('maps backend RFC 9457 field errors to inline field alerts', async () => {
       const user = userEvent.setup();
 
-      const fetchSpy = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      const fetchSpy = vi.fn().mockImplementation((_url: string, opts?: RequestInit) => {
         if (opts?.method === 'PATCH') {
           return Promise.resolve({
             ok: false,

@@ -21,6 +21,7 @@ import type {
 } from '../types';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { PublisherSubNav } from './publisher-sub-nav';
 
 /**
  * Format Date to strictly ISO YYYY-MM-DD.
@@ -145,6 +146,9 @@ export function SearchAnalyticsDashboardPage() {
       <AppHeader />
 
       <main className="flex-1 max-w-page-max mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
+        {/* Publisher Shared Secondary Navigation */}
+        <PublisherSubNav />
+
         {/* Breadcrumb & Section Identifier */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-border">
           <div className="space-y-1">

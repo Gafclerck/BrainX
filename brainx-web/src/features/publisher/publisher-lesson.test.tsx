@@ -14,10 +14,8 @@ import {
   unpublishLesson,
   fetchAllManageableChapters,
 } from './index';
-import { ApiError } from '@/lib/api';
 import type {
   PublisherLessonItem,
-  ChapterOptionItem,
   PublisherCourseItem,
   PublisherModuleItem,
   PublisherChapterItem,
@@ -48,33 +46,6 @@ const mockDraftLesson: PublisherLessonItem = {
   description: '',
   is_published: false,
 };
-
-const mockChaptersList: ChapterOptionItem[] = [
-  {
-    id: 'ch111111-1111-1111-1111-111111111111',
-    name: 'Élection du Leader',
-    course_name: 'Systèmes Distribués',
-    module_name: 'Consensus Raft',
-    courseName: 'Systèmes Distribués',
-    moduleName: 'Consensus Raft',
-  },
-  {
-    id: 'ch222222-2222-2222-2222-222222222222',
-    name: 'Réplication de Journal',
-    course_name: 'Systèmes Distribués',
-    module_name: 'Consensus Raft',
-    courseName: 'Systèmes Distribués',
-    moduleName: 'Consensus Raft',
-  },
-  {
-    id: 'ch333333-3333-3333-3333-333333333333',
-    name: 'Sécurité et Quorum',
-    course_name: 'Algorithmique Avancée',
-    module_name: 'Tolérance aux pannes',
-    courseName: 'Algorithmique Avancée',
-    moduleName: 'Tolérance aux pannes',
-  },
-];
 
 function setupPublisherAuth() {
   useAuthStore.getState().setTokens({

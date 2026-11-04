@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { RegisterPage } from '@/features/auth/register-page';
 import { LoginPage } from '@/features/auth/login-page';
@@ -7,6 +8,7 @@ import { ResetPasswordPage } from '@/features/auth/reset-password-page';
 import { LandingPage } from '@/features/landing/landing-page';
 import { StudentLayout } from '@/components/layout/student-layout';
 import { AuthGuard, PublisherGuard, GuestGuard } from './guards';
+import { useSearchStore } from '@/features/search/search-store';
 import {
   CoursesPage,
   CourseModulesPage,
@@ -22,6 +24,14 @@ import {
   PublisherTrashPage,
   SearchAnalyticsDashboardPage,
 } from '@/features/publisher';
+
+function SearchRedirect() {
+  const openSearch = useSearchStore((s) => s.openSearch);
+  useEffect(() => {
+    openSearch();
+  }, [openSearch]);
+  return <Navigate to="/courses" replace />;
+}
 
 export function CoursesPagePlaceholder() {
   return (
@@ -74,44 +84,44 @@ export function PublisherPagePlaceholder() {
 export function AppRoutes() {
   return (
     <Routes>
-      {/* Public routes */}
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/verify-email" element={<VerifyEmailPage />} />
+        {/* Public routes */}
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
 
-      {/* Guest-only routes */}
-      <Route element={<GuestGuard />}>
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-      </Route>
-
-      {/* Authenticated student routes */}
-      <Route element={<AuthGuard />}>
-        <Route element={<StudentLayout sidebar={<BrowseTreeSidebar />} />}>
-          <Route path="/courses" element={<CoursesPage />} />
-          <Route path="/courses/:courseId" element={<CourseModulesPage />} />
-          <Route path="/modules/:moduleId" element={<ModuleChaptersPage />} />
-          <Route path="/chapters/:chapterId" element={<ChapterLessonsPage />} />
-          <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
-          <Route path="/search" element={<SearchPagePlaceholder />} />
+        {/* Guest-only routes */}
+        <Route element={<GuestGuard />}>
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
         </Route>
-      </Route>
 
-      {/* Authenticated publisher routes */}
-      <Route element={<PublisherGuard />}>
-        <Route path="/publisher" element={<PublisherDashboardPage />} />
-        <Route path="/publisher/dashboard" element={<PublisherDashboardPage />} />
-        <Route path="/publisher/trash" element={<PublisherTrashPage />} />
-        <Route path="/publisher/search-analytics" element={<SearchAnalyticsDashboardPage />} />
-        <Route path="/publisher/courses/:courseId" element={<PublisherCoursePage />} />
-        <Route path="/publisher/lessons/:lessonId" element={<PublisherLessonPage />} />
-        <Route path="/publisher/*" element={<PublisherPagePlaceholder />} />
-      </Route>
+        {/* Authenticated student routes */}
+        <Route element={<AuthGuard />}>
+          <Route element={<StudentLayout sidebar={<BrowseTreeSidebar />} />}>
+            <Route path="/courses" element={<CoursesPage />} />
+            <Route path="/courses/:courseId" element={<CourseModulesPage />} />
+            <Route path="/modules/:moduleId" element={<ModuleChaptersPage />} />
+            <Route path="/chapters/:chapterId" element={<ChapterLessonsPage />} />
+            <Route path="/lessons/:lessonId" element={<LessonDetailPage />} />
+            <Route path="/search" element={<SearchRedirect />} />
+          </Route>
+        </Route>
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        {/* Authenticated publisher routes */}
+        <Route element={<PublisherGuard />}>
+          <Route path="/publisher" element={<PublisherDashboardPage />} />
+          <Route path="/publisher/dashboard" element={<PublisherDashboardPage />} />
+          <Route path="/publisher/trash" element={<PublisherTrashPage />} />
+          <Route path="/publisher/search-analytics" element={<SearchAnalyticsDashboardPage />} />
+          <Route path="/publisher/courses/:courseId" element={<PublisherCoursePage />} />
+          <Route path="/publisher/lessons/:lessonId" element={<PublisherLessonPage />} />
+          <Route path="/publisher/*" element={<Navigate to="/publisher/dashboard" replace />} />
+        </Route>
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
   );
 }
 

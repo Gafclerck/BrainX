@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
+import { useAuthStore } from '@/features/auth/auth-store';
 
 describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
+  beforeEach(() => {
+    useAuthStore.getState().clearAuth();
+  });
   it('renders root view with dark-only theme classes and no light theme', () => {
     render(<App />);
     const rootElement = screen.getByTestId('app-root');
@@ -114,5 +118,19 @@ describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
 
     const codeContainer = screen.getByTestId('code-block-scroll');
     expect(codeContainer.className).toContain('font-mono');
+  });
+
+  it('redirects authenticated user to /courses when visiting landing page', async () => {
+    useAuthStore.getState().setTokens({
+      access: 'valid-test-access-token',
+      refresh: 'valid-test-refresh-token',
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('app-root')).not.toBeInTheDocument();
+      expect(screen.getByTestId('student-layout')).toBeInTheDocument();
+    });
   });
 });

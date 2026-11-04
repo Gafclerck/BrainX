@@ -19,6 +19,7 @@ import { fetchPublishedCourses } from '@/features/browse/api';
 import { PublisherCourseCard, computeCourseStatus } from './course-card';
 import { ContainerFormModal } from './container-form-modal';
 import { RemovalPreviewModal } from './removal-preview-modal';
+import { PublisherSubNav } from './publisher-sub-nav';
 import type {
   PublisherCourseItem,
   PublisherViewState,
@@ -158,6 +159,9 @@ export function PublisherDashboardPage() {
       <AppHeader />
 
       <main className="flex-1 max-w-page-max mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
+        {/* Publisher Shared Secondary Navigation */}
+        <PublisherSubNav />
+
         {/* Breadcrumb & Section Identifier */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-border">
           <div className="space-y-1">

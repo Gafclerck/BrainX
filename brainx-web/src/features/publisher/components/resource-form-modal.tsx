@@ -28,7 +28,6 @@ export interface ResourceFormModalProps {
 const MAX_FILE_SIZE = 52_428_800; // 50 MB in bytes
 const ALLOWED_DOCUMENT_EXTENSIONS = ['.pdf'];
 const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
-const HTTP_URL_REGEX = /^https?:\/\//i;
 
 export function ResourceFormModal({
   isOpen,
