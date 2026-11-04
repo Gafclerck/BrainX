@@ -1570,3 +1570,98 @@ class LessonDetailView(GenericAPIView):
             )
         serializer = LessonDetailSerializer(lesson)
         return Response(serializer.data)
+
+
+class LessonNavigationView(APIView):
+    """Retrieve previous and next visible Lessons in the same Course."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='LessonNavigationResponse',
+                fields={
+                    'current_lesson_id': serializers.UUIDField(),
+                    'previous_lesson': inline_serializer(
+                        name='LessonNavNeighbor',
+                        fields={
+                            'id': serializers.UUIDField(),
+                            'title': serializers.CharField(),
+                            'chapter_name': serializers.CharField(),
+                        },
+                        allow_null=True,
+                    ),
+                    'next_lesson': inline_serializer(
+                        name='LessonNavNeighborNext',
+                        fields={
+                            'id': serializers.UUIDField(),
+                            'title': serializers.CharField(),
+                            'chapter_name': serializers.CharField(),
+                        },
+                        allow_null=True,
+                    ),
+                },
+            ),
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        visible = visible_content()
+        lesson = get_object_or_404(
+            Lesson.objects.visible()
+            .select_related('chapter__module__course')
+            .filter(chapter__in=visible.chapters),
+            pk=lesson_id,
+        )
+        course = lesson.chapter.module.course
+
+        lessons = list(
+            Lesson.objects.visible()
+            .filter(
+                chapter__module__course=course,
+                chapter__in=visible.chapters,
+            )
+            .select_related('chapter')
+            .order_by(
+                'chapter__module__position',
+                'chapter__module__id',
+                'chapter__position',
+                'chapter__id',
+                'position',
+                'course_date',
+                'id',
+            )
+            .only('id', 'title', 'chapter__name')
+        )
+
+        current_idx = next(
+            (idx for idx, item in enumerate(lessons) if item.id == lesson.id),
+            None,
+        )
+
+        prev_item = (
+            lessons[current_idx - 1]
+            if current_idx is not None and current_idx > 0
+            else None
+        )
+        next_item = (
+            lessons[current_idx + 1]
+            if current_idx is not None and current_idx < len(lessons) - 1
+            else None
+        )
+
+        return Response({
+            'current_lesson_id': str(lesson.id),
+            'previous_lesson': {
+                'id': str(prev_item.id),
+                'title': prev_item.title,
+                'chapter_name': prev_item.chapter.name,
+            } if prev_item else None,
+            'next_lesson': {
+                'id': str(next_item.id),
+                'title': next_item.title,
+                'chapter_name': next_item.chapter.name,
+            } if next_item else None,
+        })
