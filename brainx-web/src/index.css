@@ -59,6 +59,12 @@
     border-color: #30363D;
   }
 
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
   html {
     color-scheme: dark;
     background-color: #0D1117;

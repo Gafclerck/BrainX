@@ -162,24 +162,25 @@ function StudentLayoutInner({
     <div
       data-testid="student-layout"
       className={cn(
-        'min-h-screen bg-background text-foreground min-w-[360px] w-full overflow-x-hidden flex flex-col font-sans selection:bg-primary selection:text-primary-foreground',
+        'fixed inset-0 h-screen max-h-screen overflow-hidden overflow-x-hidden bg-background text-foreground min-w-[360px] w-full flex flex-col font-sans selection:bg-primary selection:text-primary-foreground',
         className
       )}
     >
       {/* Sticky Header with drawer triggers for mobile viewport */}
       <AppHeader
+        className="shrink-0"
         onSearchTrigger={onSearchTrigger ?? openSearch}
         leftDrawerTrigger={leftDrawerTrigger}
         rightDrawerTrigger={rightDrawerTrigger}
       />
 
       {/* Main 3-Column Documentation Container */}
-      <div className="flex-1 w-full max-w-page-max mx-auto flex">
+      <div className="flex-1 min-h-0 w-full max-w-page-max mx-auto flex overflow-hidden">
         {/* Left Column (280px Navigation Sidebar - Desktop only) */}
         <aside
           data-testid="student-left-sidebar"
           aria-label="Sommaire du cours"
-          className="hidden lg:block w-sidebar-width shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto border-r border-border p-4 bg-surface/30"
+          className="hidden lg:block w-sidebar-width shrink-0 sticky top-14 h-full overflow-y-auto border-r border-border p-4 bg-surface/30"
         >
           {sidebar ?? <DefaultSidebarContent />}
         </aside>
@@ -187,7 +188,7 @@ function StudentLayoutInner({
         {/* Central Column (Reading zone - max-w 860px) */}
         <main
           data-testid="student-main-content"
-          className="flex-1 min-w-0 max-w-content-max mx-auto w-full py-6 px-4 sm:px-6 lg:px-8"
+          className="flex-1 min-w-0 max-w-content-max mx-auto w-full h-full overflow-y-auto py-6 px-4 sm:px-6 lg:px-8"
         >
           {children ?? <Outlet />}
         </main>
@@ -196,7 +197,7 @@ function StudentLayoutInner({
         <aside
           data-testid="student-right-toc"
           aria-label="Sur cette page"
-          className="hidden lg:block w-toc-width shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto border-l border-border p-4 bg-surface/30"
+          className="hidden lg:block w-toc-width shrink-0 sticky top-14 h-full overflow-y-auto border-l border-border p-4 bg-surface/30"
         >
           {tocProp ?? dynamicToc ?? <DefaultTocContent />}
         </aside>

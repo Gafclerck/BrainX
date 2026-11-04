@@ -16,6 +16,7 @@ import {
   CardFooter,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { BrainXLogo } from '@/components/ui/brainx-logo';
 import { ThrottledBanner } from '@/components/ui/throttled-banner';
 import { apiClient, ApiError } from '@/lib/api';
 import { useAuthStore } from './auth-store';
@@ -161,9 +162,8 @@ export function VerifyEmailPage() {
             className="flex items-center space-x-3 group focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
             aria-label="Retour à l'accueil BrainX"
           >
-            <div className="h-8 w-8 rounded-md bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg font-mono">
-              BX
-            </div>
+            <BrainXLogo size="md" className="h-7 w-auto transition-transform group-hover:scale-105" />
+            <span className="sr-only">BX</span>
             <div className="flex items-center">
               <span className="font-semibold text-foreground text-base tracking-tight group-hover:text-primary transition-colors">
                 BrainX

@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Search, User, LogOut, BookOpen } from 'lucide-react';
 import { useAuthStore } from '@/features/auth/auth-store';
+import { BrainXLogo } from '@/components/ui/brainx-logo';
 import { cn } from '@/lib/utils';
 
 export interface AppHeaderProps {
@@ -116,7 +117,7 @@ export function AppHeader({
     <header
       data-testid="app-header"
       className={cn(
-        'sticky top-0 z-40 w-full border-b border-border bg-surface text-foreground select-none',
+        'sticky top-0 z-40 w-full shrink-0 border-b border-border bg-surface text-foreground select-none',
         className
       )}
     >
@@ -132,12 +133,11 @@ export function AppHeader({
             to="/courses"
             data-testid="header-logo"
             aria-label="Accueil BrainX"
-            className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+            className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus group"
           >
-            <div className="h-8 w-8 rounded-md bg-primary text-primary-foreground flex items-center justify-center font-bold text-lg font-mono">
-              BX
-            </div>
-            <span className="hidden sm:inline font-semibold text-foreground text-base tracking-tight font-sans">
+            <BrainXLogo size="md" className="h-7 w-auto transition-transform group-hover:scale-105" />
+            <span className="sr-only">BX</span>
+            <span className="hidden sm:inline font-semibold text-foreground text-base tracking-tight font-sans group-hover:text-primary transition-colors">
               BrainX
             </span>
           </Link>
