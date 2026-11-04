@@ -22,6 +22,8 @@ import type {
   RestoredItemResult,
   BlockedLessonPreviewItem,
   BulkPublishPreviewResponse,
+  BulkPublishCommitPayload,
+  BulkPublishCommitResponse,
 } from './types';
 
 /**
@@ -210,6 +212,24 @@ export async function fetchModuleBulkPublishPreview(
 }
 
 /**
+ * Commit bulk publish for all descendant lessons in a Module under row lock.
+ * POST /api/v1/modules/:id/bulk-publish/
+ * Body: { would_change, blocked: [{ id, missing }] }
+ */
+export async function commitModuleBulkPublish(
+  moduleId: string,
+  payload: BulkPublishCommitPayload
+): Promise<BulkPublishCommitResponse> {
+  return apiClient<BulkPublishCommitResponse>(
+    `/api/v1/modules/${encodeURIComponent(moduleId)}/bulk-publish/`,
+    {
+      method: 'POST',
+      data: payload,
+    }
+  );
+}
+
+/**
  * Fetch manageable chapters under a Module.
  * GET /api/v1/modules/:moduleId/chapters/?page=...
  */
@@ -291,6 +311,24 @@ export async function fetchChapterBulkPublishPreview(
 ): Promise<BulkPublishPreviewResponse> {
   return apiClient<BulkPublishPreviewResponse>(
     `/api/v1/chapters/${encodeURIComponent(chapterId)}/bulk-publish/preview/`
+  );
+}
+
+/**
+ * Commit bulk publish for all descendant lessons in a Chapter under row lock.
+ * POST /api/v1/chapters/:id/bulk-publish/
+ * Body: { would_change, blocked: [{ id, missing }] }
+ */
+export async function commitChapterBulkPublish(
+  chapterId: string,
+  payload: BulkPublishCommitPayload
+): Promise<BulkPublishCommitResponse> {
+  return apiClient<BulkPublishCommitResponse>(
+    `/api/v1/chapters/${encodeURIComponent(chapterId)}/bulk-publish/`,
+    {
+      method: 'POST',
+      data: payload,
+    }
   );
 }
 

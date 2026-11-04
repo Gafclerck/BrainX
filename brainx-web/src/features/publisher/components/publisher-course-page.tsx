@@ -47,6 +47,7 @@ import type {
   PublisherChapterItem,
   PublisherLessonItem,
   ContainerType,
+  BulkPublishCommitResponse,
 } from '../types';
 import { ApiError } from '@/lib/api';
 import { useAuthStore } from '@/features/auth/auth-store';
@@ -1212,6 +1213,22 @@ export function PublisherCoursePage() {
     }
   };
 
+  // Callback on successful bulk publication commit
+  const handleBulkPublishSuccess = useCallback(
+    (_result: BulkPublishCommitResponse) => {
+      if (!bulkPublishTarget) return;
+      if (bulkPublishTarget.type === 'chapter') {
+        loadLessonsForChapter(bulkPublishTarget.item.id);
+      } else if (bulkPublishTarget.type === 'module') {
+        const chapters = chaptersByModule[bulkPublishTarget.item.id]?.chapters || [];
+        for (const chap of chapters) {
+          loadLessonsForChapter(chap.id);
+        }
+      }
+    },
+    [bulkPublishTarget, chaptersByModule, loadLessonsForChapter]
+  );
+
   return (
     <div
       data-testid="publisher-course-page"
@@ -2043,6 +2060,7 @@ export function PublisherCoursePage() {
         onClose={() => setBulkPublishTarget(null)}
         type={bulkPublishTarget?.type ?? 'module'}
         item={bulkPublishTarget?.item ?? null}
+        onSuccess={handleBulkPublishSuccess}
       />
     </div>
   );

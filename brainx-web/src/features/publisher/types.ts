@@ -231,6 +231,23 @@ export interface BulkPublishPreviewResponse {
   blocked: BlockedLessonPreviewItem[];
 }
 
+export interface BulkPublishBlockedCandidate {
+  id: string;
+  missing: string[];
+}
+
+export interface BulkPublishCommitPayload {
+  would_change: number;
+  blocked: BulkPublishBlockedCandidate[];
+}
+
+export interface BulkPublishCommitResponse {
+  changed: number;
+  errors: {
+    blocked: BulkPublishBlockedCandidate[];
+  };
+}
+
 export interface BulkPublishModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -239,6 +256,7 @@ export interface BulkPublishModalProps {
     id: string;
     name: string;
   } | null;
+  onSuccess?: (result: BulkPublishCommitResponse) => void;
 }
 
 

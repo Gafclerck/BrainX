@@ -12,10 +12,14 @@ import { CheckCircle2, AlertCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import {
   fetchModuleBulkPublishPreview,
   fetchChapterBulkPublishPreview,
+  commitModuleBulkPublish,
+  commitChapterBulkPublish,
 } from '../api';
 import type {
   BulkPublishModalProps,
   BulkPublishPreviewResponse,
+  BulkPublishCommitPayload,
+  BulkPublishCommitResponse,
 } from '../types';
 import { ApiError } from '@/lib/api';
 import { useAuthStore } from '@/features/auth/auth-store';
@@ -27,11 +31,15 @@ export function BulkPublishModal({
   onClose,
   type,
   item,
+  onSuccess,
 }: BulkPublishModalProps) {
   const isPublisher = useAuthStore((state) => state.isPublisher);
   const [preview, setPreview] = useState<BulkPublishPreviewResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isCommitting, setIsCommitting] = useState<boolean>(false);
+  const [commitSuccess, setCommitSuccess] = useState<BulkPublishCommitResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [conflictError, setConflictError] = useState<string | null>(null);
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
 
@@ -42,10 +50,14 @@ export function BulkPublishModal({
     };
   }, []);
 
-  const loadPreview = useCallback(async () => {
+  const loadPreview = useCallback(async (preserveConflict = false) => {
     if (!item?.id || !isPublisher) return;
     setIsLoading(true);
     setError(null);
+    setCommitSuccess(null);
+    if (!preserveConflict) {
+      setConflictError(null);
+    }
 
     try {
       let data: BulkPublishPreviewResponse;
@@ -74,25 +86,94 @@ export function BulkPublishModal({
 
   useEffect(() => {
     if (isOpen && item?.id) {
+      setCommitSuccess(null);
+      setConflictError(null);
       loadPreview();
     } else {
       setPreview(null);
       setError(null);
+      setConflictError(null);
+      setCommitSuccess(null);
       setIsLoading(false);
+      setIsCommitting(false);
       setEditingLessonId(null);
     }
   }, [isOpen, item?.id, loadPreview]);
 
+  const handleCommit = async () => {
+    if (
+      !item?.id ||
+      !isPublisher ||
+      !preview ||
+      isCommitting ||
+      isLoading ||
+      wouldChange === 0
+    ) {
+      return;
+    }
+
+    setIsCommitting(true);
+    setError(null);
+    setConflictError(null);
+
+    const payload: BulkPublishCommitPayload = {
+      would_change: preview.would_change,
+      blocked: (preview.blocked || []).map((b) => ({
+        id: b.id,
+        missing: b.missing,
+      })),
+    };
+
+    try {
+      let result: BulkPublishCommitResponse;
+      if (type === 'module') {
+        result = await commitModuleBulkPublish(item.id, payload);
+      } else {
+        result = await commitChapterBulkPublish(item.id, payload);
+      }
+
+      if (isMountedRef.current) {
+        setCommitSuccess(result);
+        onSuccess?.(result);
+      }
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+
+      const isConflict =
+        (err instanceof ApiError && err.envelope?.status === 409) ||
+        (err as { status?: number })?.status === 409;
+
+      if (isConflict) {
+        const conflictMsg =
+          (err instanceof ApiError && err.envelope?.detail) ||
+          'Conflit de concurrence : le contenu a été modifié par un autre utilisateur. L’aperçu a été actualisé.';
+        setConflictError(conflictMsg);
+        await loadPreview(true);
+      } else {
+        const errorMsg =
+          (err instanceof ApiError && err.envelope?.detail) ||
+          (err as Error)?.message ||
+          'Échec de la publication en masse.';
+        setError(errorMsg);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsCommitting(false);
+      }
+    }
+  };
+
   const handleOpenChange = (open: boolean) => {
     if (!open) {
-      if (isLoading || !!editingLessonId) return;
+      if (isLoading || isCommitting || !!editingLessonId) return;
       onClose();
     }
   };
 
   const wouldChange = preview?.would_change ?? 0;
   const blockedCount = preview?.blocked?.length ?? 0;
-  const isAllPublished = preview !== null && wouldChange === 0 && blockedCount === 0;
+  const isAllPublished =
+    preview !== null && wouldChange === 0 && blockedCount === 0 && !commitSuccess;
 
   const readySummaryText =
     wouldChange <= 1
@@ -104,17 +185,23 @@ export function BulkPublishModal({
       ? '1 leçon bloquée'
       : `${blockedCount} leçons bloquées`;
 
+  const successSummaryText = commitSuccess
+    ? commitSuccess.changed <= 1
+      ? `${commitSuccess.changed} leçon publiée avec succès.`
+      : `${commitSuccess.changed} leçons publiées avec succès.`
+    : '';
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       {item && (
         <DialogContent
           data-testid="bulk-publish-modal"
-          className="sm:max-w-xl bg-surface border-border text-foreground"
+          className="sm:max-w-xl bg-surface border-border text-foreground max-h-[90vh] overflow-y-auto"
           onPointerDownOutside={(e) => {
-            if (isLoading || !!editingLessonId) e.preventDefault();
+            if (isLoading || isCommitting || !!editingLessonId) e.preventDefault();
           }}
           onEscapeKeyDown={(e) => {
-            if (isLoading || !!editingLessonId) e.preventDefault();
+            if (isLoading || isCommitting || !!editingLessonId) e.preventDefault();
           }}
         >
           <DialogHeader>
@@ -130,7 +217,7 @@ export function BulkPublishModal({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-2 space-y-4">
+          <div className="py-2 space-y-4 overflow-x-auto">
             {isLoading && (
               <div
                 role="status"
@@ -139,6 +226,19 @@ export function BulkPublishModal({
               >
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <span className="text-sm">Chargement de l'aperçu...</span>
+              </div>
+            )}
+
+            {conflictError && !isLoading && (
+              <div
+                role="alert"
+                data-testid="bulk-publish-conflict-alert"
+                className="rounded-lg border border-warning-border bg-warning-surface p-4 text-sm text-warning space-y-2"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
+                  <span>{conflictError}</span>
+                </div>
               </div>
             )}
 
@@ -152,22 +252,35 @@ export function BulkPublishModal({
                   <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
                   <span>{error}</span>
                 </div>
-                <div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    data-testid="bulk-publish-retry-btn"
-                    onClick={loadPreview}
-                    className="min-h-[44px] min-w-[44px] border-destructive-border text-destructive hover:bg-destructive/10"
-                  >
-                    Réessayer
-                  </Button>
-                </div>
+                {!preview && (
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="bulk-publish-retry-btn"
+                      onClick={() => loadPreview()}
+                      className="min-h-[44px] min-w-[44px] border-destructive-border text-destructive hover:bg-destructive/10"
+                    >
+                      Réessayer
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 
-            {preview && !isLoading && !error && (
+            {commitSuccess && (
+              <div
+                role="status"
+                data-testid="bulk-publish-success-notice"
+                className="flex items-center gap-3 rounded-lg border border-success-border bg-success-surface p-4 text-sm text-success"
+              >
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+                <span className="font-semibold">{successSummaryText}</span>
+              </div>
+            )}
+
+            {preview && !isLoading && (
               <>
                 {isAllPublished ? (
                   <div
@@ -181,8 +294,8 @@ export function BulkPublishModal({
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {/* Ready Lessons Summary */}
-                    {wouldChange > 0 && (
+                    {/* Ready Lessons Summary (only when not already committed) */}
+                    {!commitSuccess && wouldChange > 0 && (
                       <div
                         data-testid="bulk-publish-ready-summary"
                         className="flex items-center gap-3 rounded-lg border border-success-border bg-success-surface p-3 text-sm text-success"
@@ -206,7 +319,7 @@ export function BulkPublishModal({
                         <BlockedLessonsTable
                           blocked={preview.blocked}
                           onEditLesson={(lessonId) => setEditingLessonId(lessonId)}
-                          isUpdating={isLoading}
+                          isUpdating={isLoading || isCommitting}
                         />
                       </div>
                     )}
@@ -216,16 +329,38 @@ export function BulkPublishModal({
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
             <Button
               type="button"
               variant="outline"
               data-testid="bulk-publish-close-btn"
               onClick={onClose}
-              disabled={isLoading || !!editingLessonId}
+              disabled={isLoading || isCommitting || !!editingLessonId}
               className="min-h-[44px] min-w-[44px]"
             >
               Fermer
+            </Button>
+            <Button
+              type="button"
+              data-testid="bulk-publish-confirm-btn"
+              onClick={handleCommit}
+              disabled={
+                isLoading ||
+                isCommitting ||
+                wouldChange === 0 ||
+                !!editingLessonId ||
+                Boolean(commitSuccess)
+              }
+              className="min-h-[44px] min-w-[44px]"
+            >
+              {isCommitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <span>Publication en cours...</span>
+                </>
+              ) : (
+                'Confirmer la publication'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
