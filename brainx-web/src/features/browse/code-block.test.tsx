@@ -65,6 +65,12 @@ describe('Story FE-2.5: Composant Bloc de Code Syntaxique & Protection du Floor 
         { lang: 'sql', expected: 'SQL', code: 'SELECT id, name FROM courses;' },
         { lang: 'bash', expected: 'BASH', code: 'echo "hello terminal"' },
         { lang: 'sh', expected: 'BASH', code: 'npm run build' },
+        { lang: 'php', expected: 'PHP', code: 'namespace App\\Entity;\nclass User {\n  private string $name;\n}' },
+        { lang: 'yaml', expected: 'YAML', code: 'services:\n  App\\Service: true' },
+        { lang: 'yml', expected: 'YAML', code: 'framework:\n  secret: test' },
+        { lang: 'twig', expected: 'TWIG', code: '{% extends "base.html.twig" %}' },
+        { lang: 'json', expected: 'JSON', code: '{"name": "brainx"}' },
+        { lang: 'dockerfile', expected: 'DOCKERFILE', code: 'FROM php:8.2-fpm' },
       ];
 
       for (const { lang, expected, code } of cases) {
@@ -73,6 +79,39 @@ describe('Story FE-2.5: Composant Bloc de Code Syntaxique & Protection du Floor 
         expect(badge).toHaveTextContent(expected);
         unmount();
       }
+    });
+
+    it('highlights PHP syntax with keywords, class definitions, functions, and variables in distinct colors', () => {
+      const phpCode = `<?php\nnamespace App\\Entity;\nclass Course {\n    private string $title;\n    public function getTitle(): string {\n        return $this->title;\n    }\n}`;
+      render(<CodeBlock code={phpCode} language="php" />);
+
+      const pre = screen.getByTestId('code-pre');
+
+      // Coral red keywords (#FF7B72): namespace, class, private, public, function, return
+      const keywords = pre.querySelectorAll('.text-\\[\\#FF7B72\\]');
+      expect(keywords.length).toBeGreaterThanOrEqual(4);
+
+      // Purple functions & classes (#D2A8FF): Course, getTitle
+      const purpleTokens = pre.querySelectorAll('.text-\\[\\#D2A8FF\\]');
+      expect(purpleTokens.length).toBeGreaterThanOrEqual(1);
+
+      // Orange variables (#FFA657): $title, $this
+      const variableTokens = pre.querySelectorAll('.text-\\[\\#FFA657\\]');
+      expect(variableTokens.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('highlights Twig templates with tags, delimiters, and strings', () => {
+      const twigCode = `{% extends "base.html.twig" %}\n{% block body %}\n    <h1>{{ user.name }}</h1>\n{% endblock %}`;
+      render(<CodeBlock code={twigCode} language="twig" />);
+
+      const pre = screen.getByTestId('code-pre');
+      // Coral red tags/delimiters (#FF7B72): extends, block, endblock, {%
+      const redTokens = pre.querySelectorAll('.text-\\[\\#FF7B72\\]');
+      expect(redTokens.length).toBeGreaterThanOrEqual(3);
+
+      // Strings (#A5D6FF): "base.html.twig"
+      const stringTokens = pre.querySelectorAll('.text-\\[\\#A5D6FF\\]');
+      expect(stringTokens.length).toBeGreaterThanOrEqual(1);
     });
 
     it('falls back to uppercase CODE badge when language is omitted or unknown', () => {

@@ -4,6 +4,15 @@ import 'prismjs/components/prism-python';
 import 'prismjs/components/prism-sql';
 import 'prismjs/components/prism-bash';
 import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-markup-templating';
+import 'prismjs/components/prism-php';
+import 'prismjs/components/prism-yaml';
+import 'prismjs/components/prism-twig';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-docker';
+import 'prismjs/components/prism-ini';
+import 'prismjs/components/prism-markdown';
+import 'prismjs/components/prism-css';
 import { Copy, Check } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -16,6 +25,7 @@ export interface CodeBlockProps {
 interface CodeToken {
   text: string;
   type?: string;
+  alias?: string;
 }
 
 interface LanguageDefinition {
@@ -39,19 +49,37 @@ const LANGUAGE_MAP: Record<string, LanguageDefinition> = {
   sh: { label: 'BASH', getGrammar: () => Prism.languages.bash },
   shell: { label: 'BASH', getGrammar: () => Prism.languages.bash },
   zsh: { label: 'BASH', getGrammar: () => Prism.languages.bash },
+  php: { label: 'PHP', getGrammar: () => Prism.languages.php },
+  yaml: { label: 'YAML', getGrammar: () => Prism.languages.yaml },
+  yml: { label: 'YAML', getGrammar: () => Prism.languages.yaml },
+  twig: { label: 'TWIG', getGrammar: () => Prism.languages.twig },
+  json: { label: 'JSON', getGrammar: () => Prism.languages.json },
+  dockerfile: { label: 'DOCKERFILE', getGrammar: () => Prism.languages.docker },
+  docker: { label: 'DOCKER', getGrammar: () => Prism.languages.docker },
+  ini: { label: 'INI', getGrammar: () => Prism.languages.ini },
+  markdown: { label: 'MARKDOWN', getGrammar: () => Prism.languages.markdown },
+  md: { label: 'MARKDOWN', getGrammar: () => Prism.languages.markdown },
+  css: { label: 'CSS', getGrammar: () => Prism.languages.css },
 };
 
-function flattenTokens(tokens: (string | Prism.Token)[], parentType?: string): CodeToken[] {
+function flattenTokens(tokens: (string | Prism.Token)[], parentType?: string, parentAlias?: string): CodeToken[] {
   const result: CodeToken[] = [];
   for (const token of tokens) {
     if (typeof token === 'string') {
-      result.push({ text: token, type: parentType });
-    } else if (typeof token.content === 'string') {
-      result.push({ text: token.content, type: token.type || parentType });
-    } else if (Array.isArray(token.content)) {
-      result.push(...flattenTokens(token.content, token.type || parentType));
-    } else if (token.content) {
-      result.push(...flattenTokens([token.content as Prism.Token], token.type || parentType));
+      result.push({ text: token, type: parentType, alias: parentAlias });
+    } else {
+      const aliasStr = Array.isArray(token.alias)
+        ? token.alias.join(' ')
+        : (typeof token.alias === 'string' ? token.alias : parentAlias);
+      const tokenType = token.type || parentType;
+
+      if (typeof token.content === 'string') {
+        result.push({ text: token.content, type: tokenType, alias: aliasStr });
+      } else if (Array.isArray(token.content)) {
+        result.push(...flattenTokens(token.content, tokenType, aliasStr));
+      } else if (token.content) {
+        result.push(...flattenTokens([token.content as Prism.Token], tokenType, aliasStr));
+      }
     }
   }
   return result;
@@ -68,47 +96,59 @@ function splitTokensIntoLines(flatTokens: CodeToken[]): CodeToken[][] {
         lines.push([]);
       }
       if (parts[i].length > 0) {
-        lines[lines.length - 1].push({ text: parts[i], type: token.type });
+        lines[lines.length - 1].push({ text: parts[i], type: token.type, alias: token.alias });
       }
     }
   }
   return lines;
 }
 
-function getTokenClassName(type?: string): string {
-  if (!type) return 'text-[#E6EDF3]';
-  switch (type) {
-    case 'keyword':
-    case 'important':
-    case 'operator':
-      return 'text-[#FF7B72]'; // Keywords and operators per DESIGN.md:65
-    case 'boolean':
-    case 'number':
-    case 'constant':
-      return 'text-[#79C0FF]'; // Numbers and booleans per DESIGN.md:64
-    case 'string':
-    case 'char':
-    case 'attr-value':
-    case 'regex':
-      return 'text-[#A5D6FF]'; // Strings ("hello", 'value')
-    case 'function':
-    case 'class-name':
-    case 'builtin':
-      return 'text-[#D2A8FF]'; // Function names, methods, builtins
-    case 'comment':
-    case 'prolog':
-    case 'doctype':
-    case 'cdata':
-      return 'text-[#8B949E] italic'; // Comments
-    case 'attr-name':
-    case 'tag':
-    case 'property':
-      return 'text-[#79C0FF]'; // Attribute names and properties
-    case 'punctuation':
-    case 'variable':
-    default:
-      return 'text-[#E6EDF3]';
-  }
+function getTokenClassName(type?: string, alias?: string): string {
+  const check = (val?: string) => {
+    if (!val) return null;
+    switch (val) {
+      case 'keyword':
+      case 'important':
+      case 'operator':
+      case 'tag-name':
+      case 'instruction':
+      case 'delimiter':
+        return 'text-[#FF7B72]'; // Coral red (keywords, tags, operators, delimiters)
+      case 'boolean':
+      case 'number':
+      case 'constant':
+        return 'text-[#79C0FF]'; // Light blue (numbers, booleans, constants)
+      case 'string':
+      case 'char':
+      case 'attr-value':
+      case 'regex':
+        return 'text-[#A5D6FF]'; // Cyan / soft blue (strings)
+      case 'function':
+      case 'function-definition':
+      case 'class-name':
+      case 'class-name-definition':
+      case 'builtin':
+        return 'text-[#D2A8FF]'; // Purple (functions, classes, builtins)
+      case 'comment':
+      case 'prolog':
+      case 'doctype':
+      case 'cdata':
+        return 'text-[#8B949E] italic'; // Slate gray (comments)
+      case 'attr-name':
+      case 'tag':
+      case 'property':
+      case 'key':
+      case 'atrule':
+      case 'package':
+        return 'text-[#79C0FF]'; // Property, attribute, package, yaml keys
+      case 'variable':
+        return 'text-[#FFA657]'; // Warm amber/orange for variables ($this, $user)
+      default:
+        return null;
+    }
+  };
+
+  return check(type) || check(alias) || 'text-[#E6EDF3]';
 }
 
 export function CodeBlock({ code, language, className }: CodeBlockProps) {
@@ -261,7 +301,7 @@ export function CodeBlock({ code, language, className }: CodeBlockProps) {
               <span className="table-cell font-mono text-xs text-[#E6EDF3] whitespace-pre min-w-0">
                 {lineTokens.length > 0 ? (
                   lineTokens.map((t, tIdx) => (
-                    <span key={tIdx} className={getTokenClassName(t.type)}>
+                    <span key={tIdx} className={getTokenClassName(t.type, t.alias)}>
                       {t.text}
                     </span>
                   ))
