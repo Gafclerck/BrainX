@@ -20,10 +20,10 @@ import type {
   CreateResourcePayload,
   TrashItem,
   RestoredItemResult,
-  BlockedLessonPreviewItem,
   BulkPublishPreviewResponse,
   BulkPublishCommitPayload,
   BulkPublishCommitResponse,
+  SearchAggregateResponse,
 } from './types';
 
 /**
@@ -896,5 +896,56 @@ export async function fetchTrashItems(): Promise<TrashItem[]> {
 
   return trashItems;
 }
+
+export interface FetchSearchAnalyticsOptions {
+  signal?: AbortSignal;
+}
+
+/**
+ * Fetch aggregate search retrieval analytics for publisher back-office (Story FE-5.5).
+ * Queries backend aggregate port: GET /api/v1/search/aggregate/?date_from=...&date_to=...
+ * Supports optional date parameters both as (from, to) strings or as an object,
+ * and forwards optional AbortSignal to apiClient.
+ */
+export async function fetchSearchAnalytics(
+  fromOrRange?:
+    | string
+    | {
+        from?: string;
+        to?: string;
+        date_from?: string;
+        date_to?: string;
+        signal?: AbortSignal;
+      },
+  to?: string,
+  options?: FetchSearchAnalyticsOptions
+): Promise<SearchAggregateResponse> {
+  let dateFrom: string | undefined;
+  let dateTo: string | undefined;
+  let signal: AbortSignal | undefined = options?.signal;
+
+  if (typeof fromOrRange === 'object' && fromOrRange !== null) {
+    dateFrom = fromOrRange.date_from ?? fromOrRange.from;
+    dateTo = fromOrRange.date_to ?? fromOrRange.to;
+    signal = signal ?? fromOrRange.signal;
+  } else {
+    dateFrom = fromOrRange;
+    dateTo = to;
+  }
+
+  const params = new URLSearchParams();
+  if (dateFrom) {
+    params.set('date_from', dateFrom);
+  }
+  if (dateTo) {
+    params.set('date_to', dateTo);
+  }
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return apiClient<SearchAggregateResponse>(`/api/v1/search/aggregate/${query}`, {
+    signal,
+  });
+}
+
 
 

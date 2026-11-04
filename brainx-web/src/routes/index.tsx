@@ -20,6 +20,7 @@ import {
   PublisherCoursePage,
   PublisherLessonPage,
   PublisherTrashPage,
+  SearchAnalyticsDashboardPage,
 } from '@/features/publisher';
 
 export function CoursesPagePlaceholder() {
@@ -102,6 +103,7 @@ export function AppRoutes() {
         <Route path="/publisher" element={<PublisherDashboardPage />} />
         <Route path="/publisher/dashboard" element={<PublisherDashboardPage />} />
         <Route path="/publisher/trash" element={<PublisherTrashPage />} />
+        <Route path="/publisher/search-analytics" element={<SearchAnalyticsDashboardPage />} />
         <Route path="/publisher/courses/:courseId" element={<PublisherCoursePage />} />
         <Route path="/publisher/lessons/:lessonId" element={<PublisherLessonPage />} />
         <Route path="/publisher/*" element={<PublisherPagePlaceholder />} />

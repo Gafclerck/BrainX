@@ -14,3 +14,5 @@ export * from './components/publisher-trash-page';
 export * from './components/bulk-publish-modal';
 export * from './components/blocked-lessons-table';
 export * from './components/quick-edit-lesson-drawer';
+export * from './components/search-analytics-dashboard-page';
+

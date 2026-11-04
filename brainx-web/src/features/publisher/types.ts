@@ -259,4 +259,42 @@ export interface BulkPublishModalProps {
   onSuccess?: (result: BulkPublishCommitResponse) => void;
 }
 
+/**
+ * Types for Publisher Search Analytics (Story FE-5.5).
+ */
+export interface ZeroResultQueryItem {
+  query: string;
+  count: number;
+}
+
+export interface SearchAggregateResponse {
+  total_queries: number;
+  zero_result_queries: number;
+  total_zero_result_queries?: number;
+  total_answers: number;
+  negative_answers: number;
+  zero_result_rate: number;
+  sm5_rate: number;
+  sm5_zero_result_rate?: number;
+  negative_answer_rate: number;
+  sm6_rate: number;
+  sm6_negative_answer_rate?: number;
+  grouped_queries: ZeroResultQueryItem[];
+  grouped_zero_result_queries: ZeroResultQueryItem[];
+  zero_result_grouped_queries?: ZeroResultQueryItem[];
+}
+
+export interface SearchAnalyticsDateRange {
+  from: string;
+  to: string;
+}
+
+export type SearchAnalyticsPreset = 7 | 30 | 90 | 'custom';
+
+export type SearchAnalyticsViewState =
+  | { status: 'loading' }
+  | { status: 'success'; data: SearchAggregateResponse }
+  | { status: 'error'; message: string };
+
+
 
