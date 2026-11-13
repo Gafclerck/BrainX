@@ -40,3 +40,17 @@ BrainX is a learning platform that centralizes school courses and resources, so 
 - `brainx-api/.gitignore` lists `AGENTS.md` - this file is safe at the repo root, but a copy dropped inside `brainx-api/` would be silently untracked.
 
 <!-- /bmad:context -->
+
+## Testing Guidelines & Performance
+
+- **Fast Test Substrate**: Tests default to `config.settings.test`, which uses `MD5PasswordHasher`, `InMemoryStorage`, and `LocMemCache`. Never use production PBKDF2 hashing in tests.
+- **Running Tests**: Run with `python manage.py test --keepdb` on Windows using `.venv\Scripts\python.exe`.
+- **Fixtures**:
+  - Prefer `@classmethod setUpTestData(cls)` over `setUp(self)` for database fixtures that are read-only across methods.
+  - Tests that do not require database access must inherit from `SimpleTestCase`.
+- **DRY Contracts & Errors**:
+  - Import `assert_envelope` and `ENVELOPE_KEYS` from `apps.core.tests.helpers` for RFC 9457 error assertions.
+  - Group repetitive authorization tests (401/403) into declarative security matrices (`apps/content/tests/test_authorization_matrix.py`).
+- **Frontend (`brainx-web`)**:
+  - Use `renderWithProviders` from `@/test/test-utils` and shared fixtures from `@/test/fixtures`.
+

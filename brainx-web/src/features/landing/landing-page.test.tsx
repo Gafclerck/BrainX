@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { renderWithProviders, screen } from '@/test/test-utils';
 import { LandingPage } from './landing-page';
 import { useAuthStore } from '@/features/auth/auth-store';
 
@@ -10,11 +9,7 @@ describe('Story 2.1 & 2.2: Landing Page & RAG Teaser Showcase', () => {
   });
 
   it('renders Hero section with direct "Explorer les cours" CTA linking to /courses', () => {
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <LandingPage />
-      </MemoryRouter>
-    );
+    renderWithProviders(<LandingPage />, { route: '/' });
 
     const exploreBtn = screen.getByTestId('hero-explore-courses-btn');
     expect(exploreBtn).toBeInTheDocument();
@@ -27,11 +22,7 @@ describe('Story 2.1 & 2.2: Landing Page & RAG Teaser Showcase', () => {
   });
 
   it('renders the RAG AI Assistant showcase section with "Bientôt disponible" badge', () => {
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <LandingPage />
-      </MemoryRouter>
-    );
+    renderWithProviders(<LandingPage />, { route: '/' });
 
     const ragSection = screen.getByTestId('rag-teaser-section');
     expect(ragSection).toBeInTheDocument();

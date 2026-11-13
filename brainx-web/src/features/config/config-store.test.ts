@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createMockResponse } from '@/test/test-utils';
 import { useConfigStore } from './config-store';
 
 describe('Story 1.3: ConfigStore (useConfigStore)', () => {
@@ -36,12 +37,7 @@ describe('Story 1.3: ConfigStore (useConfigStore)', () => {
   it('fetches server config via GET /api/v1/config/ and updates publicBrowsing', async () => {
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes('/api/v1/config/')) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          text: () => Promise.resolve(JSON.stringify({ public_browsing: true })),
-          headers: new Headers({ 'content-type': 'application/json' }),
-        });
+        return createMockResponse({ public_browsing: true });
       }
       return Promise.reject(new Error('Unknown URL'));
     });
