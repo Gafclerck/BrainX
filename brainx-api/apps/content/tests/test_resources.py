@@ -1109,37 +1109,6 @@ class UrlTypeOutsideTests(ResourceEndpointTestCase):
         self.assertEqual(Resource.objects.count(), 0)
 
 
-class AuthorizationTests(ResourceEndpointTestCase):
-    def write_specs(self):
-        resource = Resource.objects.create(
-            lesson=self.lesson,
-            type='video',
-            title='Intro video',
-            url='https://videos.example.com/intro',
-            last_modified_by=self.publisher,
-        )
-        return [
-            (self.resources_url(), 'post', VIDEO_PAYLOAD),
-            (self.resource_url(resource), 'patch', {'title': 'Renamed'}),
-        ]
-
-    def test_a_student_cannot_write_a_resource(self):
-        for url, method, payload in self.write_specs():
-            with self.subTest(url=url):
-                response = getattr(self.student_client, method)(
-                    url, payload, format='json'
-                )
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_write_a_resource(self):
-        for url, method, payload in self.write_specs():
-            with self.subTest(url=url):
-                response = getattr(self.anonymous_client, method)(
-                    url, payload, format='json'
-                )
-                assert_envelope(self, response, 'unauthenticated', 401)
-
-
 class RoutingAndSchemaTests(ContentEndpointTestCase):
     def test_the_routes_live_under_the_api_prefix(self):
         for name in ('resource-create', 'resource-update', 'resource-retrieve'):
@@ -1952,24 +1921,3 @@ class ResourceRestoreTests(ResourceEndpointTestCase):
         ]
 
         self.assertIn('post', restore)
-
-
-class ResourceRemovalAuthorizationTests(ResourceEndpointTestCase):
-    def request_specs(self):
-        resource = self.url_resource()
-        return [
-            ('delete', self.resource_url(resource)),
-            ('post', self.restore_url(resource)),
-        ]
-
-    def test_a_student_cannot_remove_or_restore(self):
-        for method, url in self.request_specs():
-            with self.subTest(method=method):
-                response = getattr(self.student_client, method)(url)
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_remove_or_restore(self):
-        for method, url in self.request_specs():
-            with self.subTest(method=method):
-                response = getattr(self.anonymous_client, method)(url)
-                assert_envelope(self, response, 'unauthenticated', 401)

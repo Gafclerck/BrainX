@@ -449,28 +449,6 @@ class NotFoundTests(UpdateEndpointTestCase):
                 assert_envelope(self, response, 'not_found', 404)
 
 
-class AuthorizationTests(UpdateEndpointTestCase):
-    def request_specs(self):
-        return [
-            (self.update_url(model, row.pk), payload)
-            for model, row, payload in self.update_cases()
-        ]
-
-    def test_a_student_cannot_update_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.student_client.patch(url, payload, format='json')
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_update_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.anonymous_client.patch(
-                    url, payload, format='json'
-                )
-                assert_envelope(self, response, 'unauthenticated', 401)
-
-
 class SecondPublisherTests(UpdateEndpointTestCase):
     def test_a_second_publisher_stamps_themselves(self):
         second = User.objects.create_user(

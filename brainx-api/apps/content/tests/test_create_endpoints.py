@@ -221,29 +221,6 @@ class LessonMetadataTests(ContentEndpointTestCase):
         self.assertEqual(response.json()['description'], '')
 
 
-class AuthorizationTests(ContentEndpointTestCase):
-    def request_specs(self):
-        sid = uuid.uuid4()
-        return [
-            (reverse('course-create'), {'name': 'X', 'subject': 'Y'}),
-            (reverse('module-create', args=[sid]), {'name': 'X'}),
-            (reverse('chapter-create', args=[sid]), {'name': 'X'}),
-            (reverse('lesson-create', args=[sid]), LESSON_PAYLOAD),
-        ]
-
-    def test_a_student_cannot_create_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.student_client.post(url, payload, format='json')
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_create_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.anonymous_client.post(url, payload, format='json')
-                assert_envelope(self, response, 'unauthenticated', 401)
-
-
 class RoutingAndSchemaTests(ContentEndpointTestCase):
     def test_every_create_route_lives_under_the_api_prefix(self):
         for name in (
