@@ -1,4 +1,8 @@
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
+
+// In unit tests, default API base URL to empty so endpoints remain relative
+vi.stubEnv('VITE_API_BASE_URL', '');
 
 const storageMock = (() => {
   let store: Record<string, string> = {};

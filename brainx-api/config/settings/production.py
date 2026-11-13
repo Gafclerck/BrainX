@@ -12,13 +12,18 @@ SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 
-# Render (like most PaaS platforms) terminates TLS at its edge and forwards
+# Render / AWS EC2 reverse proxy (Caddy / ALB) terminates TLS and forwards
 # the request in HTTP with this header: without it, SECURE_SSL_REDIRECT
 # loops forever.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Trusted origins for a cross-origin POST forwarded by the HTTPS edge.
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+
+# Allowed regex origins for dynamic Vercel deployments and previews (Story 4.3 AC-3)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.vercel\.app$",
+]
 
 # In production, files must be stored on S3 (signed URLs): the 'local'
 # backend would serve the bytes without authentication.

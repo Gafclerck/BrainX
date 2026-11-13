@@ -85,7 +85,10 @@ export async function apiClient<T = unknown>(
     }
   }
 
-  const baseUrl = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/$/, '');
+  let baseUrl = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/$/, '');
+  if (baseUrl.endsWith('/api/v1') && endpoint.startsWith('/api/v1')) {
+    baseUrl = baseUrl.slice(0, -7);
+  }
   const url =
     endpoint.startsWith('http://') || endpoint.startsWith('https://')
       ? endpoint
