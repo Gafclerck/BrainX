@@ -19,13 +19,14 @@ from datetime import date
 from pathlib import Path
 
 from django.conf import settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
 from rest_framework.test import APIClient
 
 from .. import views, visibility
-from ..models import Chapter, Course, Lesson, Module
+from ..models import Chapter, Course, Lesson, Module, Resource
 from ..ordering import order_containers, order_lessons
 from ..serializers import LessonContextSerializer
 from .helpers import assert_envelope, class_sources
@@ -1016,3 +1017,115 @@ class VisibilityPredicateGuardTests(SimpleTestCase):
         source = Path(visibility.__file__).read_text(encoding='utf-8')
 
         self.assertIn('Lesson.objects.visible()', source)
+
+
+class PublicBrowsingTests(BrowseTestCase):
+    """Integration tests for dynamic public unauthenticated browsing (Story 1.1 / Story 3.1)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.lesson_2 = cls.make_lesson(
+            cls.chapter,
+            title='Lesson 2: Advanced Topics',
+            course_date=date(2026, 11, 2),
+            position=2,
+            is_published=True,
+        )
+        cls.resource = Resource.objects.create(
+            lesson=cls.lesson,
+            type=Resource.Type.DOCUMENT,
+            title='Course Syllabus PDF',
+            file=SimpleUploadedFile('syllabus.pdf', b'%PDF-1.4 test content', content_type='application/pdf'),
+            last_modified_by=cls.publisher,
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_can_browse_entire_content_tree(self):
+        endpoints = [
+            reverse('browse-course-list'),
+            reverse('browse-module-list', args=[self.course.id]),
+            reverse('browse-chapter-list', args=[self.module.id]),
+            reverse('browse-lesson-list', args=[self.chapter.id]),
+            reverse('browse-lesson-detail', args=[self.lesson.id]),
+            reverse('browse-lesson-navigation', args=[self.lesson.id]),
+        ]
+        for url in endpoints:
+            with self.subTest(url=url):
+                res = self.anonymous_client.get(url)
+                self.assertEqual(res.status_code, 200)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_lesson_detail_with_search_session_header_ignored_gracefully(self):
+        url = reverse('browse-lesson-detail', args=[self.lesson.id])
+        session_id = str(uuid.uuid4())
+        response = self.anonymous_client.get(url, HTTP_X_SEARCH_SESSION_ID=session_id)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['id'], str(self.lesson.id))
+        self.assertEqual(len(data['resources']), 1)
+        self.assertEqual(data['resources'][0]['title'], 'Course Syllabus PDF')
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_anonymous_rejected_with_401_when_public_browsing_disabled(self):
+        """All 6 browse endpoints reject unauthenticated caller with RFC 9457 401."""
+        endpoints = [
+            reverse('browse-course-list'),
+            reverse('browse-module-list', args=[self.course.id]),
+            reverse('browse-chapter-list', args=[self.module.id]),
+            reverse('browse-lesson-list', args=[self.chapter.id]),
+            reverse('browse-lesson-detail', args=[self.lesson.id]),
+            reverse('browse-lesson-navigation', args=[self.lesson.id]),
+        ]
+        for url in endpoints:
+            with self.subTest(url=url):
+                res = self.anonymous_client.get(url)
+                assert_envelope(self, res, 'unauthenticated', 401)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_authenticated_student_can_browse_when_flag_enabled(self):
+        url = reverse('browse-course-list')
+        response = self.student_client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()['results']), 1)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_authenticated_student_can_browse_when_flag_disabled(self):
+        url = reverse('browse-course-list')
+        response = self.student_client.get(url)
+        self.assertEqual(response.status_code, 200)
+        detail_url = reverse('browse-lesson-detail', args=[self.lesson.id])
+        detail_response = self.student_client.get(detail_url)
+        self.assertEqual(detail_response.status_code, 200)
+
+    def test_system_config_endpoint_reflects_setting(self):
+        url = reverse('core:config')
+        with override_settings(BRAINX_PUBLIC_BROWSING=True):
+            res_true = self.anonymous_client.get(url)
+            self.assertEqual(res_true.status_code, 200)
+            self.assertEqual(res_true.json(), {'public_browsing': True})
+
+        with override_settings(BRAINX_PUBLIC_BROWSING=False):
+            res_false = self.anonymous_client.get(url)
+            self.assertEqual(res_false.status_code, 200)
+            self.assertEqual(res_false.json(), {'public_browsing': False})
+
+    def test_publisher_mutation_endpoints_guarded_against_anon_and_student(self):
+        """Mutations reject anonymous (401) and student (403) regardless of flag."""
+        targets = [
+            ('post', reverse('course-create'), {'name': 'C', 'subject': 'S', 'position': 2}),
+            ('post', reverse('module-create', args=[self.course.id]), {'name': 'M', 'position': 2}),
+            ('post', reverse('chapter-create', args=[self.module.id]), {'name': 'Ch', 'position': 2}),
+            ('post', reverse('lesson-create', args=[self.chapter.id]), {'title': 'L', 'teacher': 'T', 'course_date': '2026-11-05'}),
+            ('post', reverse('lesson-publish', args=[self.lesson.id]), {}),
+            ('post', reverse('lesson-unpublish', args=[self.lesson.id]), {}),
+        ]
+        for flag in (True, False):
+            with override_settings(BRAINX_PUBLIC_BROWSING=flag):
+                for method, url, payload in targets:
+                    with self.subTest(flag=flag, url=url):
+                        res_anon = getattr(self.anonymous_client, method)(url, payload, format='json')
+                        assert_envelope(self, res_anon, 'unauthenticated', 401)
+                        res_student = getattr(self.student_client, method)(url, payload, format='json')
+                        assert_envelope(self, res_student, 'permission_denied', 403)
+
