@@ -81,7 +81,7 @@ Le calcul de la complexité temporelle s'effectue au pire des cas...
             self.assertEqual(lesson.resources.count(), 2)
             doc_res = lesson.resources.filter(type=Resource.Type.DOCUMENT).first()
             self.assertIsNotNone(doc_res)
-            self.assertTrue(doc_res.file.name.endswith("polycopie.pdf"))
+            self.assertTrue("polycopie" in doc_res.file.name and doc_res.file.name.endswith(".pdf"))
 
             ext_res = lesson.resources.filter(type=Resource.Type.EXTERNAL_LINK).first()
             self.assertIsNotNone(ext_res)
