@@ -31,33 +31,36 @@ def client_for(user):
 class ContentEndpointTestCase(TestCase):
     """A publisher client, a student client, and the tree they act on."""
 
-    def setUp(self):
-        self.publisher = User.objects.create_user(
+    @classmethod
+    def setUpTestData(cls):
+        cls.publisher = User.objects.create_user(
             email='publisher@example.com',
             password=PASSWORD,
             is_publisher=True,
             is_email_verified=True,
         )
-        self.student = User.objects.create_user(
+        cls.student = User.objects.create_user(
             email='student@example.com',
             password=PASSWORD,
         )
+        cls.course = Course.objects.create(
+            name='Maths', subject='Algebra', position=1,
+            last_modified_by=cls.publisher,
+        )
+        cls.module = Module.objects.create(
+            course=cls.course, name='Module 1', position=1,
+            last_modified_by=cls.publisher,
+        )
+        cls.chapter = Chapter.objects.create(
+            module=cls.module, name='Chapter 1', position=1,
+            last_modified_by=cls.publisher,
+        )
+
+    def setUp(self):
+        super().setUp()
         self.publisher_client = client_for(self.publisher)
         self.student_client = client_for(self.student)
         self.anonymous_client = APIClient()
-
-        self.course = Course.objects.create(
-            name='Maths', subject='Algebra', position=1,
-            last_modified_by=self.publisher,
-        )
-        self.module = Module.objects.create(
-            course=self.course, name='Module 1', position=1,
-            last_modified_by=self.publisher,
-        )
-        self.chapter = Chapter.objects.create(
-            module=self.module, name='Chapter 1', position=1,
-            last_modified_by=self.publisher,
-        )
 
     def lesson_url(self, chapter=None):
         return reverse(

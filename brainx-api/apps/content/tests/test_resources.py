@@ -20,7 +20,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, models, transaction
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
 
@@ -49,42 +49,8 @@ def bad_urls():
     )
 
 
-class ResourceModelTests(TestCase):
-    """The table: fields, Meta, and the two CHECK constraints (AC 1-3)."""
-
-    def setUp(self):
-        self.actor = User.objects.create_user(email='actor@example.com')
-        self.course = Course.objects.create(
-            name='Maths', subject='Algebra', position=1,
-            last_modified_by=self.actor,
-        )
-        self.module = Module.objects.create(
-            course=self.course, name='Module 1', position=1,
-            last_modified_by=self.actor,
-        )
-        self.chapter = Chapter.objects.create(
-            module=self.module, name='Chapter 1', position=1,
-            last_modified_by=self.actor,
-        )
-        self.lesson = Lesson.objects.create(
-            chapter=self.chapter,
-            title='Introduction',
-            teacher='Ms Ada',
-            course_date=date(2026, 9, 1),
-            position=1,
-            last_modified_by=self.actor,
-        )
-
-    def url_payload(self, **overrides):
-        payload = {
-            'type': 'video',
-            'title': 'Intro video',
-            'url': 'https://videos.example.com/intro',
-            'lesson': self.lesson,
-            'last_modified_by': self.actor,
-        }
-        payload.update(overrides)
-        return payload
+class ResourceModelMetaTests(SimpleTestCase):
+    """Resource table meta and type definitions (pure static checks)."""
 
     def test_type_is_the_closed_glossary_set(self):
         self.assertEqual(
@@ -126,6 +92,45 @@ class ResourceModelTests(TestCase):
         self.assertTrue(Resource._meta.get_field('note').blank)
         self.assertTrue(Resource._meta.get_field('url').blank)
         self.assertTrue(Resource._meta.get_field('url').null)
+
+
+class ResourceModelConstraintTests(TestCase):
+    """The table: database CHECK constraints and validators (AC 1-3)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.actor = User.objects.create_user(email='actor@example.com')
+        cls.course = Course.objects.create(
+            name='Maths', subject='Algebra', position=1,
+            last_modified_by=cls.actor,
+        )
+        cls.module = Module.objects.create(
+            course=cls.course, name='Module 1', position=1,
+            last_modified_by=cls.actor,
+        )
+        cls.chapter = Chapter.objects.create(
+            module=cls.module, name='Chapter 1', position=1,
+            last_modified_by=cls.actor,
+        )
+        cls.lesson = Lesson.objects.create(
+            chapter=cls.chapter,
+            title='Introduction',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 1),
+            position=1,
+            last_modified_by=cls.actor,
+        )
+
+    def url_payload(self, **overrides):
+        payload = {
+            'type': 'video',
+            'title': 'Intro video',
+            'url': 'https://videos.example.com/intro',
+            'lesson': self.lesson,
+            'last_modified_by': self.actor,
+        }
+        payload.update(overrides)
+        return payload
 
     def test_the_database_rejects_a_payload_that_matches_no_type(self):
         for payload in (
@@ -182,10 +187,11 @@ class ResourceModelTests(TestCase):
 class ResourceEndpointTestCase(ContentEndpointTestCase):
     """The shared fixture plus a Lesson, and the two route lookups."""
 
-    def setUp(self):
-        super().setUp()
-        self.lesson = Lesson.objects.create(
-            chapter=self.chapter,
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.lesson = Lesson.objects.create(
+            chapter=cls.chapter,
             title='Introduction',
             teacher='Ms Ada',
             course_date=date(2026, 9, 1),
@@ -194,7 +200,7 @@ class ResourceEndpointTestCase(ContentEndpointTestCase):
             # Lesson: `ResourceRetrievalView` reads it through `visible()`,
             # which now hides a draft exactly as it hides a removed row.
             is_published=True,
-            last_modified_by=self.publisher,
+            last_modified_by=cls.publisher,
         )
 
     def resources_url(self, lesson=None):

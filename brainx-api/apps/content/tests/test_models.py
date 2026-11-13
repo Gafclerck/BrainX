@@ -3,20 +3,15 @@
 from datetime import date
 
 from django.db import IntegrityError, models, transaction
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from apps.users.models import User
 
 from ..models import Chapter, ContentNode, Course, Lesson, Module
 
 
-class TreeShapeTests(TestCase):
-    """Four concrete models in one foreign-key chain."""
-
-    def setUp(self):
-        # The rows here carry a real stamp, because every content row records
-        # its actor (Story 2.2) - a fixture without one is not a valid row.
-        self.actor = User.objects.create_user(email='actor@example.com')
+class TreeShapeMetaTests(SimpleTestCase):
+    """Pure meta and class definition tests for the four-level tree."""
 
     def test_course_module_chapter_share_the_abstract_base(self):
         self.assertTrue(ContentNode._meta.abstract)
@@ -41,6 +36,16 @@ class TreeShapeTests(TestCase):
             (Lesson, 'chapter'),
         ):
             self.assertFalse(model._meta.get_field(field).null)
+
+
+class ParentlessNodeTests(TestCase):
+    """Database integrity checks for parent containment chain."""
+
+    @classmethod
+    def setUpTestData(cls):
+        # The rows here carry a real stamp, because every content row records
+        # its actor (Story 2.2) - a fixture without one is not a valid row.
+        cls.actor = User.objects.create_user(email='actor@example.com')
 
     def test_the_database_rejects_a_parentless_node(self):
         # The one path the API cannot take, because the parent comes from the
@@ -86,24 +91,25 @@ class TreeShapeTests(TestCase):
 class PositionUniquenessTests(TestCase):
     """`position` is unique per parent, enforced by the applied schema."""
 
-    def setUp(self):
-        self.actor = User.objects.create_user(email='actor@example.com')
-        self.course = Course.objects.create(
-            name='Maths', subject='X', position=1, last_modified_by=self.actor
+    @classmethod
+    def setUpTestData(cls):
+        cls.actor = User.objects.create_user(email='actor@example.com')
+        cls.course = Course.objects.create(
+            name='Maths', subject='X', position=1, last_modified_by=cls.actor
         )
-        self.module = Module.objects.create(
-            course=self.course, name='M', position=1, last_modified_by=self.actor
+        cls.module = Module.objects.create(
+            course=cls.course, name='M', position=1, last_modified_by=cls.actor
         )
-        self.chapter = Chapter.objects.create(
-            module=self.module, name='C', position=1, last_modified_by=self.actor
+        cls.chapter = Chapter.objects.create(
+            module=cls.module, name='C', position=1, last_modified_by=cls.actor
         )
-        self.lesson = Lesson.objects.create(
-            chapter=self.chapter,
+        cls.lesson = Lesson.objects.create(
+            chapter=cls.chapter,
             title='L',
             teacher='Ms Ada',
             course_date=date(2026, 9, 1),
             position=1,
-            last_modified_by=self.actor,
+            last_modified_by=cls.actor,
         )
 
     def test_a_duplicate_position_within_a_parent_is_rejected(self):
@@ -134,8 +140,8 @@ class PositionUniquenessTests(TestCase):
                         model.objects.create(position=1, **kwargs)
 
 
-class LevelFieldTests(TestCase):
-    """What each level carries, and what it deliberately does not."""
+class LevelFieldTests(SimpleTestCase):
+    """What each level carries, and what it deliberately does not (pure schema check)."""
 
     def test_the_subject_lives_on_course_only(self):
         course_fields = {field.name for field in Course._meta.get_fields()}

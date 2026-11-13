@@ -35,18 +35,9 @@ from .test_create_endpoints import ContentEndpointTestCase
 class BrowseTestCase(ContentEndpointTestCase):
     """The shared tree with one visible Lesson, plus builders for the rest."""
 
-    def setUp(self):
-        super().setUp()
-        # The base fixture stops at the Chapter; a published Lesson is what
-        # makes the Chapter, and so the whole tree above it, visible.
-        self.lesson = self.make_lesson(self.chapter, position=1)
-        self.bad_token_client = APIClient()
-        self.bad_token_client.credentials(
-            HTTP_AUTHORIZATION='Bearer not-a-real-token'
-        )
-
+    @classmethod
     def make_lesson(
-        self,
+        cls,
         chapter,
         *,
         title='A lesson',
@@ -70,7 +61,21 @@ class BrowseTestCase(ContentEndpointTestCase):
             position=position,
             is_published=is_published,
             is_deleted=is_deleted,
-            last_modified_by=self.publisher,
+            last_modified_by=cls.publisher,
+        )
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        # The base fixture stops at the Chapter; a published Lesson is what
+        # makes the Chapter, and so the whole tree above it, visible.
+        cls.lesson = cls.make_lesson(cls.chapter, position=1)
+
+    def setUp(self):
+        super().setUp()
+        self.bad_token_client = APIClient()
+        self.bad_token_client.credentials(
+            HTTP_AUTHORIZATION='Bearer not-a-real-token'
         )
 
     def make_chapter(

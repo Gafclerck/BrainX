@@ -32,3 +32,8 @@ CACHES = {
         'LOCATION': 'brainx-test-cache',
     }
 }
+
+# Ensure public browsing is deterministic in test suite (default False)
+# Individual tests override with @override_settings(BRAINX_PUBLIC_BROWSING=True).
+BRAINX_PUBLIC_BROWSING = False
+
