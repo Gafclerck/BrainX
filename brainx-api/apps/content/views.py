@@ -37,7 +37,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsPublisher, IsVerifiedAccount
+from apps.core.permissions import (
+    IsAuthenticatedOrPublicAccess,
+    IsPublisher,
+    IsVerifiedAccount,
+    IsVerifiedAccountOrPublicAccess,
+    PublicBrowsingOrAuthenticated,
+)
 from apps.search import capture
 from apps.search.models import CloseReason
 
@@ -1306,7 +1312,10 @@ class ResourceRetrievalView(APIView):
     are served; video/external_link are treated as nonexistent (404).
     """
 
-    permission_classes = [IsAuthenticated, IsVerifiedAccount]
+    permission_classes = [
+        IsAuthenticatedOrPublicAccess,
+        IsVerifiedAccountOrPublicAccess,
+    ]
 
     @extend_schema(
         parameters=[
@@ -1363,7 +1372,7 @@ class ResourceRetrievalView(APIView):
 class BrowseCourseListView(GenericAPIView):
     """List the Courses that hold at least one visible Lesson (Story 5.2).
 
-    This is the Student port by construction: `IsAuthenticated` is the whole
+    This is the Student port by construction: `PublicBrowsingOrAuthenticated` is the
     gate, so an authenticated Publisher sees the same published tree and no
     caller sees an unpublished or soft-deleted Course. Rows are `{id, name}` in
     the shared container order, page-number paginated at the project default,
@@ -1371,7 +1380,7 @@ class BrowseCourseListView(GenericAPIView):
     filter on the removal or publication flags.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={
@@ -1398,7 +1407,7 @@ class BrowseModuleListView(GenericAPIView):
     are the visible ones scoped to that Course.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={
@@ -1425,7 +1434,7 @@ class BrowseChapterListView(GenericAPIView):
     and the Chapters listed are the visible ones scoped to that Module.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={
@@ -1458,7 +1467,7 @@ class BrowseLessonListView(GenericAPIView):
     costs a query.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         parameters=[
@@ -1524,7 +1533,7 @@ class LessonDetailView(GenericAPIView):
     endpoint with its own verified-account gate.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         parameters=[
@@ -1548,7 +1557,13 @@ class LessonDetailView(GenericAPIView):
     def get(self, request, lesson_id):
         session_id = request.headers.get('X-Search-Session-Id')
         session = None
-        if session_id and session_id.strip():
+        if (
+            session_id
+            and session_id.strip()
+            and request.user
+            and request.user.is_authenticated
+            and not request.user.is_anonymous
+        ):
             session = capture.resolve_session(request.user, session_id.strip())
 
         visible = visible_content()
@@ -1575,7 +1590,7 @@ class LessonDetailView(GenericAPIView):
 class LessonNavigationView(APIView):
     """Retrieve previous and next visible Lessons in the same Course."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={

@@ -31,7 +31,12 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.core.exceptions import TITLES
-from apps.core.permissions import IsPublisher, IsVerifiedAccount
+from apps.core.permissions import (
+    IsPublisher,
+    IsVerifiedAccount,
+    IsVerifiedAccountOrPublicAccess,
+    PublicBrowsingOrAuthenticated,
+)
 from apps.users.models import User
 from apps.users.serializers import (
     AccountStateSerializer,
@@ -634,3 +639,143 @@ class PrivilegeProtectionSecurityTests(TestCase):
                 self.authenticate_as(user)
                 response = self.client.post('/test-action/', format='json')
                 assert_envelope(self, response, 'permission_denied', 403)
+
+
+class PublicBrowsingOrAuthenticatedUnitTestCase(SimpleTestCase):
+    """Unit tests for PublicBrowsingOrAuthenticated under both flag states."""
+
+    def setUp(self):
+        self.permission = PublicBrowsingOrAuthenticated()
+        self.view = SimpleNamespace()
+
+    def make_request(self, user=None, method='GET'):
+        return SimpleNamespace(user=user, method=method)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_flag_true_grants_anonymous_user(self):
+        req = self.make_request(user=AnonymousUser())
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_flag_true_grants_none_user(self):
+        req = self.make_request(user=None)
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_flag_true_grants_authenticated_user(self):
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False)
+        req = self.make_request(user=user)
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_rejects_anonymous_user(self):
+        req = self.make_request(user=AnonymousUser())
+        self.assertFalse(self.permission.has_permission(req, self.view))
+        self.assertFalse(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_rejects_none_user(self):
+        req = self.make_request(user=None)
+        self.assertFalse(self.permission.has_permission(req, self.view))
+        self.assertFalse(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_grants_authenticated_user(self):
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False)
+        req = self.make_request(user=user)
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_rejects_user_with_falsy_is_authenticated(self):
+        user = SimpleNamespace(is_authenticated=False, is_anonymous=True)
+        req = self.make_request(user=user)
+        self.assertFalse(self.permission.has_permission(req, self.view))
+        self.assertFalse(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+
+class IsVerifiedAccountOrPublicAccessUnitTestCase(SimpleTestCase):
+    """Unit tests for IsVerifiedAccountOrPublicAccess under both flag states."""
+
+    def setUp(self):
+        self.permission = IsVerifiedAccountOrPublicAccess()
+        self.view = SimpleNamespace()
+
+    def make_request(self, user=None, method='GET'):
+        return SimpleNamespace(user=user, method=method)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_flag_true_grants_anonymous_user(self):
+        req = self.make_request(user=AnonymousUser())
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_flag_true_grants_none_user(self):
+        req = self.make_request(user=None)
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_flag_true_grants_unverified_user(self):
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False, is_email_verified=False)
+        req = self.make_request(user=user)
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_rejects_anonymous_user(self):
+        req = self.make_request(user=AnonymousUser())
+        self.assertFalse(self.permission.has_permission(req, self.view))
+        self.assertFalse(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_rejects_none_user(self):
+        req = self.make_request(user=None)
+        self.assertFalse(self.permission.has_permission(req, self.view))
+        self.assertFalse(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_rejects_unverified_user(self):
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False, is_email_verified=False)
+        req = self.make_request(user=user)
+        self.assertFalse(self.permission.has_permission(req, self.view))
+        self.assertFalse(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_flag_false_grants_verified_user(self):
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False, is_email_verified=True)
+        req = self.make_request(user=user)
+        self.assertTrue(self.permission.has_permission(req, self.view))
+        self.assertTrue(
+            self.permission.has_object_permission(req, self.view, SimpleNamespace())
+        )

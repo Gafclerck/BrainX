@@ -236,9 +236,9 @@ export function LandingPage() {
               size="lg"
               className="w-full sm:w-auto min-h-[48px] px-8 text-base shadow-lg shadow-primary/25 gap-2"
             >
-              <Link to="/register">
-                <UserPlus className="h-5 w-5" />
-                <span>Créer un compte étudiant</span>
+              <Link to="/courses" data-testid="hero-explore-courses-btn">
+                <BookOpen className="h-5 w-5" />
+                <span>Explorer les cours</span>
                 <ArrowRight className="h-4 w-4 ml-1" />
               </Link>
             </Button>
@@ -248,11 +248,74 @@ export function LandingPage() {
               size="lg"
               className="w-full sm:w-auto min-h-[48px] px-8 text-base gap-2 bg-surface/50 border-border hover:bg-surface"
             >
-              <Link to="/login">
+              <Link to="/login" data-testid="hero-login-btn">
                 <LogIn className="h-5 w-5" />
                 <span>Se connecter</span>
               </Link>
             </Button>
+          </div>
+        </section>
+
+        {/* Section Vitrine RAG Teaser (Story 2.2) */}
+        <section
+          data-testid="rag-teaser-section"
+          className="rounded-2xl border border-primary/30 bg-card/60 backdrop-blur-md p-6 sm:p-10 relative overflow-hidden space-y-6 shadow-xl shadow-primary/5"
+        >
+          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+            <Sparkles className="w-64 h-64 text-primary" />
+          </div>
+
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/30 text-xs font-mono text-primary font-bold uppercase tracking-wider">
+              <Sparkles className="h-3.5 w-3.5 animate-spin" />
+              <span>RAG &bull; Retrieval-Augmented Generation</span>
+              <span className="bg-primary/20 text-primary px-1.5 py-0.5 rounded text-[10px]">BIENTÔT DISPONIBLE</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              Assistant IA Contextuel Intégré aux Cours
+            </h2>
+            <p className="text-sm sm:text-base text-foreground-muted max-w-2xl">
+              Bientôt sur BrainX : posez n'importe quelle question en langage naturel et obtenez des réponses précises extraites directement de vos supports de cours, polycopiés et schémas, avec renvoi direct vers la leçon concernée.
+            </p>
+          </div>
+
+          {/* Simulated Interactive Chat Preview */}
+          <div className="rounded-xl border border-border bg-surface/90 p-4 sm:p-6 space-y-4 max-w-2xl font-sans text-sm shadow-inner">
+            {/* Student query bubble */}
+            <div className="flex items-start gap-3 justify-end">
+              <div className="bg-primary/15 border border-primary/30 rounded-2xl rounded-tr-sm px-4 py-2.5 text-foreground max-w-md">
+                <p className="text-xs font-mono text-primary font-semibold mb-1">Étudiant</p>
+                <p className="text-sm">« Comment fonctionne le principe de partitionnement horizontal dans une base de données distribuée ? »</p>
+              </div>
+              <div className="h-8 w-8 rounded-full bg-surface border border-border flex items-center justify-center shrink-0 text-foreground-muted">
+                <Users className="h-4 w-4" />
+              </div>
+            </div>
+
+            {/* AI Assistant response bubble */}
+            <div className="flex items-start gap-3">
+              <div className="h-8 w-8 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center shrink-0 text-primary">
+                <Cpu className="h-4 w-4" />
+              </div>
+              <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3 text-foreground space-y-2.5 max-w-lg shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-mono text-primary font-semibold flex items-center gap-1.5">
+                    <Sparkles className="h-3 w-3" />
+                    BrainX AI (RAG Engine)
+                  </span>
+                  <span className="text-[10px] font-mono text-foreground-subtle bg-surface px-2 py-0.5 rounded border border-border">
+                    100% Sourcé
+                  </span>
+                </div>
+                <p className="text-sm text-foreground-muted leading-relaxed">
+                  Le partitionnement horizontal (ou <em>sharding</em>) divise une table en plusieurs sous-ensembles de lignes distribués sur des nœuds distincts en utilisant une clé de partitionnement (<em>shard key</em>).
+                </p>
+                <div className="pt-1 border-t border-border/60 flex items-center gap-2 text-xs text-primary font-medium">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  <span>Source : Systèmes Distribués &bull; Module 2 &bull; Chapitre 4 (Leçon 2)</span>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 

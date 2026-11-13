@@ -75,7 +75,7 @@ from apps.content.serializers import BrowseLessonSerializer
 from apps.content.views import ENVELOPE_RESPONSE, list_response
 from apps.content.visibility import visible_content
 from apps.core.exceptions import Conflict
-from apps.core.permissions import IsPublisher
+from apps.core.permissions import IsAuthenticatedOrPublicAccess, IsPublisher
 
 from . import capture
 from .date_filters import parse_date_range
@@ -205,7 +205,7 @@ def _extract_session_id(request):
 class SearchLessonView(GenericAPIView):
     """Find visible Lessons across every Course by text (Story 5.4)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrPublicAccess]
 
     @extend_schema(
         parameters=[
@@ -330,8 +330,11 @@ class SearchLessonView(GenericAPIView):
         spellings like `01`, `+1` or ` 1` as page one. Capture is additive
         instrumentation, so the call is guarded even though the port already
         swallows its own failures - a capture failure must never turn a valid
-        search into an error.
+        search into an error. Anonymous users record no search session.
         """
+        if request.user is None or not request.user.is_authenticated:
+            return None
+
         page = request.query_params.get('page')
         if page is not None:
             try:

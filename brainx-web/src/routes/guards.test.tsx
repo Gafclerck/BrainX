@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { AppRoutes, CoursesPagePlaceholder, PublisherPagePlaceholder } from './index';
 import {
+  AuthGuard,
   sanitizeReturnUrl,
   PUBLISHER_NOTICE,
 } from './guards';
@@ -25,8 +26,13 @@ function LocationTracker() {
 describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-After', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.stubEnv('VITE_PUBLIC_BROWSING', 'false');
     useAuthStore.getState().clearAuth();
     window.localStorage?.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   afterEach(() => {
@@ -143,6 +149,21 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       expect(screen.getByTestId('current-location')).toHaveTextContent(
         `/login?returnUrl=${expectedReturnUrl}`
       );
+    });
+
+    it('allows unauthenticated visitor when allowGuest or public browsing is active', () => {
+      vi.stubEnv('VITE_PUBLIC_BROWSING', 'true');
+      render(
+        <MemoryRouter initialEntries={['/courses']}>
+          <LocationTracker />
+          <AuthGuard allowGuest={true}>
+            <div data-testid="public-courses-content">Contenu Public</div>
+          </AuthGuard>
+        </MemoryRouter>
+      );
+
+      expect(screen.getByTestId('public-courses-content')).toBeInTheDocument();
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/courses');
     });
 
     it('renders child content when user is authenticated with a valid accessToken', () => {

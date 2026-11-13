@@ -245,6 +245,11 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 2.5 * 1024 * 1024
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 CORS_ALLOW_CREDENTIALS = True
 
+# Public unauthenticated content & resource browsing switch (Epic 1 / AD-AuthToggle).
+# When True, anonymous visitors can read published courses, lessons, and retrieve resources.
+# When False (default for tests), strictly requires authentication (and verified account for files).
+BRAINX_PUBLIC_BROWSING = env.bool('BRAINX_PUBLIC_BROWSING', default=False)
+
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
