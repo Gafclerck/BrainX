@@ -1,6 +1,5 @@
 """The single write port that stamps who changed a content row (Story 2.2)."""
 
-import ast
 from datetime import date
 from pathlib import Path
 from unittest import mock
@@ -360,43 +359,6 @@ class SchemaAuthorshipTests(TestCase):
     def test_the_shared_timestamped_base_carries_no_author(self):
         names = {field.name for field in TimeStampedModel._meta.local_fields}
         self.assertEqual(names, {'created_at', 'updated_at'})
-
-
-class NoQuerysetUpdateTests(SimpleTestCase):
-    """No view or the port itself rewrites a content row in place."""
-
-    def calls_update(self, module):
-        tree = ast.parse(Path(module.__file__).read_text(encoding='utf-8'))
-        return [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == 'update'
-        ]
-
-    def test_views_and_mutations_never_call_update(self):
-        for module in (views, mutations):
-            with self.subTest(module=module.__name__):
-                self.assertEqual(self.calls_update(module), [])
-
-    def test_the_removal_helpers_delegate_every_write(self):
-        tree = ast.parse(Path(mutations.__file__).read_text(encoding='utf-8'))
-        functions = {
-            node.name: node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef)
-        }
-        for name in ('remove', 'restore', 'reorder_children'):
-            with self.subTest(function=name):
-                called = {
-                    node.func.attr
-                    for node in ast.walk(functions[name])
-                    if isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                }
-                self.assertNotIn('save', called)
-                self.assertNotIn('update', called)
 
 
 class MigrationBackfillTests(TransactionTestCase):

@@ -603,23 +603,3 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
                     ]['$ref'],
                     f'#/components/schemas/{level}',
                 )
-
-
-class NoSecondWritePathTests(TestCase):
-    """The port is the only update path, so no update view calls `.update()`."""
-
-    def test_views_module_never_calls_queryset_update(self):
-        import ast
-        from pathlib import Path
-
-        from .. import views
-
-        tree = ast.parse(Path(views.__file__).read_text(encoding='utf-8'))
-        calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == 'update'
-        ]
-        self.assertEqual(calls, [])

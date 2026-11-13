@@ -516,27 +516,8 @@ class ViewSetActionPermissionDispatchTests(TestCase):
 # ---------------------------------------------------------------------------
 
 @TEST_SETTINGS
-class PrivilegeProtectionSecurityTests(TestCase):
-    """Verify is_publisher is the sole privilege identity and cannot be leaked/mutated."""
-
-    def setUp(self):
-        self.client = APIClient()
-        self.publisher = User.objects.create_user(
-            email=PUBLISHER_EMAIL,
-            password=None,
-            is_email_verified=True,
-            is_publisher=True,
-        )
-        self.student = User.objects.create_user(
-            email=STUDENT_EMAIL,
-            password=None,
-            is_email_verified=True,
-            is_publisher=False,
-        )
-
-    def authenticate_as(self, user):
-        token = str(AccessToken.for_user(user))
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+class PrivilegeProtectionMetaTests(SimpleTestCase):
+    """Static schema and serializer tests for is_publisher privilege protection."""
 
     def test_is_publisher_is_boolean_default_false_on_user_model(self):
         field = User._meta.get_field('is_publisher')
@@ -575,6 +556,34 @@ class PrivilegeProtectionSecurityTests(TestCase):
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)
         self.assertNotIn('is_publisher', serializer.validated_data)
+
+
+@TEST_SETTINGS
+class PrivilegeProtectionSecurityTests(TestCase):
+    """Verify is_publisher is the sole privilege identity and cannot be leaked/mutated."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.publisher = User.objects.create_user(
+            email=PUBLISHER_EMAIL,
+            password=None,
+            is_email_verified=True,
+            is_publisher=True,
+        )
+        cls.student = User.objects.create_user(
+            email=STUDENT_EMAIL,
+            password=None,
+            is_email_verified=True,
+            is_publisher=False,
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.client = APIClient()
+
+    def authenticate_as(self, user):
+        token = str(AccessToken.for_user(user))
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
 
     def test_me_endpoint_omits_is_publisher_for_student_and_publisher(self):
         # GET /api/v1/me/ must never expose is_publisher

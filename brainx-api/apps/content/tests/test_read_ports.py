@@ -9,7 +9,6 @@ answer the project envelope. The AD-2 Student property test is Epic 5's, since
 no Student-facing endpoint exists until then.
 """
 
-import ast
 import uuid
 from datetime import date
 from pathlib import Path
@@ -154,18 +153,10 @@ class TwoPortsGuardTests(SimpleTestCase):
     """AD-2's "exactly two named ports, no third" is structure, not habit."""
 
     def public_selectors(self):
-        tree = ast.parse(Path(models.__file__).read_text(encoding='utf-8'))
-        queryset = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.ClassDef)
-            and node.name == 'ContentQuerySet'
-        )
         return {
-            node.name
-            for node in queryset.body
-            if isinstance(node, ast.FunctionDef)
-            and not node.name.startswith('_')
+            name
+            for name, val in ContentQuerySet.__dict__.items()
+            if callable(val) and not name.startswith('_')
         }
 
     def test_only_the_two_ports_and_their_subcase_are_defined(self):

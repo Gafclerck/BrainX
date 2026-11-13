@@ -943,15 +943,17 @@ class PublishedSchemaTests(TestCase):
     else in the suite would notice, so the generated document is asserted here.
     """
 
-    def setUp(self):
-        self.schema = SchemaGenerator().get_schema(request=None, public=True)
-        self.components = self.schema['components']['schemas']
-        self.paths = self.schema['paths']
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.schema = SchemaGenerator().get_schema(request=None, public=True)
+        cls.components = cls.schema['components']['schemas']
+        cls.paths = cls.schema['paths']
         # The prefix is the project's, not a literal written out here again:
         # `API_PREFIX` is the version contract, so a test that hardcodes `/api/v1`
         # keeps passing after the contract moves and stops meaning anything.
-        self.register_path = f'{settings.API_PREFIX}/register/'
-        self.operation = self.paths[self.register_path]['post']
+        cls.register_path = f'{settings.API_PREFIX}/register/'
+        cls.operation = cls.paths[cls.register_path]['post']
 
     def named_schema(self, ref):
         """The component schema a `$ref` points at, which must exist."""

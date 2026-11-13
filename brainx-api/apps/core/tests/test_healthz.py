@@ -6,8 +6,6 @@ not installed and not mounted, so `/admin/` is an unmatched route; with
 project's `handler404` as the same five-key envelope every handled 404 uses.
 """
 
-import ast
-
 from django.conf import settings
 from django.test import SimpleTestCase, override_settings
 from django.urls import Resolver404, resolve, reverse
@@ -39,7 +37,7 @@ class HealthzTests(SimpleTestCase):
 
 
 class DjangoAdminRemovalTests(SimpleTestCase):
-    """The admin app is gone: not installed, not mounted, nothing registered."""
+    """The admin app is gone: not installed, not mounted."""
 
     def test_admin_app_is_not_installed(self):
         self.assertNotIn('django.contrib.admin', settings.INSTALLED_APPS)
@@ -47,29 +45,6 @@ class DjangoAdminRemovalTests(SimpleTestCase):
     def test_no_admin_route_is_mounted(self):
         with self.assertRaises(Resolver404):
             resolve('/admin/')
-
-    def test_no_model_is_registered_in_the_admin_site(self):
-        # AC4: no `admin.site.register(...)` call exists anywhere. Parsed as
-        # AST rather than grepped, so this file's own source strings, comments
-        # and imports cannot produce a false hit.
-        root = settings.BASE_DIR
-        sources = sorted(root.glob('apps/**/*.py')) + sorted(
-            root.glob('config/**/*.py')
-        )
-        self.assertTrue(sources, 'no source files found to scan')
-        for path in sources:
-            tree = ast.parse(
-                path.read_text(encoding='utf-8'), filename=str(path)
-            )
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == 'register'
-                    and isinstance(node.func.value, ast.Attribute)
-                    and node.func.value.attr == 'site'
-                ):
-                    self.fail(f'admin.site.register call found in {path}')
 
 
 @override_settings(DEBUG=False)

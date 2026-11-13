@@ -927,12 +927,14 @@ class PublishedVerificationSchemaTests(TestCase):
     notice, so the generated document is asserted here.
     """
 
-    def setUp(self):
-        self.schema = SchemaGenerator().get_schema(request=None, public=True)
-        self.components = self.schema['components']['schemas']
-        self.paths = self.schema['paths']
-        self.verify_path = f'{settings.API_PREFIX}/verify-email/'
-        self.me_path = f'{settings.API_PREFIX}/me/'
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.schema = SchemaGenerator().get_schema(request=None, public=True)
+        cls.components = cls.schema['components']['schemas']
+        cls.paths = cls.schema['paths']
+        cls.verify_path = f'{settings.API_PREFIX}/verify-email/'
+        cls.me_path = f'{settings.API_PREFIX}/me/'
 
     def named_schema(self, ref):
         name = ref.rsplit('/', 1)[-1]
