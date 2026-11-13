@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import { useAuthStore } from '@/features/auth/auth-store';
+import * as configModule from '@/features/config';
 
 describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
   beforeEach(() => {
@@ -83,5 +84,12 @@ describe('BrainX Frontend UI Foundation (FE-1.1)', () => {
       expect(screen.queryByTestId('app-root')).not.toBeInTheDocument();
       expect(screen.getByTestId('student-layout')).toBeInTheDocument();
     });
+  });
+
+  it('invokes fetchPublicConfig on mount to dynamically synchronize runtime configuration', () => {
+    const fetchSpy = vi.spyOn(configModule, 'fetchPublicConfig');
+    render(<App />);
+    expect(fetchSpy).toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

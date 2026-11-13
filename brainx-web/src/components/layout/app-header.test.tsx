@@ -226,6 +226,7 @@ describe('Story FE-2.1: AppHeader Component', () => {
   });
 
   it('toggles profile menu when profile button is clicked, closes on Escape, and restores focus', async () => {
+    useAuthStore.getState().setTokens({ access: 'valid-access', refresh: 'valid-refresh' });
     useAuthStore.getState().setUser({ email: 'etudiant@univ.edu', is_publisher: false });
 
     render(
@@ -254,6 +255,7 @@ describe('Story FE-2.1: AppHeader Component', () => {
   });
 
   it('displays "Compte invité" if user email is missing', async () => {
+    useAuthStore.getState().setTokens({ access: 'valid-access', refresh: 'valid-refresh' });
     useAuthStore.getState().setUser(null);
 
     render(
@@ -269,6 +271,7 @@ describe('Story FE-2.1: AppHeader Component', () => {
   });
 
   it('closes profile menu when clicking outside', async () => {
+    useAuthStore.getState().setTokens({ access: 'valid-access', refresh: 'valid-refresh' });
     render(
       <MemoryRouter>
         <div>
@@ -288,6 +291,7 @@ describe('Story FE-2.1: AppHeader Component', () => {
   });
 
   it('displays publisher badge and link to /publisher for publisher users', async () => {
+    useAuthStore.getState().setTokens({ access: 'valid-access', refresh: 'valid-refresh' });
     useAuthStore.getState().setUser({ email: 'prof@univ.edu', is_publisher: true });
     useAuthStore.getState().setIsPublisher(true);
 
@@ -357,5 +361,67 @@ describe('Story FE-2.1: AppHeader Component', () => {
     expect(screen.getByTestId('custom-left-btn')).toBeInTheDocument();
     expect(screen.getByTestId('right-drawer-slot')).toBeInTheDocument();
     expect(screen.getByTestId('custom-right-btn')).toBeInTheDocument();
+  });
+
+  describe('Guest Navigation (Unauthenticated State)', () => {
+    it('renders Catalogue link and Se connecter / S\'inscrire CTA button when unauthenticated', () => {
+      render(
+        <MemoryRouter initialEntries={['/courses']}>
+          <AppHeader />
+        </MemoryRouter>
+      );
+
+      const catalogueLink = screen.getByTestId('header-catalogue-link');
+      expect(catalogueLink).toBeInTheDocument();
+      expect(catalogueLink).toHaveAttribute('href', '/courses');
+      expect(catalogueLink).toHaveTextContent('Catalogue');
+      expect(catalogueLink.className).toContain('hidden sm:inline-flex');
+
+      const authCta = screen.getByTestId('header-auth-cta');
+      expect(authCta).toBeInTheDocument();
+      expect(authCta).toHaveAttribute('href', '/login?returnUrl=%2Fcourses');
+      expect(authCta).toHaveTextContent("Se connecter / S'inscrire");
+
+      // Empty profile menu avatar trigger must not be rendered
+      expect(screen.queryByTestId('profile-menu-trigger')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('profile-menu')).not.toBeInTheDocument();
+    });
+
+    it('preserves current path, query parameters and hash fragments in the auth CTA returnUrl', () => {
+      render(
+        <MemoryRouter initialEntries={['/lessons/django-intro?tab=code#section-2']}>
+          <AppHeader />
+        </MemoryRouter>
+      );
+
+      const authCta = screen.getByTestId('header-auth-cta');
+      expect(authCta).toBeInTheDocument();
+      const expectedReturnUrl = encodeURIComponent('/lessons/django-intro?tab=code#section-2');
+      expect(authCta).toHaveAttribute('href', `/login?returnUrl=${expectedReturnUrl}`);
+    });
+
+    it('hides Catalogue link and guest auth CTA when user is authenticated with accessToken', () => {
+      useAuthStore.getState().setTokens({
+        access: 'valid-test-access-token',
+        refresh: 'valid-test-refresh-token',
+      });
+      useAuthStore.getState().setUser({
+        email: 'authenticated@brainx.io',
+        is_publisher: false,
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/courses']}>
+          <AppHeader />
+        </MemoryRouter>
+      );
+
+      // Guest actions are hidden
+      expect(screen.queryByTestId('header-catalogue-link')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('header-auth-cta')).not.toBeInTheDocument();
+
+      // Profile trigger is visible
+      expect(screen.getByTestId('profile-menu-trigger')).toBeInTheDocument();
+    });
   });
 });

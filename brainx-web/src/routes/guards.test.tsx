@@ -4,6 +4,7 @@ import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
+import { useConfigStore } from '@/features/config/config-store';
 import { AppRoutes, CoursesPagePlaceholder, PublisherPagePlaceholder } from './index';
 import {
   AuthGuard,
@@ -24,15 +25,20 @@ function LocationTracker() {
 }
 
 describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-After', () => {
+  const originalFetch = globalThis.fetch;
+
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.stubEnv('VITE_PUBLIC_BROWSING', 'false');
+    useConfigStore.getState().setPublicBrowsing(false);
     useAuthStore.getState().clearAuth();
     window.localStorage?.clear();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    globalThis.fetch = originalFetch;
+    useConfigStore.getState().setPublicBrowsing(false);
   });
 
   afterEach(() => {
@@ -153,17 +159,146 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
 
     it('allows unauthenticated visitor when allowGuest or public browsing is active', () => {
       vi.stubEnv('VITE_PUBLIC_BROWSING', 'true');
-      render(
-        <MemoryRouter initialEntries={['/courses']}>
-          <LocationTracker />
-          <AuthGuard allowGuest={true}>
-            <div data-testid="public-courses-content">Contenu Public</div>
-          </AuthGuard>
-        </MemoryRouter>
-      );
+      useConfigStore.getState().setPublicBrowsing(true);
+      act(() => {
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <LocationTracker />
+            <AuthGuard allowGuest={true}>
+              <div data-testid="public-courses-content">Contenu Public</div>
+            </AuthGuard>
+          </MemoryRouter>
+        );
+      });
 
       expect(screen.getByTestId('public-courses-content')).toBeInTheDocument();
       expect(screen.getByTestId('current-location')).toHaveTextContent('/courses');
+    });
+
+    it('redirects unauthenticated visitor across all curriculum levels to /login when public browsing is inactive', () => {
+      const studentRoutes = [
+        '/courses',
+        '/courses/c-123',
+        '/modules/m-456',
+        '/chapters/ch-789',
+        '/lessons/l-012',
+      ];
+
+      for (const route of studentRoutes) {
+        const { unmount } = render(
+          <MemoryRouter initialEntries={[route]}>
+            <LocationTracker />
+            <AppRoutes />
+          </MemoryRouter>
+        );
+
+        const expectedReturnUrl = encodeURIComponent(route);
+        expect(screen.getByTestId('current-location')).toHaveTextContent(
+          `/login?returnUrl=${expectedReturnUrl}`
+        );
+        expect(screen.getByTestId('login-page-root')).toBeInTheDocument();
+        expect(screen.queryByTestId('student-layout')).not.toBeInTheDocument();
+
+        unmount();
+      }
+    });
+
+    it('grants unauthenticated visitor access across all curriculum levels when public browsing is active', async () => {
+      vi.stubEnv('VITE_PUBLIC_BROWSING', 'true');
+      useConfigStore.getState().setPublicBrowsing(true);
+
+      const mockData = {
+        id: 'test-id',
+        name: 'Item Test',
+        title: 'Item Test',
+        count: 0,
+        next: null,
+        previous: null,
+        results: [],
+        resources: [],
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify(mockData)),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        })
+      );
+
+      const studentRoutes = [
+        '/courses',
+        '/courses/c-123',
+        '/modules/m-456',
+        '/chapters/ch-789',
+        '/lessons/l-012',
+      ];
+
+      for (const route of studentRoutes) {
+        let unmountFn!: () => void;
+        await act(async () => {
+          const { unmount } = render(
+            <MemoryRouter initialEntries={[route]}>
+              <LocationTracker />
+              <AppRoutes />
+            </MemoryRouter>
+          );
+          unmountFn = unmount;
+        });
+
+        expect(screen.getByTestId('current-location')).toHaveTextContent(route);
+        expect(screen.getByTestId('student-layout')).toBeInTheDocument();
+        expect(screen.queryByTestId('login-page-root')).not.toBeInTheDocument();
+
+        // AppHeader displays guest actions, not authenticated profile menu
+        expect(screen.getByTestId('header-catalogue-link')).toBeInTheDocument();
+        expect(screen.getByTestId('header-auth-cta')).toBeInTheDocument();
+        expect(screen.queryByTestId('profile-menu-trigger')).not.toBeInTheDocument();
+
+        unmountFn();
+      }
+    });
+
+    it('honors dynamic config store update from /api/v1/config/ without env restart', async () => {
+      // VITE_PUBLIC_BROWSING remains 'false'
+      vi.stubEnv('VITE_PUBLIC_BROWSING', 'false');
+      useConfigStore.getState().setPublicBrowsing(false);
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/v1/config/')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ public_browsing: true })),
+            headers: new Headers({ 'content-type': 'application/json' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify({ count: 0, results: [] })),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        });
+      });
+
+      // Synchronize dynamic config from API
+      await act(async () => {
+        await useConfigStore.getState().fetchPublicConfig();
+      });
+      expect(useConfigStore.getState().publicBrowsing).toBe(true);
+
+      await act(async () => {
+        render(
+          <MemoryRouter initialEntries={['/courses']}>
+            <LocationTracker />
+            <AppRoutes />
+          </MemoryRouter>
+        );
+      });
+
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/courses');
+      expect(screen.getByTestId('student-layout')).toBeInTheDocument();
     });
 
     it('renders child content when user is authenticated with a valid accessToken', () => {
@@ -213,6 +348,38 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
       expect(
         screen.queryByTestId('publisher-page-placeholder')
       ).not.toBeInTheDocument();
+    });
+
+    it('blocks unauthenticated visitor from /publisher/* even when public browsing is active', () => {
+      vi.stubEnv('VITE_PUBLIC_BROWSING', 'true');
+      useConfigStore.getState().setPublicBrowsing(true);
+
+      const publisherRoutes = [
+        '/publisher',
+        '/publisher/dashboard',
+        '/publisher/trash',
+        '/publisher/search-analytics',
+        '/publisher/courses/course-uuid',
+        '/publisher/lessons/lesson-uuid',
+      ];
+
+      for (const route of publisherRoutes) {
+        const { unmount } = render(
+          <MemoryRouter initialEntries={[route]}>
+            <LocationTracker />
+            <AppRoutes />
+          </MemoryRouter>
+        );
+
+        const expectedReturnUrl = encodeURIComponent(route);
+        expect(screen.getByTestId('current-location')).toHaveTextContent(
+          `/login?returnUrl=${expectedReturnUrl}`
+        );
+        expect(screen.getByTestId('login-page-root')).toBeInTheDocument();
+        expect(screen.queryByTestId('publisher-page-placeholder')).not.toBeInTheDocument();
+
+        unmount();
+      }
     });
 
     it('redirects authenticated non-publisher (student) to /courses and displays informative banner without altering tokens', async () => {

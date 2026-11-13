@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Search, User, LogOut, BookOpen } from 'lucide-react';
 import { useAuthStore } from '@/features/auth/auth-store';
 import { BrainXLogo } from '@/components/ui/brainx-logo';
@@ -21,10 +21,12 @@ export function AppHeader({
   forceShortcutLabel,
 }: AppHeaderProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isProfileOpen, setIsProfileOpen] = React.useState(false);
   const profileMenuRef = React.useRef<HTMLDivElement>(null);
   const profileTriggerRef = React.useRef<HTMLButtonElement>(null);
 
+  const accessToken = useAuthStore((s) => s.accessToken);
   const user = useAuthStore((s) => s.user);
   const isPublisher = useAuthStore((s) => s.isPublisher);
   const logout = useAuthStore((s) => s.logout);
@@ -165,7 +167,7 @@ export function AppHeader({
           </button>
         </div>
 
-        {/* Right section: Right mobile drawer slot + Profile Menu */}
+        {/* Right section: Right mobile drawer slot + Profile Menu (Authenticated) or Guest Actions (Unauthenticated) */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {rightDrawerTrigger && (
             <div className="lg:hidden flex items-center" data-testid="right-drawer-slot">
@@ -173,86 +175,105 @@ export function AppHeader({
             </div>
           )}
 
-          <div className="relative" ref={profileMenuRef}>
-            <button
-              ref={profileTriggerRef}
-              type="button"
-              data-testid="profile-menu-trigger"
-              aria-label="Menu profil"
-              aria-expanded={isProfileOpen}
-              aria-haspopup="menu"
-              onClick={() => setIsProfileOpen((prev) => !prev)}
-              className="inline-flex items-center justify-center h-12 w-12 min-h-[48px] min-w-[48px] rounded-md text-foreground-muted hover:text-foreground hover:bg-surface border border-transparent hover:border-border focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
-            >
-              <User className="h-5 w-5" />
-            </button>
-
-            {isProfileOpen && (
-              <div
-                role="menu"
-                data-testid="profile-menu"
-                className="absolute right-0 mt-2 w-64 rounded-md border border-border bg-popover p-3 shadow-lg z-50 text-foreground text-sm focus:outline-none"
+          {accessToken ? (
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                ref={profileTriggerRef}
+                type="button"
+                data-testid="profile-menu-trigger"
+                aria-label="Menu profil"
+                aria-expanded={isProfileOpen}
+                aria-haspopup="menu"
+                onClick={() => setIsProfileOpen((prev) => !prev)}
+                className="inline-flex items-center justify-center h-12 w-12 min-h-[48px] min-w-[48px] rounded-md text-foreground-muted hover:text-foreground hover:bg-surface border border-transparent hover:border-border focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
               >
-                {/* User Info Header */}
-                <div className="pb-3 mb-3 border-b border-border space-y-1">
-                  <p className="text-xs text-foreground-muted font-medium">Compte connecté</p>
-                  <p
-                    data-testid="profile-email"
-                    className="text-sm font-semibold truncate text-foreground"
-                    title={userEmail}
-                  >
-                    {userEmail}
-                  </p>
-                  <div className="pt-1 flex items-center gap-2">
-                    <span className="text-xs text-foreground-muted">Rôle :</span>
-                    {isPublisher ? (
-                      <span
-                        data-testid="publisher-badge"
-                        className="px-2 py-0.5 text-xs font-medium rounded-full bg-primary/10 text-primary border border-primary/20"
-                      >
-                        Éditeur
-                      </span>
-                    ) : (
-                      <span
-                        data-testid="student-badge"
-                        className="px-2 py-0.5 text-xs font-medium rounded-full bg-surface border border-border text-foreground-muted"
-                      >
-                        Étudiant
-                      </span>
-                    )}
-                  </div>
-                </div>
+                <User className="h-5 w-5" />
+              </button>
 
-                {/* Publisher Workspace Link (if publisher) */}
-                {isPublisher && (
-                  <div className="mb-2">
-                    <Link
-                      to="/publisher"
-                      data-testid="publisher-link"
-                      onClick={() => setIsProfileOpen(false)}
-                      className="flex items-center gap-2 w-full px-2.5 py-2 text-sm rounded-md text-foreground hover:bg-surface hover:text-primary transition-colors"
-                      role="menuitem"
-                    >
-                      <BookOpen className="h-4 w-4" />
-                      <span>Espace Éditeur</span>
-                    </Link>
-                  </div>
-                )}
-
-                {/* Logout Button */}
-                <button
-                  type="button"
-                  data-testid="logout-button"
-                  onClick={handleLogout}
-                  className="flex items-center gap-2 w-full px-2.5 py-2 text-sm rounded-md text-destructive hover:bg-destructive/10 transition-colors"
-                  role="menuitem"
+              {isProfileOpen && (
+                <div
+                  role="menu"
+                  data-testid="profile-menu"
+                  className="absolute right-0 mt-2 w-64 rounded-md border border-border bg-popover p-3 shadow-lg z-50 text-foreground text-sm focus:outline-none"
                 >
-                  <LogOut className="h-4 w-4" />
-                  <span>Se déconnecter</span>
-                </button>
-              </div>
-            )}
-          </div>
+                  {/* User Info Header */}
+                  <div className="pb-3 mb-3 border-b border-border space-y-1">
+                    <p className="text-xs text-foreground-muted font-medium">Compte connecté</p>
+                    <p
+                      data-testid="profile-email"
+                      className="text-sm font-semibold truncate text-foreground"
+                      title={userEmail}
+                    >
+                      {userEmail}
+                    </p>
+                    <div className="pt-1 flex items-center gap-2">
+                      <span className="text-xs text-foreground-muted">Rôle :</span>
+                      {isPublisher ? (
+                        <span
+                          data-testid="publisher-badge"
+                          className="px-2 py-0.5 text-xs font-medium rounded-full bg-primary/10 text-primary border border-primary/20"
+                        >
+                          Éditeur
+                        </span>
+                      ) : (
+                        <span
+                          data-testid="student-badge"
+                          className="px-2 py-0.5 text-xs font-medium rounded-full bg-surface border border-border text-foreground-muted"
+                        >
+                          Étudiant
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Publisher Workspace Link (if publisher) */}
+                  {isPublisher && (
+                    <div className="mb-2">
+                      <Link
+                        to="/publisher"
+                        data-testid="publisher-link"
+                        onClick={() => setIsProfileOpen(false)}
+                        className="flex items-center gap-2 w-full px-2.5 py-2 text-sm rounded-md text-foreground hover:bg-surface hover:text-primary transition-colors"
+                        role="menuitem"
+                      >
+                        <BookOpen className="h-4 w-4" />
+                        <span>Espace Éditeur</span>
+                      </Link>
+                    </div>
+                  )}
+
+                  {/* Logout Button */}
+                  <button
+                    type="button"
+                    data-testid="logout-button"
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 w-full px-2.5 py-2 text-sm rounded-md text-destructive hover:bg-destructive/10 transition-colors"
+                    role="menuitem"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span>Se déconnecter</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 sm:gap-3">
+              <Link
+                to="/courses"
+                data-testid="header-catalogue-link"
+                className="hidden sm:inline-flex text-xs sm:text-sm font-medium text-foreground-muted hover:text-foreground transition-colors px-2 py-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+              >
+                Catalogue
+              </Link>
+              <Link
+                to={`/login?returnUrl=${encodeURIComponent(location.pathname + location.search + location.hash)}`}
+                data-testid="header-auth-cta"
+                className="inline-flex items-center justify-center text-xs sm:text-sm font-medium rounded-md px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus shrink-0 text-center whitespace-nowrap min-h-[36px]"
+              >
+                Se connecter / S'inscrire
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     </header>
