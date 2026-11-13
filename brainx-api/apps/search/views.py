@@ -67,6 +67,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from apps.content.date_filters import course_date_range, filter_course_date
 from apps.content.models import Lesson
@@ -206,6 +207,7 @@ class SearchLessonView(GenericAPIView):
     """Find visible Lessons across every Course by text (Story 5.4)."""
 
     permission_classes = [IsAuthenticatedOrPublicAccess]
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
 
     @extend_schema(
         parameters=[
@@ -254,6 +256,7 @@ class SearchLessonView(GenericAPIView):
             200: SEARCH_RESPONSE,
             400: ENVELOPE_RESPONSE,
             401: ENVELOPE_RESPONSE,
+            429: ENVELOPE_RESPONSE,
         },
     )
     def get(self, request):

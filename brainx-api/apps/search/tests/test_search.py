@@ -519,6 +519,7 @@ class SearchCourseSortTests(SearchTestCase):
                 self.assertIn('sort', body['errors'])
 
 
+@override_settings(BRAINX_PUBLIC_BROWSING=False)
 class SearchAuthorizationTests(SearchTestCase):
     """401 for anonymous and bad-token callers; the port is the whole gate."""
 

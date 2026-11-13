@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 
 from django.conf import settings
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
 from rest_framework.test import APIClient
@@ -377,6 +377,7 @@ class HiddenParentNotFoundTests(BrowseTestCase):
         )
 
 
+@override_settings(BRAINX_PUBLIC_BROWSING=False)
 class BrowseAuthorizationTests(BrowseTestCase):
     """401 for anonymous and bad-token callers; a Student is permitted."""
 
