@@ -44,28 +44,13 @@ from apps.users.serializers import (
     PasswordResetRequestSerializer,
     RegistrationSerializer,
 )
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 from config.urls import urlpatterns as base_urlpatterns
-
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
 
 STUDENT_EMAIL = 'student@example.com'
 PUBLISHER_EMAIL = 'publisher@example.com'
 UNVERIFIED_EMAIL = 'unverified@example.com'
 REGISTRATION_PASSWORD = 'quixotic-marmalade-93'
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    """Assert response matches the standard 5-key RFC 9457 error envelope."""
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertEqual(body['title'], TITLES[expected_type])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    return body
 
 
 # ---------------------------------------------------------------------------

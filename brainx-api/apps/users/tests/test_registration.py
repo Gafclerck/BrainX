@@ -29,6 +29,7 @@ from rest_framework.test import APIClient
 
 from apps.core.exceptions import SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS
 from apps.core.logging import JsonFormatter
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 
 from ..email import SUBJECT
 from ..models import AccountToken, User
@@ -46,9 +47,6 @@ EXPECTED_MESSAGE = 'Check your email for a verification link.'
 
 EMAIL = 'student@example.com'
 PASSWORD = 'quixotic-marmalade-93'
-
-# Mirrors apps.core.tests.test_exceptions.assert_envelope.
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
 
 
 class UncoercedAddressSerializer(serializers.Serializer):
@@ -83,19 +81,6 @@ def signed_token_in(message):
 def row_named_by(message):
     """The `AccountToken` row a verification message's link resolves to."""
     return signing.loads(signed_token_in(message), salt=VERIFY_TOKEN_SALT)
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertTrue(body['title'])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    return body
 
 
 class AccountModelTests(TestCase):

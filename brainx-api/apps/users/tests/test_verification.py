@@ -30,6 +30,7 @@ from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from apps.core.permissions import IsVerifiedAccount
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 
 from ..models import AccountToken, TokenConsumption, User
 from ..tokens import (
@@ -50,26 +51,6 @@ OTHER_EMAIL = 'other@example.com'
 # purpose here is spelled out rather than imported from a module that would
 # need to exist first.
 RESET_SALT = 'user-password-reset'
-
-# Mirrors apps.core.tests.test_exceptions.assert_envelope, and
-# apps.users.tests.test_registration's own copy. Declared locally to follow the
-# convention the two modules already set; the fact that the envelope is now
-# spelled out in three places is recorded in deferred-work.md and belongs to
-# the story that makes it one shared component.
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertTrue(body['title'])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    return body
 
 
 def signed_for(pk, salt=VERIFY_TOKEN_SALT):

@@ -15,22 +15,7 @@ from django.urls import Resolver404, resolve, reverse
 from rest_framework.exceptions import NotFound
 
 from apps.core.exceptions import TITLES, brainx_exception_handler
-
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    """Assert the response is the five-key envelope for the given contract case."""
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertEqual(body['title'], TITLES[expected_type])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    return body
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 
 
 class HealthzTests(SimpleTestCase):
