@@ -17,12 +17,14 @@ from datetime import date
 from unittest import mock
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, models, transaction
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from apps.users.models import User
 
@@ -1563,6 +1565,43 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
         response = self.anonymous_client.get(self.retrieve_url(resource))
 
         assert_envelope(self, response, 'unauthenticated', 401)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_retrieves_document_and_image(self):
+        doc = self.file_resource('document', 'Course Syllabus', 'syllabus.pdf')
+        res_doc = self.anonymous_client.get(self.retrieve_url(doc))
+        self.assertEqual(res_doc.status_code, 200)
+        body_doc = res_doc.json()
+        self.assertEqual(body_doc['content_type'], 'application/pdf')
+        self.assertEqual(body_doc['disposition'], 'inline')
+        self.assertEqual(res_doc['Cache-Control'], 'no-store')
+
+        img = self.file_resource('image', 'Diagram Image', 'diagram.png')
+        res_img = self.anonymous_client.get(self.retrieve_url(img), {'disposition': 'attachment'})
+        self.assertEqual(res_img.status_code, 200)
+        body_img = res_img.json()
+        self.assertEqual(body_img['content_type'], 'image/png')
+        self.assertEqual(body_img['disposition'], 'attachment')
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_rate_limiting_returns_429_with_retry_after(self):
+        original_rates = AnonRateThrottle.THROTTLE_RATES
+        self.addCleanup(setattr, AnonRateThrottle, 'THROTTLE_RATES', original_rates)
+        AnonRateThrottle.THROTTLE_RATES = {**original_rates, 'anon': '2/minute'}
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        resource = self.file_resource()
+        url = self.retrieve_url(resource)
+
+        self.assertEqual(self.anonymous_client.get(url).status_code, 200)
+        self.assertEqual(self.anonymous_client.get(url).status_code, 200)
+        throttled = self.anonymous_client.get(url)
+        body = assert_envelope(self, throttled, 'throttled', 429)
+        self.assertEqual(body['errors'], {})
+        self.assertIn('Retry-After', throttled)
+        self.assertGreaterEqual(int(throttled['Retry-After']), 1)
+
 
     def test_the_schema_documents_the_retrieval_operation(self):
         schema = SchemaGenerator().get_schema(request=None, public=True)
