@@ -61,9 +61,9 @@ jobs:
           DATABASE_URL: postgres://brainx:brainx_test_password@localhost:5432/brainx
           SECRET_KEY: ci-super-secret-key-brainx-api-testing-jwt-hs256-32bytes
           REDIS_URL: redis://localhost:6379/0
-          DJANGO_SETTINGS_MODULE: config.settings.development
+          DJANGO_SETTINGS_MODULE: config.settings.test
         run: |
-          python manage.py test
+          python manage.py test --parallel
 
   test-frontend:
     name: Frontend Compilation & Vitest Suite
