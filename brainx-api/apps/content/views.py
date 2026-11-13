@@ -35,6 +35,7 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
 from apps.core.permissions import (
@@ -1306,12 +1307,14 @@ class LessonRestoreView(APIView):
 class ResourceRetrievalView(APIView):
     """Retrieve a signed URL for a document or image Resource.
 
-    The read gate is `[IsAuthenticated, IsVerifiedAccount]`. The Resource and
-    its parent Lesson are resolved through `visible()` so a hidden or missing
-    row is 404 (never an existence oracle). Only `document` and `image` types
-    are served; video/external_link are treated as nonexistent (404).
+    The read gate is `[IsAuthenticatedOrPublicAccess, IsVerifiedAccountOrPublicAccess]`.
+    Explicitly throttled with `[AnonRateThrottle, UserRateThrottle]`.
+    The Resource and its parent Lesson are resolved through `visible()` so a hidden
+    or missing row is 404 (never an existence oracle). Only `document` and `image`
+    types are served; video/external_link are treated as nonexistent (404).
     """
 
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
     permission_classes = [
         IsAuthenticatedOrPublicAccess,
         IsVerifiedAccountOrPublicAccess,
@@ -1334,6 +1337,7 @@ class ResourceRetrievalView(APIView):
             401: ENVELOPE_RESPONSE,
             403: ENVELOPE_RESPONSE,
             404: ENVELOPE_RESPONSE,
+            429: ENVELOPE_RESPONSE,
         },
     )
     def get(self, request, resource_id):
@@ -1344,19 +1348,20 @@ class ResourceRetrievalView(APIView):
             )
 
         # The parent Lesson is resolved through its own Student port inside the
-        # same lookup, so a soft-deleted or unpublished Lesson hides its
-        # Resources with the byte-identical 404 of a nonexistent id - a
-        # separate lookup would name the Lesson in `detail` and leak that the
-        # Resource row exists.
+        # same lookup, so a soft-deleted or unpublished Lesson, a soft-deleted
+        # Resource, or a non-file / missing-file Resource hides behind the
+        # byte-identical 404 of a nonexistent id - preventing any existence
+        # oracle leak.
         resource = get_object_or_404(
-            Resource.objects.visible().filter(
-                lesson_id__in=Lesson.objects.visible().values('pk')
-            ),
+            Resource.objects.visible()
+            .filter(
+                type__in=('document', 'image'),
+                lesson_id__in=Lesson.objects.visible().values('pk'),
+            )
+            .exclude(file='')
+            .exclude(file__isnull=True),
             pk=resource_id,
         )
-
-        if resource.type not in ('document', 'image') or not resource.file:
-            raise Http404
 
         payload = {
             'url': build_signed_url(resource, disposition=disposition),

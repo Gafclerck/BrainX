@@ -1542,6 +1542,7 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
 
         assert_envelope(self, response, 'not_found', 404)
 
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
     def test_an_unverified_student_cannot_retrieve(self):
         resource = self.file_resource()
 
@@ -1549,6 +1550,7 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
 
         assert_envelope(self, response, 'permission_denied', 403)
 
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
     def test_an_anonymous_caller_cannot_retrieve(self):
         resource = self.file_resource()
 
