@@ -1,5 +1,7 @@
 # Guide d'ingestion des cours BrainX (Curriculum)
 
+> 📖 **Pour les agents IA et concepteurs de contenu** : Consultez le guide complet de référence dans [docs/GUIDE_CONCEPTION_COURS_IA.md](file:///D:/MY_PROEJCT/BrainX/docs/GUIDE_CONCEPTION_COURS_IA.md) pour la méthodologie d'extraction depuis les sources brutes (`docs/`, Notion, Git), les règles du fil conducteur et le formatage obligatoire.
+
 Ce répertoire contient l'ensemble des cours au format Markdown pour l'ingestion automatique dans la base de données BrainX.
 
 ## Structure de répertoires obligatoire (4 niveaux)
