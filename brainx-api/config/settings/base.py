@@ -57,6 +57,7 @@ DJANGO_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'django.contrib.staticfiles',
     # GinIndex and the pg_trgm operations need the contrib app registered
     # (Story 5.4's functional trigram index).
     'django.contrib.postgres',
