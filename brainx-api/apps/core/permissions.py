@@ -8,6 +8,7 @@ Each class answers one question about the caller and nothing about the
 resource. `IsVerifiedAccount` is the read gate; `IsPublisher` is the write gate.
 """
 
+from django.conf import settings
 from rest_framework.permissions import BasePermission
 
 
@@ -90,4 +91,48 @@ class IsPublisher(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         return self.has_permission(request, view)
+
+
+class PublicBrowsingOrAuthenticated(BasePermission):
+    """Allows access if public browsing is enabled OR caller is authenticated (AD-AuthToggle).
+
+    When `BRAINX_PUBLIC_BROWSING` is active in settings, anonymous readers
+    are granted read access to published courses, modules, chapters, and lessons.
+    When disabled, strictly requires `user.is_authenticated`, returning 401.
+    """
+
+    def has_permission(self, request, view):
+        if getattr(settings, 'BRAINX_PUBLIC_BROWSING', False):
+            return True
+        user = request.user
+        return bool(user and user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
+
+
+# Alias for backward compatibility across other epic stories
+IsAuthenticatedOrPublicAccess = PublicBrowsingOrAuthenticated
+
+
+class IsVerifiedAccountOrPublicAccess(BasePermission):
+    """Allows resource access if public browsing is enabled OR caller is verified (AD-AuthToggle).
+
+    When `BRAINX_PUBLIC_BROWSING` is active, anonymous visitors can download/preview
+    published lesson resources (documents, images).
+    When disabled, strictly requires verified account credentials (`is_email_verified`),
+    returning 401 for anonymous and 403 for unverified callers.
+    """
+
+    def has_permission(self, request, view):
+        if getattr(settings, 'BRAINX_PUBLIC_BROWSING', False):
+            return True
+        user = request.user
+        if user is None or user.is_anonymous:
+            return False
+        return bool(getattr(user, 'is_email_verified', False))
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
+
 

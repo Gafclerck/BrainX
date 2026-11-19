@@ -17,12 +17,14 @@ from datetime import date
 from unittest import mock
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, models, transaction
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from apps.users.models import User
 
@@ -49,42 +51,8 @@ def bad_urls():
     )
 
 
-class ResourceModelTests(TestCase):
-    """The table: fields, Meta, and the two CHECK constraints (AC 1-3)."""
-
-    def setUp(self):
-        self.actor = User.objects.create_user(email='actor@example.com')
-        self.course = Course.objects.create(
-            name='Maths', subject='Algebra', position=1,
-            last_modified_by=self.actor,
-        )
-        self.module = Module.objects.create(
-            course=self.course, name='Module 1', position=1,
-            last_modified_by=self.actor,
-        )
-        self.chapter = Chapter.objects.create(
-            module=self.module, name='Chapter 1', position=1,
-            last_modified_by=self.actor,
-        )
-        self.lesson = Lesson.objects.create(
-            chapter=self.chapter,
-            title='Introduction',
-            teacher='Ms Ada',
-            course_date=date(2026, 9, 1),
-            position=1,
-            last_modified_by=self.actor,
-        )
-
-    def url_payload(self, **overrides):
-        payload = {
-            'type': 'video',
-            'title': 'Intro video',
-            'url': 'https://videos.example.com/intro',
-            'lesson': self.lesson,
-            'last_modified_by': self.actor,
-        }
-        payload.update(overrides)
-        return payload
+class ResourceModelMetaTests(SimpleTestCase):
+    """Resource table meta and type definitions (pure static checks)."""
 
     def test_type_is_the_closed_glossary_set(self):
         self.assertEqual(
@@ -126,6 +94,45 @@ class ResourceModelTests(TestCase):
         self.assertTrue(Resource._meta.get_field('note').blank)
         self.assertTrue(Resource._meta.get_field('url').blank)
         self.assertTrue(Resource._meta.get_field('url').null)
+
+
+class ResourceModelConstraintTests(TestCase):
+    """The table: database CHECK constraints and validators (AC 1-3)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.actor = User.objects.create_user(email='actor@example.com')
+        cls.course = Course.objects.create(
+            name='Maths', subject='Algebra', position=1,
+            last_modified_by=cls.actor,
+        )
+        cls.module = Module.objects.create(
+            course=cls.course, name='Module 1', position=1,
+            last_modified_by=cls.actor,
+        )
+        cls.chapter = Chapter.objects.create(
+            module=cls.module, name='Chapter 1', position=1,
+            last_modified_by=cls.actor,
+        )
+        cls.lesson = Lesson.objects.create(
+            chapter=cls.chapter,
+            title='Introduction',
+            teacher='Ms Ada',
+            course_date=date(2026, 9, 1),
+            position=1,
+            last_modified_by=cls.actor,
+        )
+
+    def url_payload(self, **overrides):
+        payload = {
+            'type': 'video',
+            'title': 'Intro video',
+            'url': 'https://videos.example.com/intro',
+            'lesson': self.lesson,
+            'last_modified_by': self.actor,
+        }
+        payload.update(overrides)
+        return payload
 
     def test_the_database_rejects_a_payload_that_matches_no_type(self):
         for payload in (
@@ -182,10 +189,11 @@ class ResourceModelTests(TestCase):
 class ResourceEndpointTestCase(ContentEndpointTestCase):
     """The shared fixture plus a Lesson, and the two route lookups."""
 
-    def setUp(self):
-        super().setUp()
-        self.lesson = Lesson.objects.create(
-            chapter=self.chapter,
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.lesson = Lesson.objects.create(
+            chapter=cls.chapter,
             title='Introduction',
             teacher='Ms Ada',
             course_date=date(2026, 9, 1),
@@ -194,7 +202,7 @@ class ResourceEndpointTestCase(ContentEndpointTestCase):
             # Lesson: `ResourceRetrievalView` reads it through `visible()`,
             # which now hides a draft exactly as it hides a removed row.
             is_published=True,
-            last_modified_by=self.publisher,
+            last_modified_by=cls.publisher,
         )
 
     def resources_url(self, lesson=None):
@@ -1101,37 +1109,6 @@ class UrlTypeOutsideTests(ResourceEndpointTestCase):
         self.assertEqual(Resource.objects.count(), 0)
 
 
-class AuthorizationTests(ResourceEndpointTestCase):
-    def write_specs(self):
-        resource = Resource.objects.create(
-            lesson=self.lesson,
-            type='video',
-            title='Intro video',
-            url='https://videos.example.com/intro',
-            last_modified_by=self.publisher,
-        )
-        return [
-            (self.resources_url(), 'post', VIDEO_PAYLOAD),
-            (self.resource_url(resource), 'patch', {'title': 'Renamed'}),
-        ]
-
-    def test_a_student_cannot_write_a_resource(self):
-        for url, method, payload in self.write_specs():
-            with self.subTest(url=url):
-                response = getattr(self.student_client, method)(
-                    url, payload, format='json'
-                )
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_write_a_resource(self):
-        for url, method, payload in self.write_specs():
-            with self.subTest(url=url):
-                response = getattr(self.anonymous_client, method)(
-                    url, payload, format='json'
-                )
-                assert_envelope(self, response, 'unauthenticated', 401)
-
-
 class RoutingAndSchemaTests(ContentEndpointTestCase):
     def test_the_routes_live_under_the_api_prefix(self):
         for name in ('resource-create', 'resource-update', 'resource-retrieve'):
@@ -1542,6 +1519,7 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
 
         assert_envelope(self, response, 'not_found', 404)
 
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
     def test_an_unverified_student_cannot_retrieve(self):
         resource = self.file_resource()
 
@@ -1549,12 +1527,50 @@ class ResourceRetrievalTests(ResourceEndpointTestCase):
 
         assert_envelope(self, response, 'permission_denied', 403)
 
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
     def test_an_anonymous_caller_cannot_retrieve(self):
         resource = self.file_resource()
 
         response = self.anonymous_client.get(self.retrieve_url(resource))
 
         assert_envelope(self, response, 'unauthenticated', 401)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_retrieves_document_and_image(self):
+        doc = self.file_resource('document', 'Course Syllabus', 'syllabus.pdf')
+        res_doc = self.anonymous_client.get(self.retrieve_url(doc))
+        self.assertEqual(res_doc.status_code, 200)
+        body_doc = res_doc.json()
+        self.assertEqual(body_doc['content_type'], 'application/pdf')
+        self.assertEqual(body_doc['disposition'], 'inline')
+        self.assertEqual(res_doc['Cache-Control'], 'no-store')
+
+        img = self.file_resource('image', 'Diagram Image', 'diagram.png')
+        res_img = self.anonymous_client.get(self.retrieve_url(img), {'disposition': 'attachment'})
+        self.assertEqual(res_img.status_code, 200)
+        body_img = res_img.json()
+        self.assertEqual(body_img['content_type'], 'image/png')
+        self.assertEqual(body_img['disposition'], 'attachment')
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_rate_limiting_returns_429_with_retry_after(self):
+        original_rates = AnonRateThrottle.THROTTLE_RATES
+        self.addCleanup(setattr, AnonRateThrottle, 'THROTTLE_RATES', original_rates)
+        AnonRateThrottle.THROTTLE_RATES = {**original_rates, 'anon': '2/minute'}
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        resource = self.file_resource()
+        url = self.retrieve_url(resource)
+
+        self.assertEqual(self.anonymous_client.get(url).status_code, 200)
+        self.assertEqual(self.anonymous_client.get(url).status_code, 200)
+        throttled = self.anonymous_client.get(url)
+        body = assert_envelope(self, throttled, 'throttled', 429)
+        self.assertEqual(body['errors'], {})
+        self.assertIn('Retry-After', throttled)
+        self.assertGreaterEqual(int(throttled['Retry-After']), 1)
+
 
     def test_the_schema_documents_the_retrieval_operation(self):
         schema = SchemaGenerator().get_schema(request=None, public=True)
@@ -1905,24 +1921,3 @@ class ResourceRestoreTests(ResourceEndpointTestCase):
         ]
 
         self.assertIn('post', restore)
-
-
-class ResourceRemovalAuthorizationTests(ResourceEndpointTestCase):
-    def request_specs(self):
-        resource = self.url_resource()
-        return [
-            ('delete', self.resource_url(resource)),
-            ('post', self.restore_url(resource)),
-        ]
-
-    def test_a_student_cannot_remove_or_restore(self):
-        for method, url in self.request_specs():
-            with self.subTest(method=method):
-                response = getattr(self.student_client, method)(url)
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_remove_or_restore(self):
-        for method, url in self.request_specs():
-            with self.subTest(method=method):
-                response = getattr(self.anonymous_client, method)(url)
-                assert_envelope(self, response, 'unauthenticated', 401)

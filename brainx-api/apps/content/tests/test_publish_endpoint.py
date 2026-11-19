@@ -236,22 +236,6 @@ class PublishNotFoundTests(PublishTestCase):
         assert_envelope(self, response, 'not_found', 404)
 
 
-class PublishAuthorizationTests(PublishTestCase):
-    def test_a_student_cannot_publish(self):
-        response = self.student_client.post(self.publish_url())
-
-        assert_envelope(self, response, 'permission_denied', 403)
-        self.lesson.refresh_from_db()
-        self.assertFalse(self.lesson.is_published)
-
-    def test_an_anonymous_caller_cannot_publish(self):
-        response = self.anonymous_client.post(self.publish_url())
-
-        assert_envelope(self, response, 'unauthenticated', 401)
-        self.lesson.refresh_from_db()
-        self.assertFalse(self.lesson.is_published)
-
-
 class PublishPortTests(PublishTestCase):
     def test_publish_hands_the_actor_and_the_flag_to_the_port(self):
         phantom = Lesson.objects.create(

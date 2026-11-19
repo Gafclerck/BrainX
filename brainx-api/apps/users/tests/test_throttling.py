@@ -33,6 +33,7 @@ from rest_framework.throttling import (
 
 from config.settings import base as base_settings
 
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 from ..throttling import DestinationRateThrottle, SourceRateThrottle
 
 from ..models import AccountToken, TokenConsumption, User
@@ -55,10 +56,6 @@ PASSWORD = 'quixotic-marmalade-93'
 INITIAL_PASSWORD = 'strong-initial-password-123!'
 NEW_PASSWORD = 'strong-new-password-456!'
 
-# Mirrors apps.core.tests.test_exceptions.assert_envelope, and the local copy
-# every other endpoint test file keeps (the convention, not a shared import).
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
-
 # The rates the behavioural tests run with: base.py's own production values,
 # written out rather than imported so a silent change to base cannot move
 # these tests along with it. `ThrottleConfigurationTests` pins base separately.
@@ -69,19 +66,6 @@ ENABLED_RATES = {
     'activate': '5/hour',
     'source': '2000/day',
 }
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertTrue(body['title'])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    return body
 
 
 class ThrottledEndpointTestCase(TestCase):

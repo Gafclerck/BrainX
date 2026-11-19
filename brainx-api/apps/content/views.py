@@ -35,9 +35,18 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsPublisher, IsVerifiedAccount
+from apps.core.permissions import (
+    IsAuthenticatedOrPublicAccess,
+    IsPublisher,
+    IsVerifiedAccount,
+    IsVerifiedAccountOrPublicAccess,
+    PublicBrowsingOrAuthenticated,
+)
+from apps.search import capture
+from apps.search.models import CloseReason
 
 from .date_filters import course_date_range, filter_course_date
 from .delivery import build_signed_url, derive_content_type, derive_filename
@@ -698,6 +707,24 @@ class LessonUpdateView(APIView):
     permission_classes = [IsAuthenticated, IsPublisher]
 
     @extend_schema(
+        responses={
+            200: LessonSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        """Retrieve a Lesson by its UUID through the manageable port."""
+        lesson = get_object_or_404(
+            Lesson.objects.manageable().select_related(
+                'last_modified_by', 'chapter'
+            ),
+            pk=lesson_id,
+        )
+        return Response(LessonSerializer(lesson).data)
+
+    @extend_schema(
         request=LessonSerializer,
         responses={
             200: LessonSerializer,
@@ -860,17 +887,7 @@ class LessonMoveView(APIView):
 
     permission_classes = [IsAuthenticated, IsPublisher]
 
-    @extend_schema(
-        request=LessonMoveSerializer,
-        responses={
-            200: LessonSerializer,
-            400: ENVELOPE_RESPONSE,
-            401: ENVELOPE_RESPONSE,
-            403: ENVELOPE_RESPONSE,
-            404: ENVELOPE_RESPONSE,
-        },
-    )
-    def patch(self, request, lesson_id):
+    def _move(self, request, lesson_id):
         lesson = get_object_or_404(Lesson, pk=lesson_id)
         serializer = LessonMoveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -884,6 +901,32 @@ class LessonMoveView(APIView):
             actor=request.user, lesson=lesson, target_chapter=target
         )
         return Response(LessonSerializer(moved).data)
+
+    @extend_schema(
+        request=LessonMoveSerializer,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def patch(self, request, lesson_id):
+        return self._move(request, lesson_id)
+
+    @extend_schema(
+        request=LessonMoveSerializer,
+        responses={
+            200: LessonSerializer,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, lesson_id):
+        return self._move(request, lesson_id)
 
 
 class LessonPublishView(APIView):
@@ -1264,13 +1307,18 @@ class LessonRestoreView(APIView):
 class ResourceRetrievalView(APIView):
     """Retrieve a signed URL for a document or image Resource.
 
-    The read gate is `[IsAuthenticated, IsVerifiedAccount]`. The Resource and
-    its parent Lesson are resolved through `visible()` so a hidden or missing
-    row is 404 (never an existence oracle). Only `document` and `image` types
-    are served; video/external_link are treated as nonexistent (404).
+    The read gate is `[IsAuthenticatedOrPublicAccess, IsVerifiedAccountOrPublicAccess]`.
+    Explicitly throttled with `[AnonRateThrottle, UserRateThrottle]`.
+    The Resource and its parent Lesson are resolved through `visible()` so a hidden
+    or missing row is 404 (never an existence oracle). Only `document` and `image`
+    types are served; video/external_link are treated as nonexistent (404).
     """
 
-    permission_classes = [IsAuthenticated, IsVerifiedAccount]
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
+    permission_classes = [
+        IsAuthenticatedOrPublicAccess,
+        IsVerifiedAccountOrPublicAccess,
+    ]
 
     @extend_schema(
         parameters=[
@@ -1289,6 +1337,7 @@ class ResourceRetrievalView(APIView):
             401: ENVELOPE_RESPONSE,
             403: ENVELOPE_RESPONSE,
             404: ENVELOPE_RESPONSE,
+            429: ENVELOPE_RESPONSE,
         },
     )
     def get(self, request, resource_id):
@@ -1299,19 +1348,20 @@ class ResourceRetrievalView(APIView):
             )
 
         # The parent Lesson is resolved through its own Student port inside the
-        # same lookup, so a soft-deleted or unpublished Lesson hides its
-        # Resources with the byte-identical 404 of a nonexistent id - a
-        # separate lookup would name the Lesson in `detail` and leak that the
-        # Resource row exists.
+        # same lookup, so a soft-deleted or unpublished Lesson, a soft-deleted
+        # Resource, or a non-file / missing-file Resource hides behind the
+        # byte-identical 404 of a nonexistent id - preventing any existence
+        # oracle leak.
         resource = get_object_or_404(
-            Resource.objects.visible().filter(
-                lesson_id__in=Lesson.objects.visible().values('pk')
-            ),
+            Resource.objects.visible()
+            .filter(
+                type__in=('document', 'image'),
+                lesson_id__in=Lesson.objects.visible().values('pk'),
+            )
+            .exclude(file='')
+            .exclude(file__isnull=True),
             pk=resource_id,
         )
-
-        if resource.type not in ('document', 'image') or not resource.file:
-            raise Http404
 
         payload = {
             'url': build_signed_url(resource, disposition=disposition),
@@ -1327,7 +1377,7 @@ class ResourceRetrievalView(APIView):
 class BrowseCourseListView(GenericAPIView):
     """List the Courses that hold at least one visible Lesson (Story 5.2).
 
-    This is the Student port by construction: `IsAuthenticated` is the whole
+    This is the Student port by construction: `PublicBrowsingOrAuthenticated` is the
     gate, so an authenticated Publisher sees the same published tree and no
     caller sees an unpublished or soft-deleted Course. Rows are `{id, name}` in
     the shared container order, page-number paginated at the project default,
@@ -1335,7 +1385,7 @@ class BrowseCourseListView(GenericAPIView):
     filter on the removal or publication flags.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={
@@ -1362,7 +1412,7 @@ class BrowseModuleListView(GenericAPIView):
     are the visible ones scoped to that Course.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={
@@ -1389,7 +1439,7 @@ class BrowseChapterListView(GenericAPIView):
     and the Chapters listed are the visible ones scoped to that Module.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         responses={
@@ -1422,7 +1472,7 @@ class BrowseLessonListView(GenericAPIView):
     costs a query.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
         parameters=[
@@ -1488,9 +1538,21 @@ class LessonDetailView(GenericAPIView):
     endpoint with its own verified-account gate.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [PublicBrowsingOrAuthenticated]
 
     @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description=(
+                    'Carried search session id. When present, closes the '
+                    'session with close_reason="lesson_opened".'
+                ),
+            ),
+        ],
         responses={
             200: LessonDetailSerializer,
             401: ENVELOPE_RESPONSE,
@@ -1498,6 +1560,17 @@ class LessonDetailView(GenericAPIView):
         },
     )
     def get(self, request, lesson_id):
+        session_id = request.headers.get('X-Search-Session-Id')
+        session = None
+        if (
+            session_id
+            and session_id.strip()
+            and request.user
+            and request.user.is_authenticated
+            and not request.user.is_anonymous
+        ):
+            session = capture.resolve_session(request.user, session_id.strip())
+
         visible = visible_content()
         lesson = get_object_or_404(
             Lesson.objects.visible()
@@ -1511,5 +1584,104 @@ class LessonDetailView(GenericAPIView):
             ),
             pk=lesson_id,
         )
+        if session is not None:
+            capture.close_session(
+                session, reason=CloseReason.LESSON_OPENED
+            )
         serializer = LessonDetailSerializer(lesson)
         return Response(serializer.data)
+
+
+class LessonNavigationView(APIView):
+    """Retrieve previous and next visible Lessons in the same Course."""
+
+    permission_classes = [PublicBrowsingOrAuthenticated]
+
+    @extend_schema(
+        responses={
+            200: inline_serializer(
+                name='LessonNavigationResponse',
+                fields={
+                    'current_lesson_id': serializers.UUIDField(),
+                    'previous_lesson': inline_serializer(
+                        name='LessonNavNeighbor',
+                        fields={
+                            'id': serializers.UUIDField(),
+                            'title': serializers.CharField(),
+                            'chapter_name': serializers.CharField(),
+                        },
+                        allow_null=True,
+                    ),
+                    'next_lesson': inline_serializer(
+                        name='LessonNavNeighborNext',
+                        fields={
+                            'id': serializers.UUIDField(),
+                            'title': serializers.CharField(),
+                            'chapter_name': serializers.CharField(),
+                        },
+                        allow_null=True,
+                    ),
+                },
+            ),
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request, lesson_id):
+        visible = visible_content()
+        lesson = get_object_or_404(
+            Lesson.objects.visible()
+            .select_related('chapter__module__course')
+            .filter(chapter__in=visible.chapters),
+            pk=lesson_id,
+        )
+        course = lesson.chapter.module.course
+
+        lessons = list(
+            Lesson.objects.visible()
+            .filter(
+                chapter__module__course=course,
+                chapter__in=visible.chapters,
+            )
+            .select_related('chapter')
+            .order_by(
+                'chapter__module__position',
+                'chapter__module__id',
+                'chapter__position',
+                'chapter__id',
+                'position',
+                'course_date',
+                'id',
+            )
+            .only('id', 'title', 'chapter__name')
+        )
+
+        current_idx = next(
+            (idx for idx, item in enumerate(lessons) if item.id == lesson.id),
+            None,
+        )
+
+        prev_item = (
+            lessons[current_idx - 1]
+            if current_idx is not None and current_idx > 0
+            else None
+        )
+        next_item = (
+            lessons[current_idx + 1]
+            if current_idx is not None and current_idx < len(lessons) - 1
+            else None
+        )
+
+        return Response({
+            'current_lesson_id': str(lesson.id),
+            'previous_lesson': {
+                'id': str(prev_item.id),
+                'title': prev_item.title,
+                'chapter_name': prev_item.chapter.name,
+            } if prev_item else None,
+            'next_lesson': {
+                'id': str(next_item.id),
+                'title': next_item.title,
+                'chapter_name': next_item.chapter.name,
+            } if next_item else None,
+        })

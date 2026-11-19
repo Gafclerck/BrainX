@@ -42,28 +42,15 @@ from apps.users.tokens import (
     issue_password_reset_token,
     issue_verification_token,
 )
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 from apps.users.views import (
     PASSWORD_RESET_CONFIRM_MESSAGE,
     PASSWORD_RESET_REQUEST_MESSAGE,
 )
 
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
 EMAIL = 'student@example.com'
 INITIAL_PASSWORD = 'strong-initial-password-123!'
 NEW_PASSWORD = 'strong-new-password-456!'
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertTrue(body['title'])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    return body
 
 
 def signed_for(pk, salt=RESET_TOKEN_SALT):

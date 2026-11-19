@@ -20,12 +20,14 @@ only the existing evidence is retuned for it.
 
 import importlib
 import tempfile
+import uuid
 from datetime import date
 
 from django.apps import apps as django_apps
 from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex, OpClass
 from django.contrib.postgres.search import TrigramWordSimilarity
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection, models
 from django.db.migrations.loader import MigrationLoader
@@ -34,12 +36,15 @@ from django.db.models.functions import Coalesce, Upper
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from apps.content.models import Lesson, Resource
 from apps.content.ordering import order_lessons
 from apps.content.tests.helpers import assert_envelope, class_sources
 from apps.content.tests.test_browse import BrowseTestCase
 from apps.content.tests.test_create_endpoints import ContentEndpointTestCase
+from apps.search.capture import SESSION_COOKIE
+from apps.search.models import SearchQuery, SearchSession
 
 from .. import views
 
@@ -519,6 +524,7 @@ class SearchCourseSortTests(SearchTestCase):
                 self.assertIn('sort', body['errors'])
 
 
+@override_settings(BRAINX_PUBLIC_BROWSING=False)
 class SearchAuthorizationTests(SearchTestCase):
     """401 for anonymous and bad-token callers; the port is the whole gate."""
 
@@ -1197,3 +1203,124 @@ class SearchWriteRebuildEndToEndTests(SearchTestCase):
             set(self.ids(self.search(query='geometry'))),
             {str(lesson.pk), str(self.lesson.pk)},
         )
+
+
+class PublicSearchTests(SearchTestCase):
+    """Integration tests for secure anonymous global search (Story 1.4 / Story 3.3)."""
+
+    def make_searchable_lesson(self, chapter, *, title, position=None, **kwargs):
+        if position is None:
+            last = Lesson.objects.filter(chapter=chapter).order_by('-position').first()
+            position = (last.position + 1) if last else 1
+        return super().make_searchable_lesson(chapter, title=title, position=position, **kwargs)
+
+    def search_anon(self, **params):
+        return self.anonymous_client.get(self.url, params)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_search_returns_200_and_bypasses_session_capture(self):
+        lesson = self.make_searchable_lesson(
+            self.chapter,
+            title='Algebre lineaire',
+            description='Espaces vectoriels et matrices',
+            keywords='maths, vecteurs',
+        )
+
+        response = self.search_anon(query='algebre')
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['count'], 1)
+        self.assertEqual(self.ids(response), [str(lesson.pk)])
+        self.assertIsNone(body['search_session_id'])
+        self.assertNotIn(SESSION_COOKIE, response.cookies)
+        self.assertEqual(SearchSession.objects.count(), 0)
+        self.assertEqual(SearchQuery.objects.count(), 0)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_search_ignores_incoming_session_header_and_cookie(self):
+        lesson = self.make_searchable_lesson(
+            self.chapter,
+            title='Algebre lineaire',
+        )
+        fake_session_id = str(uuid.uuid4())
+        self.anonymous_client.cookies[SESSION_COOKIE] = fake_session_id
+
+        response = self.anonymous_client.get(
+            self.url,
+            {'query': 'algebre'},
+            HTTP_X_SEARCH_SESSION_ID=fake_session_id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['count'], 1)
+        self.assertEqual(self.ids(response), [str(lesson.pk)])
+        self.assertIsNone(body['search_session_id'])
+        self.assertNotIn(SESSION_COOKIE, response.cookies)
+        self.assertEqual(SearchSession.objects.count(), 0)
+        self.assertEqual(SearchQuery.objects.count(), 0)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_empty_query_returns_empty_results(self):
+        self.make_searchable_lesson(self.chapter, title='Algebre lineaire')
+
+        for empty_val in ('', '   ', '\t\n'):
+            with self.subTest(empty_val=empty_val):
+                response = self.search_anon(query=empty_val)
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertEqual(body['count'], 0)
+                self.assertEqual(body['results'], [])
+                self.assertIsNone(body['search_session_id'])
+                self.assertEqual(SearchSession.objects.count(), 0)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_anonymous_rate_limiting_exceeded_returns_429_with_retry_after(self):
+        original_rates = AnonRateThrottle.THROTTLE_RATES
+        self.addCleanup(setattr, AnonRateThrottle, 'THROTTLE_RATES', original_rates)
+        AnonRateThrottle.THROTTLE_RATES = {**original_rates, 'anon': '2/minute'}
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+        self.make_searchable_lesson(self.chapter, title='Algebre lineaire')
+
+        self.assertEqual(self.search_anon(query='algebre').status_code, 200)
+        self.assertEqual(self.search_anon(query='algebre').status_code, 200)
+
+        throttled_resp = self.search_anon(query='algebre')
+        body = assert_envelope(self, throttled_resp, 'throttled', 429)
+        self.assertEqual(body['errors'], {})
+        self.assertIn('Retry-After', throttled_resp)
+        self.assertGreaterEqual(int(throttled_resp['Retry-After']), 1)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=False)
+    def test_public_search_reversibility_when_flag_disabled(self):
+        self.make_searchable_lesson(self.chapter, title='Algebre lineaire')
+
+        # Anon rejected with 401
+        res_anon = self.search_anon(query='algebre')
+        assert_envelope(self, res_anon, 'unauthenticated', 401)
+        self.assertEqual(SearchSession.objects.count(), 0)
+
+        # Authenticated student allowed with 200 and mints session
+        res_student = self.student_client.get(self.url, {'query': 'algebre'})
+        self.assertEqual(res_student.status_code, 200)
+        self.assertIsNotNone(res_student.json()['search_session_id'])
+        self.assertEqual(SearchSession.objects.count(), 1)
+
+    @override_settings(BRAINX_PUBLIC_BROWSING=True)
+    def test_protected_session_and_aggregate_endpoints_return_401_or_403(self):
+        for route in ('search-sessions-close', 'search-sessions-abandon'):
+            with self.subTest(route=route):
+                assert_envelope(self, self.anonymous_client.post(reverse(route)), 'unauthenticated', 401)
+
+        assert_envelope(
+            self,
+            self.anonymous_client.post(reverse('search-sessions-answer'), {'found': True}, format='json'),
+            'unauthenticated',
+            401,
+        )
+        assert_envelope(self, self.anonymous_client.get(reverse('search-aggregate')), 'unauthenticated', 401)
+        assert_envelope(self, self.student_client.get(reverse('search-aggregate')), 'permission_denied', 403)
+

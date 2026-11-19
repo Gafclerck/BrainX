@@ -280,6 +280,22 @@ class MoveLessonTests(ContentEndpointTestCase):
         )
         self.assertEqual(self.lesson_kept.position, 1)
 
+    def test_moving_a_lesson_via_post_with_new_chapter_id(self):
+        original_id = self.moved.pk
+        response = self.publisher_client.post(
+            self.move_url(),
+            {'new_chapter_id': str(self.target.pk)},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['id'], str(original_id))
+        self.assertEqual(body['chapter_id'], str(self.target.pk))
+        self.assertEqual(body['position'], 3)
+        self.moved.refresh_from_db()
+        self.assertEqual(self.moved.chapter_id, self.target.pk)
+
     def test_moving_to_the_same_chapter_is_rejected_and_named(self):
         response = self.publisher_client.patch(
             self.move_url(),

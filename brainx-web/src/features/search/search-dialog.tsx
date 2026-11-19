@@ -1,0 +1,375 @@
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { Search, Loader2, X } from 'lucide-react';
+import { useSearchStore } from './search-store';
+import { useSearchSessionStore } from './search-session-store';
+import { SearchResultCard } from './search-result-card';
+import { cn } from '@/lib/utils';
+
+export function SearchDialog() {
+  const navigate = useNavigate();
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const triggerRef = React.useRef<HTMLElement | null>(null);
+
+  const isOpen = useSearchStore((s) => s.isOpen);
+  const query = useSearchStore((s) => s.query);
+  const results = useSearchStore((s) => s.results);
+  const count = useSearchStore((s) => s.count);
+  const isLoading = useSearchStore((s) => s.isLoading);
+  const isDebouncing = useSearchStore((s) => s.isDebouncing);
+  const hasSearched = useSearchStore((s) => s.hasSearched);
+  const lastSearchedQuery = useSearchStore((s) => s.lastSearchedQuery);
+  const error = useSearchStore((s) => s.error);
+  const validationError = useSearchStore((s) => s.validationError);
+
+  const closeSearch = useSearchStore((s) => s.closeSearch);
+  const setQuery = useSearchStore((s) => s.setQuery);
+  const search = useSearchStore((s) => s.search);
+
+  // Client-side descending sort by course_date with stable tie-break (AD-7)
+  const sortedResults = React.useMemo(() => {
+    return [...results].sort((a, b) => {
+      const dateA = a.course_date || '';
+      const dateB = b.course_date || '';
+      if (dateA && dateB && dateA !== dateB) {
+        return dateB.localeCompare(dateA); // descending
+      }
+      if (dateA && !dateB) return -1;
+      if (!dateA && dateB) return 1;
+
+      const titleCmp = (a.title || '').localeCompare(b.title || '');
+      if (titleCmp !== 0) return titleCmp;
+      return (a.id || '').localeCompare(b.id || '');
+    });
+  }, [results]);
+
+  // Keyboard arrow navigation state: -1 when input is focused, 0..N-1 on cards
+  const [selectedIndex, setSelectedIndex] = React.useState<number>(-1);
+
+  React.useEffect(() => {
+    setSelectedIndex(-1);
+  }, [query, results]);
+
+  // Capture the triggering active element when opened to ensure focus restoration
+  React.useEffect(() => {
+    if (isOpen) {
+      triggerRef.current =
+        (document.activeElement as HTMLElement) ??
+        document.querySelector<HTMLElement>('[data-testid="search-trigger"]');
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  // Register page unload / pagehide handler and unmount cleanup to abandon active search session (AC-3)
+  React.useEffect(() => {
+    const handleUnloadOrHide = () => {
+      const state = useSearchSessionStore.getState();
+      if (state.status === 'active' && state.sessionId) {
+        state.abandonSession();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleUnloadOrHide);
+    window.addEventListener('pagehide', handleUnloadOrHide);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnloadOrHide);
+      window.removeEventListener('pagehide', handleUnloadOrHide);
+      const state = useSearchSessionStore.getState();
+      if (state.status === 'active' && state.sessionId) {
+        state.abandonSession();
+      }
+    };
+  }, []);
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setSelectedIndex(-1);
+      closeSearch();
+      useSearchSessionStore.getState().abandonSession();
+    }
+  };
+
+  const handleSelectLesson = (lessonId: string) => {
+    setSelectedIndex(-1);
+    useSearchSessionStore.getState().closeSession(lessonId);
+    closeSearch();
+    navigate(`/lessons/${lessonId}`);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.defaultPrevented) return;
+
+    if (e.key === 'ArrowDown') {
+      if (sortedResults.length > 0) {
+        e.preventDefault();
+        setSelectedIndex((prev) => {
+          if (prev < sortedResults.length - 1) {
+            return prev + 1;
+          }
+          return prev;
+        });
+      }
+    } else if (e.key === 'ArrowUp') {
+      if (sortedResults.length > 0) {
+        e.preventDefault();
+        if (selectedIndex === 0) {
+          setSelectedIndex(-1);
+          inputRef.current?.focus();
+        } else if (selectedIndex > 0) {
+          setSelectedIndex(selectedIndex - 1);
+        }
+      }
+    } else if (e.key === 'Enter') {
+      const target = e.target as HTMLElement | null;
+      const isInput = target === inputRef.current;
+      const isCard =
+        target?.closest('[role="option"]') !== null ||
+        target?.closest('[data-testid^="search-result-item"]') !== null;
+
+      if (target?.tagName === 'BUTTON' && !isCard) {
+        return;
+      }
+      if (!isInput && !isCard) {
+        return;
+      }
+
+      if (selectedIndex >= 0 && selectedIndex < sortedResults.length) {
+        e.preventDefault();
+        handleSelectLesson(sortedResults[selectedIndex].id);
+      } else {
+        const trimmed = query.trim();
+        if (trimmed.length >= 3 && trimmed.length <= 200) {
+          e.preventDefault();
+          search(trimmed);
+        }
+      }
+    }
+  };
+
+  const trimmedQuery = query.trim();
+  const hasNoResults =
+    !isLoading &&
+    !isDebouncing &&
+    !error &&
+    !validationError &&
+    trimmedQuery.length >= 3 &&
+    hasSearched &&
+    lastSearchedQuery === trimmedQuery &&
+    results.length === 0;
+
+  return (
+    <DialogPrimitive.Root open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          data-testid="search-dialog-backdrop"
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        />
+        <DialogPrimitive.Content
+          data-testid="search-dialog-content"
+          aria-label="Palette de recherche globale"
+          onKeyDown={handleKeyDown}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            inputRef.current?.focus();
+          }}
+          onCloseAutoFocus={(e) => {
+            const trigger =
+              triggerRef.current ??
+              document.querySelector<HTMLElement>('[data-testid="search-trigger"]');
+            if (trigger && trigger.isConnected && typeof trigger.focus === 'function') {
+              e.preventDefault();
+              trigger.focus();
+            }
+          }}
+          className={cn(
+            // Mobile full screen (< 768px), maintaining 360px viewport floor
+            'fixed inset-0 z-50 flex flex-col w-full h-full max-w-none max-h-none rounded-none bg-surface min-w-[360px] text-foreground focus:outline-none overflow-hidden duration-200',
+            // Desktop centered modal (≥ 768px)
+            'md:inset-auto md:left-1/2 md:top-[10vh] md:-translate-x-1/2 md:w-full md:max-w-2xl md:h-auto md:max-h-[80vh] md:rounded-lg md:border md:border-border md:shadow-2xl'
+          )}
+        >
+          <DialogPrimitive.Title className="sr-only">
+            Recherche globale
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">
+            Rechercher des leçons dans l'ensemble des cours
+          </DialogPrimitive.Description>
+
+          {/* Search Input Bar */}
+          <div className="flex items-center gap-2 border-b border-border px-3 sm:px-4 py-2 sm:py-3 shrink-0 bg-surface">
+            <Search className="h-5 w-5 text-foreground-muted shrink-0" aria-hidden="true" />
+            <input
+              ref={inputRef}
+              data-testid="search-dialog-input"
+              type="text"
+              role="combobox"
+              aria-expanded={sortedResults.length > 0}
+              aria-controls="search-results-list"
+              aria-autocomplete="list"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Rechercher des leçons, cours..."
+              aria-label="Rechercher"
+              aria-activedescendant={
+                selectedIndex >= 0 && sortedResults[selectedIndex]
+                  ? `search-result-item-${sortedResults[selectedIndex].id}`
+                  : undefined
+              }
+              autoFocus
+              className="flex-1 bg-transparent text-foreground placeholder:text-foreground-muted focus:outline-none text-base sm:text-sm h-10 min-w-0"
+            />
+            {isLoading && (
+              <div
+                data-testid="search-loading-indicator"
+                className="shrink-0 flex items-center justify-center h-8 w-8 text-primary"
+              >
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="sr-only">Chargement...</span>
+              </div>
+            )}
+            {query.length > 0 && (
+              <button
+                type="button"
+                data-testid="search-clear-button"
+                aria-label="Effacer la recherche"
+                onClick={() => setQuery('')}
+                className="inline-flex items-center justify-center h-8 w-8 text-foreground-muted hover:text-foreground rounded focus:outline-none focus:ring-2 focus:ring-border-focus"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+            <DialogPrimitive.Close
+              data-testid="search-dialog-close"
+              aria-label="Fermer"
+              className="inline-flex h-12 w-12 min-h-[48px] min-w-[48px] items-center justify-center rounded-md text-foreground-muted hover:text-foreground hover:bg-surface border border-transparent hover:border-border focus:outline-none focus:ring-2 focus:ring-border-focus"
+            >
+              <X className="h-5 w-5" />
+              <span className="sr-only">Fermer</span>
+            </DialogPrimitive.Close>
+          </div>
+
+          {/* Search Body Content */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Validation Error (> 200 chars) */}
+            {validationError && trimmedQuery.length > 200 && (
+              <div
+                data-testid="search-validation-error"
+                className="p-4 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm"
+                role="alert"
+              >
+                {validationError}
+              </div>
+            )}
+
+            {/* Guidance Message (< 3 chars) */}
+            {validationError && trimmedQuery.length > 0 && trimmedQuery.length < 3 && (
+              <div
+                data-testid="search-guidance-message"
+                className="p-4 rounded-md bg-surface text-foreground-muted text-sm text-center border border-border"
+              >
+                {validationError}
+              </div>
+            )}
+
+            {/* Neutral Initial Prompt (empty query) */}
+            {trimmedQuery.length === 0 && (
+              <div
+                data-testid="search-neutral-prompt"
+                className="py-12 text-center text-foreground-muted text-sm space-y-2"
+              >
+                <p className="font-medium text-foreground">Recherche globale</p>
+                <p>Saisissez des mots-clés pour rechercher des leçons dans l'ensemble des cours.</p>
+              </div>
+            )}
+
+            {/* API Error Notice */}
+            {error && !isLoading && (
+              <div
+                data-testid="search-error-notice"
+                className="p-4 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm space-y-1"
+                role="alert"
+              >
+                <p className="font-semibold">Erreur de recherche</p>
+                <p>{error}</p>
+              </div>
+            )}
+
+            {/* Empty Results State */}
+            {hasNoResults && (
+              <div
+                data-testid="search-empty-results"
+                className="py-12 text-center text-foreground-muted text-sm space-y-1"
+              >
+                <p className="font-medium text-foreground">Aucun résultat</p>
+                <p>
+                  Aucune leçon trouvée pour "{query}". Essayez un mot-clé plus court ou un nom d'enseignant.
+                </p>
+              </div>
+            )}
+
+            {/* Results List */}
+            {trimmedQuery.length >= 3 && sortedResults.length > 0 && !isLoading && !error && (
+              <div
+                id="search-results-list"
+                data-testid="search-results-list"
+                className="space-y-2"
+                role="listbox"
+                aria-label="Résultats de recherche"
+                aria-activedescendant={
+                  selectedIndex >= 0 && sortedResults[selectedIndex]
+                    ? `search-result-item-${sortedResults[selectedIndex].id}`
+                    : undefined
+                }
+              >
+                {sortedResults.map((lesson, index) => (
+                  <SearchResultCard
+                    key={lesson.id}
+                    lesson={lesson}
+                    query={trimmedQuery}
+                    isSelected={selectedIndex === index}
+                    onSelect={handleSelectLesson}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Palette Footer */}
+          <div className="hidden md:flex items-center justify-between border-t border-border px-4 py-2.5 bg-surface/50 text-xs text-foreground-muted shrink-0">
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">
+                  ↑↓
+                </kbd>
+                <span>Naviguer</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">
+                  ↵
+                </kbd>
+                <span>Ouvrir</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 rounded bg-surface border border-border font-mono text-[10px]">
+                  Échap
+                </kbd>
+                <span>Fermer</span>
+              </span>
+            </div>
+            {count > 0 && (
+              <span>
+                {count} {count === 1 ? 'résultat' : 'résultats'}
+              </span>
+            )}
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}

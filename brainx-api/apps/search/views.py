@@ -43,10 +43,18 @@ only writer of the session tables, and the session id is handed to the client
 both in the 200 body and as an `HttpOnly` cookie. A later page records
 nothing, an empty or rejected query records nothing, and a capture failure
 never turns the search into an error; the id is never placed in a URL.
+
+Story 6.2 adds session lifecycle management: `SearchSessionCloseView` and
+`SearchSessionAbandonView` close active sessions, with abandon clearing the
+transport cookie.
+
+Story 6.4 adds `SearchAggregateView` providing the Publisher aggregate view over
+search queries, answers, and live retrieval decay signals (SM-5, SM-6).
 """
 
 from django.conf import settings
 from django.contrib.postgres.search import TrigramWordSimilarity
+from django.db import IntegrityError
 from django.db.models import FloatField, Value
 from django.db.models.functions import Coalesce, Upper
 from drf_spectacular.utils import (
@@ -54,10 +62,12 @@ from drf_spectacular.utils import (
     extend_schema,
     inline_serializer,
 )
-from rest_framework import serializers
+from rest_framework import serializers, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from apps.content.date_filters import course_date_range, filter_course_date
 from apps.content.models import Lesson
@@ -65,8 +75,13 @@ from apps.content.ordering import lesson_order, order_lessons
 from apps.content.serializers import BrowseLessonSerializer
 from apps.content.views import ENVELOPE_RESPONSE, list_response
 from apps.content.visibility import visible_content
+from apps.core.exceptions import Conflict
+from apps.core.permissions import IsAuthenticatedOrPublicAccess, IsPublisher
 
 from . import capture
+from .date_filters import parse_date_range
+from .metrics import get_search_aggregate
+from .models import CloseReason, SearchAnswer
 
 # The shortest query that can match: trigrams need at least three characters.
 MINIMUM_QUERY_LENGTH = 3
@@ -90,6 +105,82 @@ SEARCH_RESPONSE = inline_serializer(
     },
 )
 
+# The session status response returned on close or abandon.
+SEARCH_SESSION_STATUS_RESPONSE = inline_serializer(
+    name='SearchSessionStatusResponse',
+    fields={
+        'search_session_id': serializers.UUIDField(),
+        'state': serializers.CharField(),
+        'close_reason': serializers.CharField(),
+    },
+)
+
+VALID_CLIENT_CLOSE_REASONS = (
+    CloseReason.LESSON_OPENED,
+    CloseReason.ABANDONED,
+)
+
+SEARCH_SESSION_CLOSE_REQUEST = inline_serializer(
+    name='SearchSessionCloseRequest',
+    fields={
+        'search_session_id': serializers.UUIDField(required=False),
+        'reason': serializers.ChoiceField(
+            choices=VALID_CLIENT_CLOSE_REASONS,
+            required=False,
+            default=CloseReason.LESSON_OPENED,
+        ),
+    },
+)
+
+SEARCH_SESSION_ABANDON_REQUEST = inline_serializer(
+    name='SearchSessionAbandonRequest',
+    fields={
+        'search_session_id': serializers.UUIDField(required=False),
+    },
+)
+
+
+class SearchSessionAnswerRequestSerializer(serializers.Serializer):
+    search_session_id = serializers.UUIDField(required=False)
+    session_id = serializers.UUIDField(required=False)
+    found = serializers.BooleanField(required=True)
+
+
+class SearchSessionAnswerResponseSerializer(serializers.Serializer):
+    search_session_id = serializers.UUIDField()
+    found = serializers.BooleanField()
+
+
+SEARCH_SESSION_ANSWER_REQUEST = SearchSessionAnswerRequestSerializer
+SEARCH_SESSION_ANSWER_RESPONSE = SearchSessionAnswerResponseSerializer
+
+
+class GroupedQuerySerializer(serializers.Serializer):
+    query = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class SearchAggregateResponseSerializer(serializers.Serializer):
+    total_queries = serializers.IntegerField()
+    zero_result_queries = serializers.IntegerField()
+    total_zero_result_queries = serializers.IntegerField(required=False)
+    total_answers = serializers.IntegerField()
+    negative_answers = serializers.IntegerField()
+    zero_result_rate = serializers.FloatField()
+    sm5_rate = serializers.FloatField()
+    sm5_zero_result_rate = serializers.FloatField(required=False)
+    negative_answer_rate = serializers.FloatField()
+    sm6_rate = serializers.FloatField()
+    sm6_negative_answer_rate = serializers.FloatField(required=False)
+    grouped_queries = GroupedQuerySerializer(many=True)
+    grouped_zero_result_queries = GroupedQuerySerializer(many=True)
+    zero_result_grouped_queries = GroupedQuerySerializer(many=True, required=False)
+
+
+SEARCH_AGGREGATE_RESPONSE = SearchAggregateResponseSerializer
+
+
+
 # The accepted `sort` values. `date` is the search total order; `course`
 # re-places its leading date key with the course name.
 SORT_CHOICES = ('date', 'course')
@@ -99,10 +190,24 @@ DEFAULT_SORT = 'date'
 RELEVANCE = 'relevance'
 
 
+def _extract_session_id(request):
+    """The session id from body, header, or cookie, or None."""
+    if isinstance(request.data, dict):
+        if 'search_session_id' in request.data:
+            return request.data.get('search_session_id')
+        if 'session_id' in request.data:
+            return request.data.get('session_id')
+    header_val = request.headers.get('X-Search-Session-Id')
+    if header_val and header_val.strip():
+        return header_val.strip()
+    return request.COOKIES.get(capture.SESSION_COOKIE)
+
+
 class SearchLessonView(GenericAPIView):
     """Find visible Lessons across every Course by text (Story 5.4)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrPublicAccess]
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
 
     @extend_schema(
         parameters=[
@@ -151,6 +256,7 @@ class SearchLessonView(GenericAPIView):
             200: SEARCH_RESPONSE,
             400: ENVELOPE_RESPONSE,
             401: ENVELOPE_RESPONSE,
+            429: ENVELOPE_RESPONSE,
         },
     )
     def get(self, request):
@@ -227,8 +333,11 @@ class SearchLessonView(GenericAPIView):
         spellings like `01`, `+1` or ` 1` as page one. Capture is additive
         instrumentation, so the call is guarded even though the port already
         swallows its own failures - a capture failure must never turn a valid
-        search into an error.
+        search into an error. Anonymous users record no search session.
         """
+        if request.user is None or not request.user.is_authenticated:
+            return None
+
         page = request.query_params.get('page')
         if page is not None:
             try:
@@ -322,3 +431,233 @@ class SearchLessonView(GenericAPIView):
                 {'sort': [f'sort must be one of: {", ".join(SORT_CHOICES)}']}
             )
         return sort
+
+
+class SearchSessionCloseView(GenericAPIView):
+    """Explicitly close a search session (Story 6.2).
+
+    Resolves the session through `capture.resolve_session`, ensuring existence,
+    caller ownership, open state, and idle timeout <= 30 minutes. An invalid,
+    foreign, closed, or expired session answers uniform 404. Closes with
+    `close_reason='lesson_opened'` by default, or an optional reason from the
+    body. If closed as `abandoned`, the cookie is cleared.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='The search session id when not sent in body or cookie.',
+            ),
+        ],
+        request=SEARCH_SESSION_CLOSE_REQUEST,
+        responses={
+            200: SEARCH_SESSION_STATUS_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        session_id = _extract_session_id(request)
+        session = capture.resolve_session(request.user, session_id)
+
+        reason = CloseReason.LESSON_OPENED
+        if isinstance(request.data, dict):
+            if 'reason' in request.data:
+                candidate = request.data.get('reason')
+                if not candidate or candidate not in VALID_CLIENT_CLOSE_REASONS:
+                    raise ValidationError(
+                        {
+                            'reason': [
+                                f'reason must be one of: {", ".join(VALID_CLIENT_CLOSE_REASONS)}'
+                            ]
+                        }
+                    )
+                reason = candidate
+            elif 'close_reason' in request.data:
+                candidate = request.data.get('close_reason')
+                if not candidate or candidate not in VALID_CLIENT_CLOSE_REASONS:
+                    raise ValidationError(
+                        {
+                            'reason': [
+                                f'reason must be one of: {", ".join(VALID_CLIENT_CLOSE_REASONS)}'
+                            ]
+                        }
+                    )
+                reason = candidate
+
+        capture.close_session(session, reason=reason)
+        response = Response(
+            {
+                'search_session_id': str(session.pk),
+                'state': session.state,
+                'close_reason': session.close_reason,
+            },
+            status=status.HTTP_200_OK,
+        )
+        if reason == CloseReason.ABANDONED:
+            response.delete_cookie(
+                capture.SESSION_COOKIE,
+                samesite=settings.SESSION_COOKIE_SAMESITE,
+            )
+        return response
+
+
+class SearchSessionAbandonView(GenericAPIView):
+    """Explicitly abandon a search session and clear its cookie (Story 6.2)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='The search session id when not sent in body or cookie.',
+            ),
+        ],
+        request=SEARCH_SESSION_ABANDON_REQUEST,
+        responses={
+            200: SEARCH_SESSION_STATUS_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        session_id = _extract_session_id(request)
+        session = capture.resolve_session(request.user, session_id)
+        capture.close_session(session, reason=CloseReason.ABANDONED)
+        response = Response(
+            {
+                'search_session_id': str(session.pk),
+                'state': session.state,
+                'close_reason': session.close_reason,
+            },
+            status=status.HTTP_200_OK,
+        )
+        response.delete_cookie(
+            capture.SESSION_COOKIE,
+            samesite=settings.SESSION_COOKIE_SAMESITE,
+        )
+        return response
+
+
+class SearchSessionAnswerView(GenericAPIView):
+    """Record a Student's one-time answer to 'did you find it?' (Story 6.3).
+
+    Resolves the session through `capture.resolve_session_for_answer`, ensuring
+    existence, caller ownership, eligible lifecycle state (`lesson_opened` or `open`),
+    and idle timeout <= 30 minutes. An invalid, foreign, closed (abandoned/idle_expired),
+    or expired session answers uniform 404 with no existence oracle.
+
+    If the session already has an associated answer, rejects with 409 Conflict.
+    Answers are strictly append-only; an outcome can never be updated, restated,
+    or overwritten. If submitted while the session is open, closes the session
+    with `close_reason='lesson_opened'`.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SEARCH_SESSION_ANSWER_REQUEST
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='X-Search-Session-Id',
+                type=str,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='The search session id when not sent in body or cookie.',
+            ),
+        ],
+        request=SEARCH_SESSION_ANSWER_REQUEST,
+        responses={
+            201: SEARCH_SESSION_ANSWER_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+            409: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        session_id = _extract_session_id(request)
+        session = capture.resolve_session_for_answer(request.user, session_id)
+
+        if SearchAnswer.objects.filter(session=session).exists():
+            raise Conflict(
+                'An answer has already been recorded for this search session.'
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        found = serializer.validated_data['found']
+
+        try:
+            answer = capture.record_answer(session, found)
+        except IntegrityError:
+            raise Conflict(
+                'An answer has already been recorded for this search session.'
+            )
+
+        return Response(
+            {
+                'search_session_id': str(session.pk),
+                'found': answer.found,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class SearchAggregateView(GenericAPIView):
+    """Publisher aggregate view over search queries, answers, and decay signals (Story 6.4).
+
+    Returns dynamic SM-5 (zero-result query share), SM-6 (negative-answer rate),
+    totals, and grouped query texts over an optional inclusive calendar date range
+    bounded by `date_from` and `date_to` (YYYY-MM-DD).
+
+    Requires Publisher privilege: unauthenticated callers receive 401; authenticated
+    non-publishers (Students) receive 403.
+    Contains no student identity fields and no per-student query histories.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+    serializer_class = SEARCH_AGGREGATE_RESPONSE
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='date_from',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Optional inclusive lower date bound written strictly as YYYY-MM-DD.',
+            ),
+            OpenApiParameter(
+                name='date_to',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Optional inclusive upper date bound written strictly as YYYY-MM-DD.',
+            ),
+        ],
+        responses={
+            200: SEARCH_AGGREGATE_RESPONSE,
+            400: ENVELOPE_RESPONSE,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+        },
+    )
+    def get(self, request):
+        date_from, date_to = parse_date_range(request)
+        data = get_search_aggregate(date_from=date_from, date_to=date_to)
+        serializer = self.get_serializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+

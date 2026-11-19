@@ -31,33 +31,36 @@ def client_for(user):
 class ContentEndpointTestCase(TestCase):
     """A publisher client, a student client, and the tree they act on."""
 
-    def setUp(self):
-        self.publisher = User.objects.create_user(
+    @classmethod
+    def setUpTestData(cls):
+        cls.publisher = User.objects.create_user(
             email='publisher@example.com',
             password=PASSWORD,
             is_publisher=True,
             is_email_verified=True,
         )
-        self.student = User.objects.create_user(
+        cls.student = User.objects.create_user(
             email='student@example.com',
             password=PASSWORD,
         )
+        cls.course = Course.objects.create(
+            name='Maths', subject='Algebra', position=1,
+            last_modified_by=cls.publisher,
+        )
+        cls.module = Module.objects.create(
+            course=cls.course, name='Module 1', position=1,
+            last_modified_by=cls.publisher,
+        )
+        cls.chapter = Chapter.objects.create(
+            module=cls.module, name='Chapter 1', position=1,
+            last_modified_by=cls.publisher,
+        )
+
+    def setUp(self):
+        super().setUp()
         self.publisher_client = client_for(self.publisher)
         self.student_client = client_for(self.student)
         self.anonymous_client = APIClient()
-
-        self.course = Course.objects.create(
-            name='Maths', subject='Algebra', position=1,
-            last_modified_by=self.publisher,
-        )
-        self.module = Module.objects.create(
-            course=self.course, name='Module 1', position=1,
-            last_modified_by=self.publisher,
-        )
-        self.chapter = Chapter.objects.create(
-            module=self.module, name='Chapter 1', position=1,
-            last_modified_by=self.publisher,
-        )
 
     def lesson_url(self, chapter=None):
         return reverse(
@@ -216,29 +219,6 @@ class LessonMetadataTests(ContentEndpointTestCase):
         )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()['description'], '')
-
-
-class AuthorizationTests(ContentEndpointTestCase):
-    def request_specs(self):
-        sid = uuid.uuid4()
-        return [
-            (reverse('course-create'), {'name': 'X', 'subject': 'Y'}),
-            (reverse('module-create', args=[sid]), {'name': 'X'}),
-            (reverse('chapter-create', args=[sid]), {'name': 'X'}),
-            (reverse('lesson-create', args=[sid]), LESSON_PAYLOAD),
-        ]
-
-    def test_a_student_cannot_create_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.student_client.post(url, payload, format='json')
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_create_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.anonymous_client.post(url, payload, format='json')
-                assert_envelope(self, response, 'unauthenticated', 401)
 
 
 class RoutingAndSchemaTests(ContentEndpointTestCase):

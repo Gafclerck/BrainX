@@ -17,7 +17,7 @@ detail view never filters the visibility flags itself.
 import uuid
 
 from django.conf import settings
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from drf_spectacular.generators import SchemaGenerator
 
@@ -255,6 +255,7 @@ class LessonDetailVisibilityTests(LessonDetailTestCase):
         assert_envelope(self, response, 'not_found', 404)
 
 
+@override_settings(BRAINX_PUBLIC_BROWSING=False)
 class LessonDetailAuthTests(LessonDetailTestCase):
     """401 for anonymous and bad-token callers; a Student is permitted."""
 
