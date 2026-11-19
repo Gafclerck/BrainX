@@ -15,8 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Create virtual environment for clean multi-stage artifact extraction
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: Runtime image
 FROM python:3.12-slim AS runner
@@ -29,15 +34,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create system user and group (non-root)
-RUN groupadd -r brainx && useradd -r -g brainx -d /app -s /sbin/nologin brainx
-
-# Copy python packages from builder
-COPY --from=builder /root/.local /home/brainx/.local
-ENV PATH=/home/brainx/.local/bin:$PATH
+# Copy virtual environment from builder (universal PATH resolution)
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DJANGO_SETTINGS_MODULE=config.settings.production
+
+# Create system user and group (non-root)
+RUN groupadd -r brainx && useradd -r -g brainx -d /app -s /sbin/nologin brainx
 
 # Copy application code
 COPY --chown=brainx:brainx . /app
