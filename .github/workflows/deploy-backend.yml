@@ -79,6 +79,10 @@ jobs:
             fi
             cd "$APP_DIR"
 
+            echo "==> Synchronizing production compose and proxy configurations..."
+            curl -fsSL https://raw.githubusercontent.com/Gafclerck/BrainX/main/docker-compose.prod.yml -o docker-compose.prod.yml
+            curl -fsSL https://raw.githubusercontent.com/Gafclerck/BrainX/main/Caddyfile -o Caddyfile
+
             echo "==> Logging in to GHCR on EC2..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
