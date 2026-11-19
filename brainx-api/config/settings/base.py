@@ -192,11 +192,12 @@ if STORAGE_BACKEND == 's3':
         'default': {
             'BACKEND': 'storages.backends.s3.S3Storage',
             'OPTIONS': {
-                'access_key': env('S3_ACCESS_KEY_ID'),
-                'secret_key': env('S3_SECRET_ACCESS_KEY'),
-                'bucket_name': env('S3_BUCKET_NAME'),
-                'endpoint_url': env('S3_ENDPOINT_URL', default=None),
-                'region_name': env('S3_REGION_NAME', default='auto'),
+                # Universal S3 Interface (AWS S3, Backblaze B2, Cloudflare R2, MinIO)
+                'access_key': env('S3_ACCESS_KEY_ID', default=env('AWS_ACCESS_KEY_ID', default='')),
+                'secret_key': env('S3_SECRET_ACCESS_KEY', default=env('AWS_SECRET_ACCESS_KEY', default='')),
+                'bucket_name': env('S3_BUCKET_NAME', default=env('AWS_STORAGE_BUCKET_NAME', default='')),
+                'endpoint_url': env('S3_ENDPOINT_URL', default=env('AWS_S3_ENDPOINT_URL', default=None)),
+                'region_name': env('S3_REGION_NAME', default=env('AWS_S3_REGION_NAME', default='auto')),
                 'default_acl': None,
                 'querystring_auth': True,
                 'querystring_expire': 3600,
@@ -244,6 +245,11 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 2.5 * 1024 * 1024
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 CORS_ALLOW_CREDENTIALS = True
+
+# Public unauthenticated content & resource browsing switch (Epic 1 / AD-AuthToggle).
+# When True, anonymous visitors can read published courses, lessons, and retrieve resources.
+# When False (default for tests), strictly requires authentication (and verified account for files).
+BRAINX_PUBLIC_BROWSING = env.bool('BRAINX_PUBLIC_BROWSING', default=False)
 
 
 REST_FRAMEWORK = {

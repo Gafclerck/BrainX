@@ -54,11 +54,8 @@ from apps.core.exceptions import (
     brainx_exception_handler,
 )
 from apps.core.logging import JsonFormatter
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
 from config.settings import base as base_settings
-
-# Written out rather than imported: these assertions exist to catch a change to
-# the contract, so comparing against the constant under test would not.
-ENVELOPE_KEYS = ('type', 'title', 'status', 'detail', 'errors')
 
 # Keys reserved for a later epic; this contract never emits them at envelope
 # level. A field legitimately named `blocked` stays an ordinary field error, so
@@ -427,22 +424,6 @@ class SubstrateSettingsTests(SimpleTestCase):
             encoding='utf-8'
         )
         self.assertIn('.env', gitignore.splitlines())
-
-
-def assert_envelope(test_case, response, expected_type, expected_status):
-    """Assert the response is the five-key envelope for the given contract case."""
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertEqual(body['title'], TITLES[expected_type])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    for reserved in RESERVED_KEYS:
-        test_case.assertNotIn(reserved, body)
-    return body
 
 
 class BrainxExceptionHandlerUnitTests(SimpleTestCase):

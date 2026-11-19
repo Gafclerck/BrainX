@@ -20,6 +20,7 @@ from .views import (
     LessonCreateView,
     LessonDetailView,
     LessonMoveView,
+    LessonNavigationView,
     LessonPublishView,
     LessonRemovalPreviewView,
     LessonResourcesView,
@@ -219,5 +220,10 @@ urlpatterns = [
         'browse/lessons/<uuid:lesson_id>/',
         LessonDetailView.as_view(),
         name='browse-lesson-detail',
+    ),
+    path(
+        'browse/lessons/<uuid:lesson_id>/navigation/',
+        LessonNavigationView.as_view(),
+        name='browse-lesson-navigation',
     ),
 ]

@@ -1,0 +1,30 @@
+# ==============================================================================
+# BrainX Production Caddyfile - Auto TLS Reverse Proxy for AWS EC2
+# ==============================================================================
+
+{$DOMAIN:localhost} {
+    # Enable transparent compression (gzip & zstd)
+    encode zstd gzip
+
+    # Reverse proxy all API, Admin, and WebSocket traffic to the Django ASGI container
+    reverse_proxy api:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Logging
+    log {
+        output stdout
+        format console
+    }
+}

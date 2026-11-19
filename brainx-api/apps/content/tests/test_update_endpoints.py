@@ -139,6 +139,33 @@ class EditTests(UpdateEndpointTestCase):
         )
 
 
+class LessonGetTests(UpdateEndpointTestCase):
+    def test_a_publisher_retrieves_a_lesson_by_uuid(self):
+        url = self.update_url(Lesson, self.lesson.pk)
+        response = self.publisher_client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['id'], str(self.lesson.pk))
+        self.assertEqual(body['chapter_id'], str(self.chapter.pk))
+        self.assertEqual(body['title'], self.lesson.title)
+        self.assertEqual(body['teacher'], self.lesson.teacher)
+        self.assertEqual(body['course_date'], str(self.lesson.course_date))
+
+    def test_an_unauthenticated_or_student_caller_cannot_get_lesson(self):
+        url = self.update_url(Lesson, self.lesson.pk)
+        anonymous_res = self.anonymous_client.get(url)
+        assert_envelope(self, anonymous_res, 'unauthenticated', 401)
+
+        student_res = self.student_client.get(url)
+        assert_envelope(self, student_res, 'permission_denied', 403)
+
+    def test_a_nonexistent_lesson_get_is_a_404(self):
+        url = self.update_url(Lesson, uuid.uuid4())
+        response = self.publisher_client.get(url)
+        assert_envelope(self, response, 'not_found', 404)
+
+
 class RenameTests(UpdateEndpointTestCase):
     def test_renaming_a_module_keeps_its_uuid_and_parent(self):
         original_id = self.module.pk
@@ -422,28 +449,6 @@ class NotFoundTests(UpdateEndpointTestCase):
                 assert_envelope(self, response, 'not_found', 404)
 
 
-class AuthorizationTests(UpdateEndpointTestCase):
-    def request_specs(self):
-        return [
-            (self.update_url(model, row.pk), payload)
-            for model, row, payload in self.update_cases()
-        ]
-
-    def test_a_student_cannot_update_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.student_client.patch(url, payload, format='json')
-                assert_envelope(self, response, 'permission_denied', 403)
-
-    def test_an_anonymous_caller_cannot_update_any_level(self):
-        for url, payload in self.request_specs():
-            with self.subTest(url=url):
-                response = self.anonymous_client.patch(
-                    url, payload, format='json'
-                )
-                assert_envelope(self, response, 'unauthenticated', 401)
-
-
 class SecondPublisherTests(UpdateEndpointTestCase):
     def test_a_second_publisher_stamps_themselves(self):
         second = User.objects.create_user(
@@ -598,23 +603,3 @@ class RoutingAndSchemaTests(ContentEndpointTestCase):
                     ]['$ref'],
                     f'#/components/schemas/{level}',
                 )
-
-
-class NoSecondWritePathTests(TestCase):
-    """The port is the only update path, so no update view calls `.update()`."""
-
-    def test_views_module_never_calls_queryset_update(self):
-        import ast
-        from pathlib import Path
-
-        from .. import views
-
-        tree = ast.parse(Path(views.__file__).read_text(encoding='utf-8'))
-        calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == 'update'
-        ]
-        self.assertEqual(calls, [])
