@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
@@ -911,7 +911,7 @@ describe('Story FE-4.4: Éditeur de Leçon : Métadonnées Obligatoires & Dépla
       });
 
       const keywordsInput = screen.getByTestId('lesson-keywords-input');
-      await user.clear(keywordsInput);
+      fireEvent.change(keywordsInput, { target: { value: '' } });
 
       await user.click(screen.getByTestId('save-lesson-btn'));
 
