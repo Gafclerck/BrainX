@@ -141,14 +141,23 @@ class Command(BaseCommand):
                 module_dirs = sorted([d for d in c_dir.iterdir() if d.is_dir()])
                 for module_idx, m_dir in enumerate(module_dirs, start=1):
                     module_name = parse_clean_name(m_dir.name)
-                    module, m_created = Module.objects.get_or_create(
-                        course=course,
-                        name=module_name,
-                        defaults={
-                            'position': module_idx,
-                            'last_modified_by': publisher,
-                        },
-                    )
+                    module = Module.objects.filter(course=course, name=module_name).first()
+                    m_created = False
+                    if not module:
+                        module = Module.objects.filter(course=course, position=module_idx).first()
+                        if module:
+                            module.name = module_name
+                            module.last_modified_by = publisher
+                            module.save(update_fields=['name', 'last_modified_by'])
+                        else:
+                            module = Module.objects.create(
+                                course=course,
+                                name=module_name,
+                                position=module_idx,
+                                last_modified_by=publisher,
+                            )
+                            m_created = True
+
                     if m_created:
                         counts['modules'] += 1
                         self.stdout.write(f"   [Module +] {module.name}")
@@ -157,14 +166,23 @@ class Command(BaseCommand):
                     chapter_dirs = sorted([d for d in m_dir.iterdir() if d.is_dir()])
                     for chapter_idx, ch_dir in enumerate(chapter_dirs, start=1):
                         chapter_name = parse_clean_name(ch_dir.name)
-                        chapter, ch_created = Chapter.objects.get_or_create(
-                            module=module,
-                            name=chapter_name,
-                            defaults={
-                                'position': chapter_idx,
-                                'last_modified_by': publisher,
-                            },
-                        )
+                        chapter = Chapter.objects.filter(module=module, name=chapter_name).first()
+                        ch_created = False
+                        if not chapter:
+                            chapter = Chapter.objects.filter(module=module, position=chapter_idx).first()
+                            if chapter:
+                                chapter.name = chapter_name
+                                chapter.last_modified_by = publisher
+                                chapter.save(update_fields=['name', 'last_modified_by'])
+                            else:
+                                chapter = Chapter.objects.create(
+                                    module=module,
+                                    name=chapter_name,
+                                    position=chapter_idx,
+                                    last_modified_by=publisher,
+                                )
+                                ch_created = True
+
                         if ch_created:
                             counts['chapters'] += 1
                             self.stdout.write(f"     [Chapter +] {chapter.name}")
@@ -188,23 +206,45 @@ class Command(BaseCommand):
                             else:
                                 course_date = date.today()
 
-                            description = metadata.get('description') or body or f"Leçon sur {title}"
+                            description = body if body.strip() else (metadata.get('description') or f"Leçon sur {title}")
                             keywords = metadata.get('keywords') or course_name
                             is_published = bool(metadata.get('is_published', True))
 
-                            lesson, l_created = Lesson.objects.update_or_create(
-                                chapter=chapter,
-                                title=title,
-                                defaults={
-                                    'teacher': teacher,
-                                    'course_date': course_date,
-                                    'description': description,
-                                    'keywords': keywords,
-                                    'position': lesson_idx,
-                                    'is_published': is_published,
-                                    'last_modified_by': publisher,
-                                },
-                            )
+                            lesson = Lesson.objects.filter(chapter=chapter, title=title).first()
+                            l_created = False
+                            if not lesson:
+                                lesson = Lesson.objects.filter(chapter=chapter, position=lesson_idx).first()
+                                if lesson:
+                                    lesson.title = title
+                                    lesson.teacher = teacher
+                                    lesson.course_date = course_date
+                                    lesson.description = description
+                                    lesson.keywords = keywords
+                                    lesson.is_published = is_published
+                                    lesson.last_modified_by = publisher
+                                    lesson.save()
+                                else:
+                                    lesson = Lesson.objects.create(
+                                        chapter=chapter,
+                                        title=title,
+                                        teacher=teacher,
+                                        course_date=course_date,
+                                        description=description,
+                                        keywords=keywords,
+                                        position=lesson_idx,
+                                        is_published=is_published,
+                                        last_modified_by=publisher,
+                                    )
+                                    l_created = True
+                            else:
+                                lesson.teacher = teacher
+                                lesson.course_date = course_date
+                                lesson.description = description
+                                lesson.keywords = keywords
+                                lesson.is_published = is_published
+                                lesson.last_modified_by = publisher
+                                lesson.save()
+
                             # Recompute search trigram document
                             lesson.search_document = lesson.compose_search_document()
                             lesson.save(update_fields=['search_document'])

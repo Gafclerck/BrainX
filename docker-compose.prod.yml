@@ -22,7 +22,7 @@ services:
     build:
       context: ./brainx-api
       dockerfile: Dockerfile
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-brainx}/brainx-api:latest
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-gafclerck}/brainx-api:latest
     restart: unless-stopped
     env_file:
       - ./brainx-api/.env.production
