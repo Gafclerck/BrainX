@@ -23,8 +23,24 @@ class JsonFormatter(logging.Formatter):
             'module': record.module,
             'message': record.getMessage(),
         }
-        if record.exc_info:
+        # The stock Formatter reads exc_info and falls back to the cached
+        # exc_text, and appends stack_info; keeping all three is what stops this
+        # formatter from silently dropping diagnostics the previous one emitted.
+        exception = self._exception_text(record)
+        if exception:
+            payload['exception'] = exception
+        if record.stack_info:
+            payload['stack'] = self.formatStack(record.stack_info)
+        return json.dumps(payload, ensure_ascii=True)
+
+    def _exception_text(self, record):
+        """The traceback for a record, from exc_info or a cached exc_text.
+
+        `exc_info=True` outside an `except` block yields `(None, None, None)`,
+        which is truthy, so the exception type is checked rather than the tuple.
+        """
+        if record.exc_info and record.exc_info[0] is not None:
             # The 5xx path is the one that passes exc_info, and dropping it
             # would lose the traceback the text formatter used to emit.
-            payload['exception'] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=True)
+            return self.formatException(record.exc_info)
+        return record.exc_text
