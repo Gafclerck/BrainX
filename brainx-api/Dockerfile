@@ -47,8 +47,10 @@ RUN groupadd -r brainx && useradd -r -g brainx -d /app -s /sbin/nologin brainx
 # Copy application code
 COPY --chown=brainx:brainx . /app
 
-# Ensure entrypoint is executable
-RUN chmod +x /app/entrypoint.sh
+# Ensure staticfiles/media directories exist with non-root ownership
+RUN mkdir -p /app/staticfiles /app/media && \
+    chown -R brainx:brainx /app && \
+    chmod +x /app/entrypoint.sh
 
 # Switch to non-root user
 USER brainx
