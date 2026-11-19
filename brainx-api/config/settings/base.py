@@ -39,6 +39,12 @@ EMAIL_PORT = env.int('EMAIL_PORT', default=1025)  # 1025 = Mailpit/Mailhog local
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=False)
+# A relay that drops packets instead of refusing the connection never raises,
+# and Django's default of None means smtplib sets no socket timeout at all, so
+# the request thread would sit in connect() for as long as the OS retries the
+# SYN. Ten seconds is long enough for a slow relay and short enough that an
+# open registration endpoint cannot be used to hold a worker open.
+EMAIL_TIMEOUT = env.int('EMAIL_TIMEOUT', default=10)
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='no-reply@brainx.local')
 
 # API version: the URL prefix is built from a constant (the version contract)
@@ -47,11 +53,13 @@ API_PREFIX = f'/api/{API_VERSION}'
 
 # Application definition
 DJANGO_APPS = [
-    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    # GinIndex and the pg_trgm operations need the contrib app registered
+    # (Story 5.4's functional trigram index).
+    'django.contrib.postgres',
 ]
 
 THIRD_PARTY_APPS = [
@@ -64,7 +72,15 @@ THIRD_PARTY_APPS = [
 
 LOCAL_APPS = [
     'apps.core',
+    'apps.users',
+    'apps.content',
+    'apps.search',
 ]
+
+# The account model is the project's own, not django.contrib.auth's User.
+# It must be set before the first migration is applied, hence here rather than
+# in an app config.
+AUTH_USER_MODEL = 'users.User'
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -124,9 +140,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {
-    # PostgreSQL 15+ is the only supported engine. SQLite cannot express the
-    # UNIQUE-constraint single-use token guarantee of AD-10, so it is not an
-    # option. Override locally with DATABASE_URL in the .env.
+    # PostgreSQL 15+ is the only supported engine. AD-10's single-use token
+    # needs a partial unique index and a CONCURRENTLY migration, and its
+    # timestamps need TIMESTAMPTZ; SQLite offers none of the three. Override
+    # locally with DATABASE_URL in the .env.
     'default': env.db(
         'DATABASE_URL',
         default='postgres://brainx:brainx@localhost:5432/brainx',
@@ -175,11 +192,12 @@ if STORAGE_BACKEND == 's3':
         'default': {
             'BACKEND': 'storages.backends.s3.S3Storage',
             'OPTIONS': {
-                'access_key': env('S3_ACCESS_KEY_ID'),
-                'secret_key': env('S3_SECRET_ACCESS_KEY'),
-                'bucket_name': env('S3_BUCKET_NAME'),
-                'endpoint_url': env('S3_ENDPOINT_URL', default=None),
-                'region_name': env('S3_REGION_NAME', default='auto'),
+                # Universal S3 Interface (AWS S3, Backblaze B2, Cloudflare R2, MinIO)
+                'access_key': env('S3_ACCESS_KEY_ID', default=env('AWS_ACCESS_KEY_ID', default='')),
+                'secret_key': env('S3_SECRET_ACCESS_KEY', default=env('AWS_SECRET_ACCESS_KEY', default='')),
+                'bucket_name': env('S3_BUCKET_NAME', default=env('AWS_STORAGE_BUCKET_NAME', default='')),
+                'endpoint_url': env('S3_ENDPOINT_URL', default=env('AWS_S3_ENDPOINT_URL', default=None)),
+                'region_name': env('S3_REGION_NAME', default=env('AWS_S3_REGION_NAME', default='auto')),
                 'default_acl': None,
                 'querystring_auth': True,
                 'querystring_expire': 3600,
@@ -194,9 +212,44 @@ else:
         'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
     }
 
+# Resource uploads (Story 3.2). One ceiling and one per-type extension allowlist,
+# read by the Resource serializer; no endpoint hardcodes a limit or an extension.
+# The extension is a convenience filter, not a claim the stored bytes are safe.
+RESOURCE_FILE_MAX_BYTES = 50 * 1024 * 1024
+RESOURCE_FILE_EXTENSIONS = {
+    'document': ('.pdf',),
+    'image': ('.png', '.jpg', '.jpeg', '.webp'),
+}
+
+# Resource delivery (Story 3.3). URL expiry and content-type mapping for signed URLs.
+RESOURCE_URL_TTL_SECONDS = 3600
+RESOURCE_CONTENT_TYPES = {
+    'document': {'.pdf': 'application/pdf'},
+    'image': {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+    },
+}
+
+# Upload enforcement is layered, and only the last layer rejects a file.
+# DATA_UPLOAD_MAX_MEMORY_SIZE bounds the non-file part of a request body;
+# FILE_UPLOAD_MAX_MEMORY_SIZE (Django's default) is the memory-vs-tempfile
+# spool threshold and caps nothing - past it an upload streams to a temp file.
+# The serializer's per-file check is the authoritative 50 MB cap, and the edge
+# body cap is recorded in the README's operational envelope.
+DATA_UPLOAD_MAX_MEMORY_SIZE = RESOURCE_FILE_MAX_BYTES
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2.5 * 1024 * 1024
+
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 CORS_ALLOW_CREDENTIALS = True
+
+# Public unauthenticated content & resource browsing switch (Epic 1 / AD-AuthToggle).
+# When True, anonymous visitors can read published courses, lessons, and retrieve resources.
+# When False (default for tests), strictly requires authentication (and verified account for files).
+BRAINX_PUBLIC_BROWSING = env.bool('BRAINX_PUBLIC_BROWSING', default=False)
 
 
 REST_FRAMEWORK = {
@@ -208,26 +261,47 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
     'DEFAULT_PARSER_CLASSES': ['rest_framework.parsers.JSONParser'],
+    # Page-number pagination, fixed at 20 items (AR-24, NFR-3). The default
+    # `PageNumberPagination` exposes no `page_size` query parameter, so a
+    # client cannot ask for a variable page; `id` is the final tiebreak on
+    # every content ordering, which keeps a page stable across requests.
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     # One error envelope for every rejection: {type, title, status, detail, errors}
     'EXCEPTION_HANDLER': 'apps.core.exceptions.brainx_exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
+        # Per-view scope throttling: the four email-driving views carry an
+        # explicit scope; a view without one skips it (AD-17).
+        'rest_framework.throttling.ScopedRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/day',
         'user': '1000/day',
         'login': '5/minute',
+        'register': '5/hour',
         'forgot': '5/hour',
         'reset': '5/hour',
         'activate': '5/hour',
+        # The per-source backstop on the four mail-driving endpoints, keyed by
+        # REMOTE_ADDR only (AD-17). Two caveats the spec records: throttle
+        # history lives in the per-process LocMemCache (no CACHES setting
+        # exists), so this ceiling is per worker; and behind the production
+        # proxy every client shares one REMOTE_ADDR, so a garbage-token stream
+        # can spend the one bucket and 429 legitimate traffic (accepted
+        # 2026-10-08).
+        'source': '2000/day',
     },
 }
 
 # Password reset
 PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
 PASSWORD_RESET_INVITE_TTL_DAYS = 7
+
+# Email verification. Human-speed, so a day rather than the reset's minutes.
+EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
@@ -238,6 +312,7 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # Frontend URL and configurable redirect paths
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:5173')
 FRONTEND_RESET_PASSWORD_PATH = env('FRONTEND_RESET_PASSWORD_PATH', default='/reset-password')
+FRONTEND_VERIFY_PATH = env('FRONTEND_VERIFY_PATH', default='/verify-email')
 # FRONTEND_LOGO_PATH = env('FRONTEND_LOGO_PATH', default='/logo-xarala.png')
 
 # Email
@@ -263,6 +338,15 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API de gestion de la plateforme BrainX',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    # No authentication either, and that is the other half of the same
+    # decision. drf-spectacular's default for SERVE_AUTHENTICATION is None,
+    # which it resolves to the project's DEFAULT_AUTHENTICATION_CLASSES - so
+    # with it left unset, a request that happens to carry a stale or malformed
+    # `Authorization: Bearer` header is answered with a 401 before the
+    # AllowAny permission is ever consulted. An empty list is what makes the
+    # schema and the Swagger UI anonymously readable in every case rather than
+    # only for a client that sends no credentials at all.
+    'SERVE_AUTHENTICATION': [],
 }
 
 LOGGING = {

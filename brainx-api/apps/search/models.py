@@ -1,0 +1,135 @@
+"""The capture tables of the search surface (Story 6.1, Story 6.2, Story 6.3).
+
+Story 6.1 gives `apps.search` its first tables. Neither is read by a Student
+read path: `SearchSession` groups one account's searches and `SearchQuery`
+records what was searched and how much it matched, so the Publisher's decay
+signal (Story 6.4) has data to aggregate. The search endpoint is the only
+writer, through `apps.search.capture`, and retention is indefinite - there is
+no soft-delete or deletion path here (Story 6.2 owns closing a session;
+nothing owns deleting one).
+
+Story 6.3 adds `SearchAnswer`, recording a Student's one-time "did you find it?"
+outcome against a search session.
+"""
+
+from django.conf import settings
+from django.db import models
+from django.utils import timezone
+
+from apps.core.models import TimeStampedModel, UUIDModel
+
+
+class SearchSession(UUIDModel, TimeStampedModel):
+    """One account's run of searches, minted server-side.
+
+    The id is the UUID primary key, which is what makes it safe to hand to the
+    client; the session belongs to exactly one account, so a carried id that
+    does not resolve to the caller's own row mints a fresh session instead of
+    attaching a query to someone else's (Story 6.1). Story 6.2 adds the lifecycle
+    state (`open`, `closed`), the lazy 30-minute idle expiry, and the closure
+    signals (`lesson_opened`, `abandoned`, `idle_expired`).
+    """
+
+    class SessionState(models.TextChoices):
+        OPEN = 'open', 'Open'
+        CLOSED = 'closed', 'Closed'
+
+    class CloseReason(models.TextChoices):
+        LESSON_OPENED = 'lesson_opened', 'Lesson opened'
+        ABANDONED = 'abandoned', 'Abandoned'
+        IDLE_EXPIRED = 'idle_expired', 'Idle expired'
+
+    # PROTECT: a session is the attribution for the product's retrieval
+    # signal, so an account that has searched cannot be deleted out from under
+    # it - the same rule every content actor stamp follows.
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='search_sessions',
+    )
+    state = models.CharField(
+        max_length=16,
+        choices=SessionState.choices,
+        default=SessionState.OPEN,
+    )
+    closed_at = models.DateTimeField(null=True, blank=True)
+    close_reason = models.CharField(
+        max_length=32,
+        choices=CloseReason.choices,
+        null=True,
+        blank=True,
+    )
+    last_activity_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        # Newest session first: the order Story 6.2's resolution check wants.
+        ordering = ('-created_at', 'id')
+
+    def __str__(self):
+        # Never the owner's email or the query text: this is what a log line
+        # or a debugger would print.
+        return str(self.pk)
+
+
+SessionState = SearchSession.SessionState
+CloseReason = SearchSession.CloseReason
+
+
+class SearchQuery(UUIDModel, TimeStampedModel):
+    """One recorded search: its text and the size of its full matched set.
+
+    Written only by `apps.search.capture`, and only for the first page of a
+    search, so paging cannot inflate the number of rows. The acting account is
+    reached through `session.user`: a query is never detached from the session
+    it grouped into, so attribution is exactly one hop away. `result_count` is
+    the count of the whole matched set - not the page size - which is what
+    makes a zero-result search distinguishable from a narrow one without a
+    second `COUNT`. `query` is capped at 200 characters by the endpoint and
+    stripped of control characters before it is written, so the stored text is
+    the sanitised form of what was searched.
+    """
+
+    session = models.ForeignKey(
+        SearchSession,
+        on_delete=models.CASCADE,
+        related_name='queries',
+    )
+    query = models.CharField(max_length=200)
+    result_count = models.PositiveIntegerField()
+
+    class Meta:
+        # Chronological inside a session, with `id` as the final tiebreak.
+        ordering = ('created_at', 'id')
+
+    def __str__(self):
+        # Deliberately not the query text: a search term must never reach a
+        # log, and `__str__` is what a log call or a debugger would print.
+        return str(self.pk)
+
+
+class SearchAnswer(UUIDModel, TimeStampedModel):
+    """One Student's answer to the "did you find it?" prompt (Story 6.3).
+
+    Recorded against a SearchSession when the Student either opened a Lesson
+    from search results (close_reason='lesson_opened') or answered while the
+    session was open. Answers are strictly append-only; an outcome can never
+    be updated, restated, or overwritten. Indefinite retention matching the
+    platform's soft-delete policy.
+    """
+
+    session = models.OneToOneField(
+        SearchSession,
+        on_delete=models.CASCADE,
+        related_name='answer',
+    )
+    found = models.BooleanField()
+
+    class Meta:
+        # Chronological order by creation, with `id` as final tiebreak.
+        ordering = ('created_at', 'id')
+
+    def __str__(self):
+        # Deliberately not the student identity or outcome: this is what a log
+        # line or debugger prints.
+        return str(self.pk)
+

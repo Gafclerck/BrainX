@@ -1,0 +1,94 @@
+name: CD - Deploy Backend to AWS EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "brainx-api/**"
+      - "docker-compose.prod.yml"
+      - "Caddyfile"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build Multi-Stage Docker Image & Push to GHCR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare repository owner in lowercase
+        id: repo_owner
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.repo_owner.outputs.owner }}/brainx-api
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./brainx-api
+          file: ./brainx-api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-ec2:
+    name: Rollout Updated Containers to AWS EC2
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Execute Remote SSH Commands on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            APP_DIR="${APP_DIR:-/home/${{ secrets.EC2_USER }}/brainx}"
+            if [ ! -d "$APP_DIR" ]; then
+              echo "==> Creating application directory at $APP_DIR"
+              mkdir -p "$APP_DIR"
+            fi
+            cd "$APP_DIR"
+
+            echo "==> Logging in to GHCR on EC2..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            echo "==> Pulling latest production images..."
+            docker compose -f docker-compose.prod.yml pull api
+
+            echo "==> Updating containers with zero-downtime rolling restart..."
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            echo "==> Pruning dangling images..."
+            docker image prune -f
+
+            echo "==> BrainX production deployment completed successfully!"

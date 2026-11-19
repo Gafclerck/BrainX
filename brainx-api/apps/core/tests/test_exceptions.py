@@ -5,13 +5,20 @@ The views and the URLconf live in this module and are wired in through
 test-only endpoints.
 """
 
+import importlib
+import inspect
+import io
 import json
 import logging
+import os
 import sys
+from unittest import mock
 
+import environ
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.core.exceptions import ImproperlyConfigured
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
@@ -37,14 +44,22 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.core.exceptions import (
-    ENVELOPE_KEYS,
+    NON_FIELD_ERRORS_KEY,
+    SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+    SLUG_BY_EXCEPTION,
+    SLUG_BY_STATUS,
     TITLES,
     Conflict,
+    ServiceUnavailable,
     brainx_exception_handler,
 )
 from apps.core.logging import JsonFormatter
+from apps.core.tests.helpers import ENVELOPE_KEYS, assert_envelope
+from config.settings import base as base_settings
 
-# Keys reserved for a later epic; this contract never emits them.
+# Keys reserved for a later epic; this contract never emits them at envelope
+# level. A field legitimately named `blocked` stays an ordinary field error, so
+# this is checked against the body only, never against `errors`.
 RESERVED_KEYS = ('blocked',)
 
 
@@ -155,6 +170,14 @@ class ThrottledView(APIView):
         return Response({'ok': True})
 
 
+class ServiceUnavailableView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        raise ServiceUnavailable()
+
+
 urlpatterns = [
     path('validation-failure/', ValidationFailureView.as_view()),
     path('authenticated-only/', AuthenticatedOnlyView.as_view()),
@@ -165,6 +188,7 @@ urlpatterns = [
     path('conflict/', ConflictView.as_view()),
     path('django-validation-failure/', DjangoValidationFailureView.as_view()),
     path('expired-token/', ExpiredTokenView.as_view()),
+    path('service-unavailable/', ServiceUnavailableView.as_view()),
     path('unhandled/', UnhandledView.as_view()),
     path('throttled/', ThrottledView.as_view()),
 ]
@@ -175,16 +199,49 @@ TEST_SETTINGS = override_settings(ROOT_URLCONF=__name__)
 class SubstrateSettingsTests(SimpleTestCase):
     """The substrate guarantees, pinned so a regression cannot pass the suite.
 
-    Restoring the SQLite default, dropping the `socket_timeout` workaround or
-    unhooking the exception handler would each leave every other test green.
+    Restoring the SQLite default, dropping the `socket_timeout` workaround,
+    unhooking the exception handler, dropping one of the newly pinned packages,
+    reverting the psycopg extras pin, booting production without the scoped
+    throttle class or one of the five scope rates, or weakening the storage and
+    email guards to accept a local or non-delivering sink would each leave every
+    other test green.
     """
 
     def test_default_database_is_postgresql(self):
+        # Resolved from env.db's own default, not from settings: with a
+        # DATABASE_URL in the environment, settings carries that URL instead and
+        # the assertion would pass even if the default regressed to sqlite.
+        default = environ.Env().db(
+            'DATABASE_URL',
+            default='postgres://brainx:brainx@localhost:5432/brainx',
+        )
+        self.assertEqual(default['ENGINE'], 'django.db.backends.postgresql')
+        self.assertNotIn('sqlite', str(default).lower())
         self.assertEqual(
             settings.DATABASES['default']['ENGINE'],
             'django.db.backends.postgresql',
         )
         self.assertNotIn('sqlite', str(settings.DATABASES).lower())
+
+    def test_every_pinned_package_is_importable(self):
+        # Import only: no Redis server and no S3 credentials, so this does not
+        # require either. It pins AC 2, which nothing else in the suite checks.
+        for module in (
+            'whitenoise',
+            'boto3',
+            'channels',
+            'channels_redis',
+            'redis',
+            'storages.backends.s3',
+        ):
+            with self.subTest(module=module):
+                self.assertIsNotNone(importlib.import_module(module))
+
+    def test_psycopg_resolved_to_the_binary_build(self):
+        # The bare pin needs a system libpq; the extras pin must not.
+        import psycopg.pq
+
+        self.assertEqual(psycopg.pq.__impl__, 'binary')
 
     def test_every_channel_layer_host_carries_the_socket_timeout_workaround(self):
         hosts = settings.CHANNEL_LAYERS['default']['CONFIG']['hosts']
@@ -197,22 +254,176 @@ class SubstrateSettingsTests(SimpleTestCase):
     def test_the_error_envelope_handler_is_the_configured_one(self):
         self.assertIs(api_settings.EXCEPTION_HANDLER, brainx_exception_handler)
 
+    def test_every_slug_a_response_can_carry_has_a_title(self):
+        # TITLES is indexed with the resolved slug, so a slug without a title
+        # raises KeyError inside the handler and turns a 4xx into a 500.
+        slugs = {slug for _, slug in SLUG_BY_EXCEPTION}
+        slugs.update(SLUG_BY_STATUS.values())
+        self.assertLessEqual(slugs, set(TITLES))
 
-def assert_envelope(test_case, response, expected_type, expected_status):
-    """Assert the response is the five-key envelope for the given contract case."""
-    body = response.json()
-    test_case.assertEqual(sorted(body), sorted(ENVELOPE_KEYS))
-    test_case.assertEqual(body['type'], expected_type)
-    test_case.assertEqual(body['title'], TITLES[expected_type])
-    test_case.assertEqual(body['status'], expected_status)
-    test_case.assertEqual(response.status_code, expected_status)
-    test_case.assertTrue(body['detail'])
-    test_case.assertIsInstance(body['errors'], dict)
-    test_case.assertTrue(response['Content-Type'].startswith('application/json'))
-    for reserved in RESERVED_KEYS:
-        test_case.assertNotIn(reserved, body)
-        test_case.assertNotIn(reserved, body['errors'])
-    return body
+    def _import_production(self, rest_framework=None, env_overrides=None):
+        """Import `config.settings.production`, optionally with replaced inputs.
+
+        `rest_framework`, when given, replaces `REST_FRAMEWORK` in
+        `config.settings.base` - which production star-imports - so the
+        throttle guard (Story 1.7 AC 6) can be exercised. `env_overrides`
+        replaces the safe environment defaults (`s3` storage, SMTP email) so
+        the storage and email guards above the throttle guard can be exercised
+        with a value that must be refused. Everything is restored in a
+        `finally`, whether the import succeeds or refuses to boot.
+        """
+        original_rest_framework = base_settings.REST_FRAMEWORK
+        if rest_framework is not None:
+            base_settings.REST_FRAMEWORK = rest_framework
+        # A failed import is already evicted by Python; a successful one is
+        # not, and it must not linger as a second loaded settings module.
+        sys.modules.pop('config.settings.production', None)
+        environment = {
+            'STORAGE_BACKEND': 's3',
+            'EMAIL_BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+        }
+        if env_overrides:
+            environment.update(env_overrides)
+            # If a key is explicitly set to None, do not inject it; test is
+            # exercising the default of the production guard.
+            for key, value in list(environment.items()):
+                if value is None:
+                    environment.pop(key)
+        try:
+            with mock.patch.dict(os.environ, environment):
+                return importlib.import_module('config.settings.production')
+        finally:
+            base_settings.REST_FRAMEWORK = original_rest_framework
+            sys.modules.pop('config.settings.production', None)
+
+    def test_production_boots_when_the_throttle_configuration_is_present(self):
+        # AC 6's other half: the guard must not refuse the configuration the
+        # project actually ships, so a guard that raised unconditionally
+        # cannot pass here.
+        module = self._import_production()
+        # Asserted on the imported module, not on `base_settings`: production
+        # star-imports base, so a configuration the module overrode without
+        # the scoped throttle would still leave base's dict looking right.
+        self.assertIn(
+            'rest_framework.throttling.ScopedRateThrottle',
+            module.REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'],
+        )
+
+    def test_production_refuses_to_boot_without_the_scoped_throttle(self):
+        config = {
+            **base_settings.REST_FRAMEWORK,
+            'DEFAULT_THROTTLE_CLASSES': [
+                'rest_framework.throttling.AnonRateThrottle',
+                'rest_framework.throttling.UserRateThrottle',
+            ],
+        }
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self._import_production(config)
+        self.assertIn('ScopedRateThrottle', str(caught.exception))
+
+    def test_production_refuses_to_boot_when_a_scope_rate_is_absent_or_none(self):
+        # Every one of the five scope rates - the four destinations plus the
+        # `source` backstop - both ways it can be missing (AC 6). The message
+        # names the scope, so an operator is told which rate the boot stopped
+        # on.
+        for scope in ('register', 'forgot', 'reset', 'activate', 'source'):
+            for variant in ('null', 'absent'):
+                with self.subTest(scope=scope, variant=variant):
+                    rates = dict(
+                        base_settings.REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+                    )
+                    if variant == 'null':
+                        rates[scope] = None
+                    else:
+                        del rates[scope]
+                    config = {
+                        **base_settings.REST_FRAMEWORK,
+                        'DEFAULT_THROTTLE_RATES': rates,
+                    }
+                    with self.assertRaises(ImproperlyConfigured) as caught:
+                        self._import_production(config)
+                    self.assertIn(scope, str(caught.exception))
+
+    def test_production_refuses_to_boot_on_a_non_delivering_email_backend(self):
+        # AD-11: a backend that swallows the message (console, locmem, dummy)
+        # or writes it to a file leaves the user with no code and no error. One
+        # subTest per sink, so losing a member from the rejected set fails on
+        # the member that was lost rather than passing on the ones that remain.
+        for backend in (
+            'django.core.mail.backends.console.EmailBackend',
+            'django.core.mail.backends.locmem.EmailBackend',
+            'django.core.mail.backends.dummy.EmailBackend',
+            'django.core.mail.backends.filebased.EmailBackend',
+        ):
+            with self.subTest(backend=backend):
+                with self.assertRaises(ImproperlyConfigured) as caught:
+                    self._import_production(
+                        env_overrides={'EMAIL_BACKEND': backend}
+                    )
+                self.assertIn('EMAIL_BACKEND', str(caught.exception))
+
+    def test_production_refuses_to_boot_when_email_backend_is_absent(self):
+        # The guard's inline default must not let production boot on the
+        # console backend; when EMAIL_BACKEND is absent, the env default used
+        # by the production guard must be rejected.
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self._import_production(env_overrides={'EMAIL_BACKEND': None})
+        self.assertIn('EMAIL_BACKEND', str(caught.exception))
+
+    def test_production_boots_with_a_non_smtp_delivering_backend(self):
+        # The guard rejects the known non-delivering sinks, not "anything but
+        # SMTP": a provider backend (django-ses, anymail, ...) must still boot.
+        module = self._import_production(
+            env_overrides={'EMAIL_BACKEND': 'django_ses.SESBackend'}
+        )
+        self.assertIsNotNone(module)
+
+    def test_production_refuses_to_boot_with_local_storage(self):
+        # A local backend serves the bytes without authentication, so the
+        # deployment that cannot store on S3 must fail at import.
+        with self.assertRaises(ImproperlyConfigured) as caught:
+            self._import_production(
+                env_overrides={'STORAGE_BACKEND': 'local'}
+            )
+        self.assertIn('STORAGE_BACKEND', str(caught.exception))
+
+    def test_production_keeps_the_tls_edge_contract(self):
+        # The platform host sits behind a single TLS edge that terminates TLS
+        # and forwards this header; without it SECURE_SSL_REDIRECT loops.
+        module = self._import_production()
+        self.assertEqual(
+            module.SECURE_PROXY_SSL_HEADER,
+            ('HTTP_X_FORWARDED_PROTO', 'https'),
+        )
+
+    def test_production_keeps_the_managed_redis_channel_layer(self):
+        # The channel layer is a managed Redis, not the per-process in-memory
+        # layer; nothing else in the suite pins the backend itself.
+        module = self._import_production()
+        self.assertEqual(
+            module.CHANNEL_LAYERS['default']['BACKEND'],
+            'channels_redis.core.RedisChannelLayer',
+        )
+
+    def test_secret_key_has_no_default(self):
+        # Repository hygiene: a default would let a deployment boot with a
+        # predictable signing key. The single assignment must read the env
+        # with no fallback.
+        source = inspect.getsource(base_settings)
+        secret_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if line.strip().startswith('SECRET_KEY')
+        ]
+        self.assertEqual(secret_lines, ["SECRET_KEY = env('SECRET_KEY')"])
+
+    def test_dotenv_is_git_ignored(self):
+        # The `.env` file holds SECRET_KEY and every other secret; it must
+        # never be trackable.
+        gitignore = (base_settings.BASE_DIR / '.gitignore').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn('.env', gitignore.splitlines())
 
 
 class BrainxExceptionHandlerUnitTests(SimpleTestCase):
@@ -231,10 +442,12 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
         self.assertEqual(body['errors'], {'email': ['Enter a valid email address.']})
         self.assertEqual(body['detail'], 'Enter a valid email address.')
 
-    def test_validation_error_without_fields_has_empty_errors(self):
+    def test_validation_error_without_fields_lists_under_the_non_field_key(self):
         response = self.call_handler(ValidationError('Malformed payload.'))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data['errors'], {})
+        self.assertEqual(
+            response.data['errors'], {NON_FIELD_ERRORS_KEY: ['Malformed payload.']}
+        )
         self.assertEqual(response.data['detail'], 'Malformed payload.')
 
     def test_error_detail_values_are_plain_strings(self):
@@ -298,6 +511,67 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
             response.data['errors'], {'0.email': ['a'], '1.email': ['b']}
         )
 
+    def test_list_form_detail_keeps_every_message(self):
+        # A list with no dict in it is all non-field messages; every one of them
+        # must reach the body, not only the one `detail` summarizes.
+        response = self.call_handler(
+            ValidationError(['first problem', 'second problem', 'third problem'])
+        )
+        self.assertEqual(
+            response.data['errors'],
+            {
+                NON_FIELD_ERRORS_KEY: [
+                    'first problem',
+                    'second problem',
+                    'third problem',
+                ]
+            },
+        )
+        self.assertEqual(response.data['detail'], 'first problem')
+
+    def test_mixed_list_keeps_both_the_fields_and_the_loose_message(self):
+        response = self.call_handler(
+            ValidationError([{'email': ['bad']}, 'and a loose message'])
+        )
+        self.assertEqual(
+            response.data['errors'],
+            {'0.email': ['bad'], NON_FIELD_ERRORS_KEY: ['and a loose message']},
+        )
+
+    def test_the_non_field_key_is_drfs_own(self):
+        # A client sees the same key DRF would have produced for the payload.
+        self.assertEqual(NON_FIELD_ERRORS_KEY, api_settings.NON_FIELD_ERRORS_KEY)
+
+    def test_the_non_field_key_is_read_per_call_not_snapshotted(self):
+        # The comparison above holds whether or not rendering reads the live
+        # value, because the constant was snapshotted from the very setting it
+        # is compared against. This is the test that tells the two apart: the
+        # module constant cannot move, so if the body follows the override then
+        # the read is per call.
+        overridden = {
+            **settings.REST_FRAMEWORK,
+            'NON_FIELD_ERRORS_KEY': '__all__',
+        }
+        with override_settings(REST_FRAMEWORK=overridden):
+            response = self.call_handler(ValidationError(['bare sentence']))
+        self.assertEqual(
+            response.data['errors'],
+            {'__all__': ['bare sentence']},
+        )
+        # And the import-time constant is unchanged, which is what makes the
+        # difference above a fact about the rendering and not about the import.
+        self.assertEqual(NON_FIELD_ERRORS_KEY, api_settings.NON_FIELD_ERRORS_KEY)
+
+    def test_a_django_non_field_error_keeps_the_all_sentinel(self):
+        # Django's full_clean() reports a non-field clean() error under __all__,
+        # which passes through as a key exactly as DRF's sentinel does.
+        response = self.call_handler(
+            DjangoValidationError({'__all__': ['the object state is invalid']})
+        )
+        self.assertEqual(
+            response.data['errors'], {'__all__': ['the object state is invalid']}
+        )
+
     def test_django_validation_error_renders_400_with_field_names(self):
         response = self.call_handler(
             DjangoValidationError({'email': ['Enter a valid email address.']})
@@ -308,12 +582,18 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
         self.assertEqual(body['errors'], {'email': ['Enter a valid email address.']})
         self.assertEqual(body['detail'], 'Enter a valid email address.')
 
-    def test_django_validation_error_without_field_names_has_empty_errors(self):
-        response = self.call_handler(DjangoValidationError('Malformed payload.'))
+    def test_django_validation_error_without_field_names_keeps_every_message(self):
+        # exc.messages is a list, so it lands on the same non-field key a DRF
+        # list-form detail does rather than being dropped.
+        response = self.call_handler(
+            DjangoValidationError(['first', 'second'])
+        )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['type'], 'validation_error')
-        self.assertEqual(response.data['errors'], {})
-        self.assertEqual(response.data['detail'], 'Malformed payload.')
+        self.assertEqual(
+            response.data['errors'], {NON_FIELD_ERRORS_KEY: ['first', 'second']}
+        )
+        self.assertEqual(response.data['detail'], 'first')
 
     def test_django_validation_error_interpolates_message_params(self):
         response = self.call_handler(
@@ -338,12 +618,23 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
         response = self.call_handler(PermissionDenied('Not for you.'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data['type'], 'permission_denied')
+        # One half of the asymmetry the Django class test below pins: a bare
+        # DRF detail is a single sentence `detail` already carries, so it names
+        # no field and is not repeated. Changing this half has to change that
+        # one.
+        self.assertEqual(response.data['errors'], {})
 
     def test_django_permission_denied_renders_403(self):
         response = self.call_handler(DjangoPermissionDenied('Not for you.'))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data['type'], 'permission_denied')
         self.assertEqual(response.data['detail'], 'Not for you.')
+        # The other half of the asymmetry the DRF test above pins. A Django
+        # class exposes no `.detail`; the only place its message lives is
+        # `args`, so dropping the tuple branch here would silently lose it.
+        self.assertEqual(
+            response.data['errors'], {NON_FIELD_ERRORS_KEY: ['Not for you.']}
+        )
 
     def test_not_found_renders_404(self):
         response = self.call_handler(NotFound('No such thing.'))
@@ -355,11 +646,21 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(response.data['type'], 'not_found')
         self.assertEqual(response.data['detail'], 'Gone by Django.')
+        # `Http404` carries its message in `args` and nowhere else, so the
+        # message is listed under the non-field sentinel rather than dropped.
+        # This is a contract-visible change to story 1.1, which returned `{}`
+        # here, and it is pinned so it cannot drift back unnoticed.
+        self.assertEqual(
+            response.data['errors'], {NON_FIELD_ERRORS_KEY: ['Gone by Django.']}
+        )
 
     def test_conflict_renders_409(self):
         response = self.call_handler(Conflict())
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertEqual(response.data['type'], 'conflict')
+        # A bare `APIException` detail is not repeated under the sentinel. This
+        # and the `Http404` and `PermissionDenied` cases pin both halves of that
+        # deliberate asymmetry, so neither can be changed alone.
         self.assertEqual(response.data['errors'], {})
 
     def test_custom_api_exception_on_409_gets_the_conflict_slug(self):
@@ -382,6 +683,62 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
         response = self.call_handler(Throttled())
         self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertEqual(response.data['type'], 'throttled')
+        # The contract guarantees the header only when the throttle supplied a
+        # wait; DRF computes it solely from `wait`, so here there is none.
+        self.assertNotIn('Retry-After', response)
+
+    def test_a_custom_429_gets_no_retry_after(self):
+        from rest_framework.exceptions import APIException
+
+        class RateLimited(APIException):
+            status_code = status.HTTP_429_TOO_MANY_REQUESTS
+
+        response = self.call_handler(RateLimited('Slow down.'))
+        self.assertEqual(response.data['type'], 'throttled')
+        self.assertNotIn('Retry-After', response)
+
+    def test_service_unavailable_renders_503_with_retry_after(self):
+        response = self.call_handler(ServiceUnavailable())
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data['type'], 'service_unavailable')
+        self.assertEqual(response.data['errors'], {})
+        self.assertEqual(
+            response['Retry-After'], str(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS)
+        )
+
+    def test_a_positional_argument_is_the_detail_and_not_the_wait(self):
+        # The signature is `ServiceUnavailable(detail, code, wait)` for DRF's
+        # own ordering. Leading with `wait` would bind this sentence to the
+        # header, and `str` of a sentence is what `'%d'` chokes on - so the
+        # intended 503 turns into a 500 raised from inside the handler. The
+        # rendered `detail` is what proves the binding went the other way.
+        response = self.call_handler(ServiceUnavailable('SMTP is down.'))
+        self.assertEqual(response.data['detail'], 'SMTP is down.')
+        self.assertEqual(
+            response['Retry-After'], str(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS)
+        )
+
+    def test_a_non_integer_wait_still_renders_the_503(self):
+        # DRF formats the header with `'%d'`, so anything else reaching it
+        # raises a `TypeError` there and the client gets a 500 for a condition
+        # it was just told to retry. `int()` in the constructor is what keeps
+        # the header well formed whatever the caller passed - a float and a
+        # numeric string, the two shapes a computed backoff actually arrives in.
+        for wait, expected in (('90', '90'), (90.7, '90')):
+            with self.subTest(wait=repr(wait)):
+                response = self.call_handler(ServiceUnavailable(wait=wait))
+                self.assertEqual(
+                    response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+                self.assertEqual(response['Retry-After'], expected)
+
+    def test_a_503_without_a_wait_still_renders_the_envelope(self):
+        # Same guarantee the throttled case above gets: the contract promises
+        # the five keys, and the header only when the exception supplied a wait.
+        response = self.call_handler(ServiceUnavailable(wait=None))
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data['type'], 'service_unavailable')
+        self.assertNotIn('Retry-After', response)
 
     def test_status_outside_the_contract_keeps_the_drf_body(self):
         from rest_framework.exceptions import MethodNotAllowed
@@ -405,6 +762,7 @@ class BrainxExceptionHandlerUnitTests(SimpleTestCase):
                     'not_found',
                     'conflict',
                     'throttled',
+                    'service_unavailable',
                 }
             ),
         )
@@ -426,7 +784,6 @@ class UserMixin:
 
     def make_user(self, email, is_staff=False):
         return get_user_model().objects.create_user(
-            username=email,
             email=email,
             password='irrelevant-for-force-authenticate',
             is_staff=is_staff,
@@ -471,7 +828,12 @@ class ErrorEnvelopeIntegrationTests(UserMixin, TestCase):
 
     def test_django_permission_denied_renders_403(self):
         response = self.client.get('/django-permission-denied/')
-        assert_envelope(self, response, 'permission_denied', 403)
+        body = assert_envelope(self, response, 'permission_denied', 403)
+        # The Django classes have no `.detail`, so their message reaches the
+        # envelope only through the `errors` map. Asserted on the rendered body
+        # rather than on the handler's return value, because the handler is not
+        # the only thing standing between the exception and the client.
+        self.assertEqual(body['errors'], {NON_FIELD_ERRORS_KEY: ['Nope.']})
 
     def test_not_found_renders_404(self):
         response = self.client.get('/not-found/')
@@ -479,7 +841,8 @@ class ErrorEnvelopeIntegrationTests(UserMixin, TestCase):
 
     def test_django_http404_renders_404(self):
         response = self.client.get('/http-404/')
-        assert_envelope(self, response, 'not_found', 404)
+        body = assert_envelope(self, response, 'not_found', 404)
+        self.assertEqual(body['errors'], {NON_FIELD_ERRORS_KEY: ['Gone by Django.']})
 
     def test_conflict_renders_409(self):
         response = self.client.post('/conflict/', {}, format='json')
@@ -503,13 +866,19 @@ class ErrorEnvelopeIntegrationTests(UserMixin, TestCase):
         with self.assertRaises(ValueError):
             self.client.get('/unhandled/')
 
-    def test_every_status_renders_the_same_five_keys(self):
+    def test_every_non_throttled_status_renders_the_same_five_keys(self):
+        # 429 is covered by ThrottledRequestIntegrationTests, which needs a real
+        # throttled request to reach. 503 was added to this sweep with the
+        # exception itself: a test named "every" that skipped the newest status
+        # would have gone on passing while the one status nothing in this file
+        # rendered was the one the registration endpoint raises.
         cases = [
             ('post', '/validation-failure/', 'validation_error', 400),
             ('get', '/authenticated-only/', 'unauthenticated', 401),
             ('get', '/student-only/', 'permission_denied', 403),
             ('get', '/not-found/', 'not_found', 404),
             ('post', '/conflict/', 'conflict', 409),
+            ('get', '/service-unavailable/', 'service_unavailable', 503),
         ]
         for verb, path, expected_type, expected_status in cases:
             with self.subTest(status=expected_status):
@@ -518,6 +887,13 @@ class ErrorEnvelopeIntegrationTests(UserMixin, TestCase):
                 response = getattr(self.client, verb)(path, {}, format='json')
                 assert_envelope(self, response, expected_type, expected_status)
                 self.client.force_authenticate(user=None)
+
+    def test_the_503_sweep_case_also_carries_its_retry_after(self):
+        # The five keys are the envelope; the header is what makes the one
+        # retryable status actionable, so it is checked where the 503 is
+        # rendered rather than only in the endpoint's own tests.
+        response = self.client.get('/service-unavailable/', {}, format='json')
+        self.assertIn('Retry-After', response)
 
 
 @override_settings(ROOT_URLCONF=__name__, REST_FRAMEWORK=THROTTLED_SETTINGS)
@@ -587,6 +963,7 @@ class JsonFormatterTests(SimpleTestCase):
         self.assertEqual(
             sorted(payload), ['level', 'logger', 'message', 'module', 'timestamp']
         )
+        # A document is one JSON object per line, not a JSON array.
         self.assertNotIn('exception', payload)
         self.assertEqual(payload['message'], 'hello world')
         self.assertEqual(payload['level'], 'WARNING')
@@ -647,7 +1024,7 @@ class JsonFormatterTests(SimpleTestCase):
         )
         self.assertEqual(handler['stream'], 'ext://sys.stdout')
 
-    def test_live_console_handler_formats_records_as_json(self):
+    def console_handler(self):
         console_handlers = [
             handler
             for handler in logging.getLogger().handlers
@@ -655,5 +1032,47 @@ class JsonFormatterTests(SimpleTestCase):
             and isinstance(handler.formatter, JsonFormatter)
         ]
         self.assertTrue(console_handlers, 'no handler is using JsonFormatter')
-        line = console_handlers[0].format(self.make_record('through the live handler'))
+        return console_handlers[0]
+
+    def test_live_console_handler_formats_records_as_json(self):
+        line = self.console_handler().format(
+            self.make_record('through the live handler')
+        )
         self.assertEqual(json.loads(line)['message'], 'through the live handler')
+
+    def test_a_record_reaches_stdout_as_one_json_line(self):
+        # Through handle(), not format(): the config names ext://sys.stdout, so
+        # this is what observes AC 7's "JSON on stdout".
+        handler = self.console_handler()
+        stream = io.StringIO()
+        original_stream = handler.stream
+        handler.stream = stream
+        self.addCleanup(setattr, handler, 'stream', original_stream)
+        handler.handle(self.make_record('onto the wire'))
+        stream.seek(0)
+        written = stream.read()
+        self.assertEqual(len(written.splitlines()), 1)
+        self.assertEqual(json.loads(written)['message'], 'onto the wire')
+
+    def test_a_cached_exc_text_is_still_carried(self):
+        # A record that has already been formatted, or that crossed a queue
+        # boundary, keeps its traceback in exc_text with exc_info gone.
+        record = self.make_record('boom', exc_info=self.exc_info_for('kaboom'))
+        logging.Formatter().format(record)
+        self.assertIsNotNone(record.exc_text)
+        record.exc_info = None
+        payload = json.loads(self.format(record))
+        self.assertIn('ValueError: kaboom', payload['exception'])
+
+    def test_stack_info_is_carried(self):
+        record = self.make_record('boom')
+        record.stack_info = 'Stack (most recent call last):\n  probe'
+        payload = json.loads(self.format(record))
+        self.assertIn('Stack (most recent call last)', payload['stack'])
+
+    def test_an_exc_info_true_outside_except_emits_no_exception(self):
+        # exc_info=True with no active exception is the tuple (None, None, None),
+        # which is truthy, so the exception type has to be the thing checked.
+        record = self.make_record('no active exception')
+        record.exc_info = (None, None, None)
+        self.assertNotIn('exception', json.loads(self.format(record)))
