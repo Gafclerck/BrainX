@@ -95,3 +95,74 @@ Le calcul de la complexité temporelle s'effectue au pire des cas...
             self.assertEqual(Chapter.objects.filter(module=module).count(), 1)
             self.assertEqual(Lesson.objects.filter(chapter=chapter).count(), 1)
             self.assertEqual(lesson.resources.count(), 2)
+
+    def test_import_curriculum_dry_run_does_not_persist(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            course_dir = root / "02-Architecture"
+            module_dir = course_dir / "01-Microservices"
+            chapter_dir = module_dir / "01-Patterns"
+            chapter_dir.mkdir(parents=True)
+
+            lesson_file = chapter_dir / "01-Saga.md"
+            lesson_file.write_text(
+                """---
+title: "Pattern Saga"
+teacher: "Martin Fowler"
+tags:
+  - Architecture
+  - Saga
+resources:
+  - type: external_link
+    title: "Article Saga"
+    url: "https://microservices.io/patterns/data/saga.html"
+    description: "Lecture obligatoire"
+---
+Corps du cours sur Saga...
+""",
+                encoding="utf-8",
+            )
+
+            # Execute with --dry-run
+            call_command('import_curriculum', path=str(root), publisher_email=self.publisher.email, dry_run=True)
+
+            # Nothing should be saved to database
+            self.assertFalse(Course.objects.filter(name="Architecture").exists())
+            self.assertFalse(Lesson.objects.filter(title="Pattern Saga").exists())
+
+    def test_import_curriculum_tags_list_and_resource_description(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            course_dir = root / "03-CSharp"
+            module_dir = course_dir / "01-DotNet"
+            chapter_dir = module_dir / "01-Syntax"
+            chapter_dir.mkdir(parents=True)
+
+            lesson_file = chapter_dir / "01-Types.md"
+            lesson_file.write_text(
+                """---
+title: "Types en C#"
+teacher: "Anders Hejlsberg"
+tags:
+  - CSharp
+  - DotNet
+resources:
+  - type: external_link
+    title: "Docs Microsoft"
+    url: "https://learn.microsoft.com/dotnet"
+    description: "Documentation officielle"
+---
+Contenu C#
+""",
+                encoding="utf-8",
+            )
+
+            call_command('import_curriculum', path=str(root), publisher_email=self.publisher.email)
+
+            lesson = Lesson.objects.filter(title="Types en C#").first()
+            self.assertIsNotNone(lesson)
+            self.assertIn("CSharp, DotNet", lesson.keywords)
+
+            res = lesson.resources.first()
+            self.assertIsNotNone(res)
+            self.assertEqual(res.note, "Documentation officielle")

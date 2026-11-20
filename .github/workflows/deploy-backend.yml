@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "brainx-api/**"
+      - "curriculum/**"
       - "docker-compose.prod.yml"
       - "Caddyfile"
       - ".github/workflows/deploy-backend.yml"
@@ -64,6 +65,18 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Copy Curriculum to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "curriculum/"
+          target: "/home/${{ secrets.EC2_USER }}/brainx"
+
       - name: Execute Remote SSH Commands on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -91,6 +104,9 @@ jobs:
 
             echo "==> Updating containers with zero-downtime rolling restart..."
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            echo "==> Running automated curriculum database synchronization..."
+            docker compose -f docker-compose.prod.yml exec -T api python manage.py import_curriculum --path /app/curriculum
 
             echo "==> Pruning dangling images..."
             docker image prune -f

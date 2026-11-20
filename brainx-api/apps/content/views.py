@@ -21,6 +21,7 @@ only validates, resolves and looks the row up; it never persists a content row
 itself.
 """
 
+from pathlib import Path
 from django.conf import settings
 from django.db.models import Prefetch
 from django.http import Http404
@@ -48,6 +49,7 @@ from apps.core.permissions import (
 from apps.search import capture
 from apps.search.models import CloseReason
 
+from .curriculum_sync import sync_curriculum
 from .date_filters import course_date_range, filter_course_date
 from .delivery import build_signed_url, derive_content_type, derive_filename
 from .models import Chapter, Course, Lesson, Module, Resource
@@ -1685,3 +1687,60 @@ class LessonNavigationView(APIView):
                 'chapter_name': next_item.chapter.name,
             } if next_item else None,
         })
+
+
+class CurriculumSyncView(GenericAPIView):
+    """Synchronize curriculum markdown files into the database.
+
+    Publisher-only administrative endpoint.
+    Accepts optional `path` and `dry_run` parameters.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=inline_serializer(
+            name='CurriculumSyncRequest',
+            fields={
+                'path': serializers.CharField(required=False, default='curriculum'),
+                'dry_run': serializers.BooleanField(required=False, default=False),
+            },
+        ),
+        responses={
+            200: inline_serializer(
+                name='CurriculumSyncResponse',
+                fields={
+                    'status': serializers.CharField(),
+                    'dry_run': serializers.BooleanField(),
+                    'counts': serializers.DictField(),
+                    'errors': serializers.ListField(child=serializers.CharField()),
+                },
+            ),
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request):
+        path = request.data.get('path', 'curriculum') if isinstance(request.data, dict) else 'curriculum'
+        dry_run = bool(request.data.get('dry_run', False)) if isinstance(request.data, dict) else False
+
+        curriculum_dir = Path(path)
+        if not curriculum_dir.is_absolute():
+            base_dir = Path(settings.BASE_DIR)
+            candidate1 = base_dir / curriculum_dir
+            candidate2 = base_dir.parent / curriculum_dir
+            if candidate1.exists():
+                curriculum_dir = candidate1
+            elif candidate2.exists():
+                curriculum_dir = candidate2
+            else:
+                curriculum_dir = candidate1
+
+        result = sync_curriculum(
+            curriculum_path=curriculum_dir,
+            publisher=request.user,
+            dry_run=dry_run,
+        )
+
+        return Response(result, status=status.HTTP_200_OK)
+

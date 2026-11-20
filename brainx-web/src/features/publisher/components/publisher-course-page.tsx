@@ -19,6 +19,7 @@ import {
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { ContainerFormModal } from './container-form-modal';
+import { LessonFormModal } from './lesson-form-modal';
 import { RemovalPreviewModal } from './removal-preview-modal';
 import { BulkPublishModal } from './bulk-publish-modal';
 import {
@@ -159,6 +160,15 @@ export function PublisherCoursePage() {
     type: 'module' | 'chapter';
     item: { id: string; name: string };
   } | null>(null);
+
+  const [lessonModal, setLessonModal] = useState<{
+    isOpen: boolean;
+    chapterId: string | null;
+    chapterName?: string;
+  }>({
+    isOpen: false,
+    chapterId: null,
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1142,6 +1152,37 @@ export function PublisherCoursePage() {
     });
   };
 
+  const openCreateLesson = (chap: PublisherChapterItem) => {
+    setLessonModal({
+      isOpen: true,
+      chapterId: chap.id,
+      chapterName: chap.name,
+    });
+  };
+
+  const handleLessonCreated = (newLesson: PublisherLessonItem) => {
+    const targetChapId = lessonModal.chapterId;
+    if (!targetChapId) return;
+
+    setLessonsByChapter((prev) => {
+      const existing = prev[targetChapId]?.lessons || [];
+      return {
+        ...prev,
+        [targetChapId]: {
+          status: 'success',
+          lessons: [...existing, newLesson],
+        },
+      };
+    });
+
+    setExpandedChapters((prev) => ({
+      ...prev,
+      [targetChapId]: true,
+    }));
+
+    setLiveAnnouncement(`La leçon "${newLesson.title}" a été créée avec succès.`);
+  };
+
   // Callback on successful form submission
   const handleFormSuccess = (item: unknown) => {
     if (formModal.type === 'course') {
@@ -1752,6 +1793,24 @@ export function PublisherCoursePage() {
                                       type="button"
                                       variant="ghost"
                                       size="sm"
+                                      data-testid={`create-lesson-btn-${chap.id}`}
+                                      disabled={!isPublisher || Boolean(chap.is_deleted)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!isPublisher || chap.is_deleted) return;
+                                        openCreateLesson(chap);
+                                      }}
+                                      aria-label={`Ajouter une leçon dans le chapitre ${chap.name}`}
+                                      className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-primary hover:text-primary-hover inline-flex items-center gap-1 font-medium"
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                      <span className="sr-only sm:not-sr-only">Nouvelle leçon</span>
+                                    </Button>
+
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
                                       data-testid={`bulk-publish-chapter-btn-${chap.id}`}
                                       disabled={!isPublisher || Boolean(chap.is_deleted)}
                                       onClick={(e) => {
@@ -1834,9 +1893,25 @@ export function PublisherCoursePage() {
                                       lessons.length === 0 && (
                                         <div
                                           data-testid={`lessons-empty-${chap.id}`}
-                                          className="text-xs text-foreground-muted py-2 italic"
+                                          className="text-xs text-foreground-muted py-2.5 px-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-surface/30 rounded border border-dashed border-border/60"
                                         >
-                                          Aucune leçon dans ce chapitre.
+                                          <span className="italic">Aucune leçon dans ce chapitre.</span>
+                                          {isPublisher && !chap.is_deleted && (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              data-testid={`create-first-lesson-btn-${chap.id}`}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                openCreateLesson(chap);
+                                              }}
+                                              className="not-italic text-xs border-primary/40 text-primary hover:bg-primary/10 inline-flex items-center gap-1.5 self-start sm:self-auto"
+                                            >
+                                              <Plus className="h-3.5 w-3.5" />
+                                              <span>Créer la première leçon</span>
+                                            </Button>
+                                          )}
                                         </div>
                                       )}
 
@@ -2061,6 +2136,15 @@ export function PublisherCoursePage() {
         type={bulkPublishTarget?.type ?? 'module'}
         item={bulkPublishTarget?.item ?? null}
         onSuccess={handleBulkPublishSuccess}
+      />
+
+      {/* Lesson Creation Modal */}
+      <LessonFormModal
+        isOpen={lessonModal.isOpen}
+        onClose={() => setLessonModal((prev) => ({ ...prev, isOpen: false }))}
+        chapterId={lessonModal.chapterId || ''}
+        chapterName={lessonModal.chapterName}
+        onSuccess={handleLessonCreated}
       />
     </div>
   );
