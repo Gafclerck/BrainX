@@ -6,6 +6,7 @@ import {
   BarChart2,
   AlertCircle,
   RefreshCw,
+  CheckCircle2,
   BookOpen,
   ChevronLeft,
   ChevronRight,
@@ -14,7 +15,7 @@ import {
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { fetchManageableCourses } from '../api';
+import { fetchManageableCourses, syncCurriculum } from '../api';
 import { fetchPublishedCourses } from '@/features/browse/api';
 import { PublisherCourseCard, computeCourseStatus } from './course-card';
 import { ContainerFormModal } from './container-form-modal';
@@ -57,6 +58,12 @@ export function PublisherDashboardPage() {
     isOpen: false,
     item: null,
   });
+
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncAlert, setSyncAlert] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   const mountedRef = useRef(true);
 
@@ -124,6 +131,34 @@ export function PublisherDashboardPage() {
   const handleNextPage = () => {
     if (viewState.status === 'success' && viewState.data.next) {
       setCurrentPage((prev) => prev + 1);
+    }
+  };
+
+  const handleSyncCurriculum = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setSyncAlert(null);
+    try {
+      const res = await syncCurriculum();
+      if (!mountedRef.current) return;
+      const { counts } = res;
+      setSyncAlert({
+        type: 'success',
+        text: `Synchronisation réussie : ${counts.courses} cours, ${counts.modules} modules, ${counts.chapters} chapitres, ${counts.lessons} leçons et ${counts.resources} ressources importés/synchronisés.`,
+      });
+      loadCourses(currentPage);
+    } catch (err: unknown) {
+      if (!mountedRef.current) return;
+      setSyncAlert({
+        type: 'error',
+        text:
+          (err as Error)?.message ||
+          'Erreur lors de la synchronisation dynamique du curriculum.',
+      });
+    } finally {
+      if (mountedRef.current) {
+        setIsSyncing(false);
+      }
     }
   };
 
@@ -212,6 +247,21 @@ export function PublisherDashboardPage() {
 
             <Button
               type="button"
+              variant="outline"
+              data-testid="sync-curriculum-btn"
+              disabled={isSyncing}
+              onClick={handleSyncCurriculum}
+              className="min-h-[44px] min-w-[44px] text-xs sm:text-sm font-medium border-border inline-flex items-center gap-2"
+            >
+              <RefreshCw
+                className={`h-4 w-4 text-primary shrink-0 ${isSyncing ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              <span>{isSyncing ? 'Synchronisation...' : 'Synchroniser Curriculum'}</span>
+            </Button>
+
+            <Button
+              type="button"
               variant="default"
               data-testid="publisher-create-course-btn"
               onClick={() => {
@@ -227,6 +277,37 @@ export function PublisherDashboardPage() {
             </Button>
           </div>
         </div>
+
+        {/* Sync Curriculum Result Alert Banner */}
+        {syncAlert && (
+          <div
+            role="alert"
+            data-testid="sync-curriculum-alert"
+            className={`p-4 rounded-lg border text-sm flex items-center justify-between gap-3 ${
+              syncAlert.type === 'success'
+                ? 'bg-emerald-950/30 border-emerald-800 text-emerald-400'
+                : 'bg-destructive-surface border-destructive-border text-destructive'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {syncAlert.type === 'success' ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 shrink-0" />
+              )}
+              <span>{syncAlert.text}</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setSyncAlert(null)}
+              className="text-xs h-7 px-2"
+            >
+              Fermer
+            </Button>
+          </div>
+        )}
 
         {/* Filter Toolbar: Status Filter Tabs & Course Search */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

@@ -13,6 +13,7 @@ import type {
   CreateChapterPayload,
   UpdateChapterPayload,
   ReorderPayload,
+  CreateLessonPayload,
   UpdateLessonPayload,
   MoveLessonPayload,
   ChapterOptionItem,
@@ -24,6 +25,7 @@ import type {
   BulkPublishCommitPayload,
   BulkPublishCommitResponse,
   SearchAggregateResponse,
+  CurriculumSyncResponse,
 } from './types';
 
 /**
@@ -426,6 +428,23 @@ export async function fetchManageableLessons(
     previous: null,
     results: allResults,
   };
+}
+
+/**
+ * Create a new Lesson under a Chapter.
+ * POST /api/v1/chapters/:chapterId/lessons/
+ */
+export async function createLesson(
+  chapterId: string,
+  payload: CreateLessonPayload
+): Promise<PublisherLessonItem> {
+  return apiClient<PublisherLessonItem>(
+    `/api/v1/chapters/${encodeURIComponent(chapterId)}/lessons/`,
+    {
+      method: 'POST',
+      data: payload,
+    }
+  );
 }
 
 /**
@@ -946,6 +965,21 @@ export async function fetchSearchAnalytics(
     signal,
   });
 }
+
+/**
+ * Synchronize all courses, modules, chapters, lessons and resources from the curriculum folder.
+ * POST /api/v1/curriculum/sync/
+ */
+export async function syncCurriculum(options?: {
+  path?: string;
+  dry_run?: boolean;
+}): Promise<CurriculumSyncResponse> {
+  return apiClient<CurriculumSyncResponse>('/api/v1/curriculum/sync/', {
+    method: 'POST',
+    data: options || {},
+  });
+}
+
 
 
 

@@ -26,6 +26,9 @@ services:
     restart: unless-stopped
     env_file:
       - ./brainx-api/.env.production
+    volumes:
+      - media_data:/app/media
+      - ./curriculum:/app/curriculum:ro
     depends_on:
       db:
         condition: service_healthy
@@ -76,6 +79,7 @@ volumes:
   caddy_config:
   postgres_data:
   redis_data:
+  media_data:
 
 networks:
   brainx_network:

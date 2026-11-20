@@ -130,9 +130,33 @@ export interface UpdateChapterPayload {
   name?: string;
 }
 
+export interface CurriculumSyncCounts {
+  courses: number;
+  modules: number;
+  chapters: number;
+  lessons: number;
+  resources: number;
+}
+
+export interface CurriculumSyncResponse {
+  status: 'success' | 'partial' | 'error';
+  dry_run: boolean;
+  counts: CurriculumSyncCounts;
+  errors: string[];
+  detail?: string;
+}
+
 export interface ContainerFormData {
   name: string;
   subject?: string;
+}
+
+export interface CreateLessonPayload {
+  title: string;
+  teacher: string;
+  course_date: string;
+  description?: string | null;
+  keywords?: string | null;
 }
 
 export interface UpdateLessonPayload {
