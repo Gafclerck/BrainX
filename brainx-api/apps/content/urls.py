@@ -17,6 +17,7 @@ from .views import (
     CourseRemovalPreviewView,
     CourseRestoreView,
     CourseUpdateView,
+    CurriculumSyncView,
     LessonCreateView,
     LessonDetailView,
     LessonMoveView,
@@ -190,6 +191,11 @@ urlpatterns = [
         'lessons/<uuid:lesson_id>/move/',
         LessonMoveView.as_view(),
         name='lesson-move',
+    ),
+    path(
+        'curriculum/sync/',
+        CurriculumSyncView.as_view(),
+        name='curriculum-sync',
     ),
     # The Student browse surface walks the tree one level at a time, under its
     # own `browse/` prefix so it can never collide with a Publisher route.
