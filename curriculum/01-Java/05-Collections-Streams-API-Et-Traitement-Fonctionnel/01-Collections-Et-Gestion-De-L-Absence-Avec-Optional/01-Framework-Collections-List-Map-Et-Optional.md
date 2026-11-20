@@ -98,11 +98,11 @@ flowchart TD
     OPT -->|Si trouvé| PRES
     OPT -->|Si non trouvé| EMPTY
 
-    PRES -->|opt.ifPresent(e -> ...)| ACTION["Exécuter une action métier sûre"]
-    PRES -->|opt.get()| VAL["Récupérer l'objet"]
-    EMPTY -->|opt.orElseThrow(...)| EXC["Déclencher une exception métier claire
+    PRES -->|"opt.ifPresent(...)"| ACTION["Exécuter une action métier sûre"]
+    PRES -->|"opt.get()"| VAL["Récupérer l'objet"]
+    EMPTY -->|"opt.orElseThrow(...)"| EXC["Déclencher une exception métier claire
 (EntityNotFoundException)"]
-    EMPTY -->|opt.orElse(defaultEtudiant)| DEF["Fournir une valeur par défaut"]
+    EMPTY -->|"opt.orElse(defaultEtudiant)"| DEF["Fournir une valeur par défaut"]
 ```
 
 ---

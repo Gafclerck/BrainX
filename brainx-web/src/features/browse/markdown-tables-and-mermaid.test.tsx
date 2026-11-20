@@ -150,6 +150,63 @@ flowchart TD
       expect(screen.getByTestId('mock-mermaid-svg')).toBeInTheDocument();
     });
 
+    it('provides interactive zoom controls (Zoom In, Zoom Out, Reset)', async () => {
+      const chartCode = `flowchart LR\n  Step1 --> Step2`;
+
+      render(<MermaidBlock chart={chartCode} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('mock-mermaid-svg')).toBeInTheDocument();
+      });
+
+      const zoomLevel = screen.getByTestId('mermaid-zoom-level');
+      expect(zoomLevel).toHaveTextContent('100%');
+
+      // Zoom In
+      const zoomInBtn = screen.getByTestId('mermaid-zoom-in');
+      fireEvent.click(zoomInBtn);
+      expect(zoomLevel).toHaveTextContent('125%');
+
+      // Reset zoom
+      const resetBtn = screen.getByTestId('mermaid-zoom-reset');
+      fireEvent.click(resetBtn);
+      expect(zoomLevel).toHaveTextContent('100%');
+
+      // Zoom Out
+      const zoomOutBtn = screen.getByTestId('mermaid-zoom-out');
+      fireEvent.click(zoomOutBtn);
+      expect(zoomLevel).toHaveTextContent('75%');
+    });
+
+    it('opens and closes the fullscreen lightbox modal', async () => {
+      const chartCode = `flowchart TD\n  Start --> End`;
+
+      render(<MermaidBlock chart={chartCode} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('mock-mermaid-svg')).toBeInTheDocument();
+      });
+
+      // Click fullscreen
+      const fullscreenBtn = screen.getByTestId('mermaid-fullscreen-btn');
+      fireEvent.click(fullscreenBtn);
+
+      const modal = screen.getByTestId('mermaid-fullscreen-modal');
+      expect(modal).toBeInTheDocument();
+
+      // Close via close button
+      const closeBtn = screen.getByTestId('mermaid-fullscreen-close');
+      fireEvent.click(closeBtn);
+      expect(screen.queryByTestId('mermaid-fullscreen-modal')).not.toBeInTheDocument();
+
+      // Open again and close via Escape key
+      fireEvent.click(fullscreenBtn);
+      expect(screen.getByTestId('mermaid-fullscreen-modal')).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByTestId('mermaid-fullscreen-modal')).not.toBeInTheDocument();
+    });
+
     it('falls back gracefully to Code View when Mermaid parsing encounters a syntax error', async () => {
       const invalidChart = 'flowchart TD\n  syntax_error in definition';
 

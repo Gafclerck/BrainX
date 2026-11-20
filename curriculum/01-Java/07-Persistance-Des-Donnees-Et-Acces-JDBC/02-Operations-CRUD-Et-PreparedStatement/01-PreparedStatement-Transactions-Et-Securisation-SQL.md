@@ -46,7 +46,7 @@ flowchart TD
         S_IN["Entrée Pirate : ' OR '1'='1"]
         S_PRE["1. Précompilation SQL sur le SGBD : SELECT * FROM etudiants WHERE matricule = ?"]
         S_BIND["2. Transmission stricte de la donnée brute comme valeur littérale via setString(1, input)"]
-        S_RES["SÉCURITÉ : La base cherche littéralement la chaîne "' OR '1'='1", aucune injection possible !"]
+        S_RES["SÉCURITÉ : La base cherche littéralement la chaîne literal ' OR '1'='1, aucune injection possible !"]
         S_IN --> S_PRE --> S_BIND --> S_RES
     end
 ```

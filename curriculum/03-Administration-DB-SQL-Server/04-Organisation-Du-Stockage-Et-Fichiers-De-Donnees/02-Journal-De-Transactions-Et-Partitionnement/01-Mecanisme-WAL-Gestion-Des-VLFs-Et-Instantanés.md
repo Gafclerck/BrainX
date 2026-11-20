@@ -148,7 +148,7 @@ Un instantané de base de données fige une vue en lecture seule d'une base sour
 graph TD
     User["Utilisateur / Requête"] -->|Lit Facture Inchangée| BaseProd["Base Source SDS_Ventes (D:)"]
     BaseProd -->|UPDATE Facture N° 12| SparseFile["Fichier Creux Snapshot (Sparse NTFS)"]
-    Note over SparseFile: L'ancienne page originale est copiée ici AVANT l'écriture
+    SparseFile -.-> NoteCopy["Note : L'ancienne page originale est copiée ici AVANT l'écriture (Copy-on-Write)"]
 ```
 
 ### 4.2 Cas d'Usage en Entreprise

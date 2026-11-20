@@ -114,8 +114,8 @@ EtudiantRepository"]
 (Extension SQL - Nouvelle classe !)"]
 
     ES -->|Dépend de| ER
-    ER <|..| ERM
-    ER <|..| ERJ
+    ERM -.->|implémente| ER
+    ERJ -.->|implémente| ER
 ```
 
 ---

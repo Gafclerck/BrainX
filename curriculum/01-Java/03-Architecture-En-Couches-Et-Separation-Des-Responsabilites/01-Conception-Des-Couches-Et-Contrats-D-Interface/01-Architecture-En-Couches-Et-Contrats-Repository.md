@@ -78,8 +78,8 @@ AbstractEntity, Etudiant, Note"]
     ES -->|Dépend du contrat| ER
     ES -->|Dépend du contrat| NR
     MS -->|Reçoit des collections de| DOM
-    ER <|..| ERM
-    NR <|..| NRM
+    ERM -.->|implémente| ER
+    NRM -.->|implémente| NR
     ERM -->|Manipule| DOM
     NRM -->|Manipule| DOM
 ```

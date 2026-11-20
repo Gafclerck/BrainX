@@ -240,7 +240,7 @@ graph TD
         User["User: app_sds (SID: 0x99FF33...)"]
     end
     Login -.->|SID Incompatible !| User
-    Note over Login,User: ÉCHEC : Utilisateur Orphelin (Connexion refusée)
+    User -.-> Alert["ÉCHEC : Utilisateur Orphelin (Connexion refusée)"]
 ```
 
 ### 7.1 Détection des Utilisateurs Orphelins
