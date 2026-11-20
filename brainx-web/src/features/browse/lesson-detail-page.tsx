@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import {
   ChevronRight,
@@ -20,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { ResourceBadge } from '@/components/ui/resource-badge';
 import { ResourceCard } from './resource-card';
 import { CodeBlock } from '@/components/ui/code-block';
+import { MermaidBlock } from '@/components/ui/mermaid-block';
 import { SearchFeedbackPrompt } from '@/features/search';
 import { cn } from '@/lib/utils';
 
@@ -301,6 +303,9 @@ export function LessonDetailPage() {
           const codeString = getChildrenText(childProps.children);
           const match = /language-([^\s]+)/.exec(childProps.className || '');
           const language = match ? match[1] : undefined;
+          if (language === 'mermaid') {
+            return <MermaidBlock chart={codeString} />;
+          }
           return <CodeBlock code={codeString} language={language} />;
         }
         return (
@@ -319,6 +324,59 @@ export function LessonDetailPage() {
         >
           {children}
         </code>
+      ),
+      table: ({ children, className, ...props }: React.ComponentPropsWithoutRef<'table'>) => (
+        <div className="my-6 w-full overflow-x-auto rounded-lg border border-border bg-[#0D1117] shadow-sm">
+          <table
+            className={cn('w-full min-w-full border-collapse text-left text-sm', className)}
+            {...props}
+          >
+            {children}
+          </table>
+        </div>
+      ),
+      thead: ({ children, className, ...props }: React.ComponentPropsWithoutRef<'thead'>) => (
+        <thead
+          className={cn('bg-[#161B22] border-b border-border text-[#E6EDF3] font-semibold', className)}
+          {...props}
+        >
+          {children}
+        </thead>
+      ),
+      tbody: ({ children, className, ...props }: React.ComponentPropsWithoutRef<'tbody'>) => (
+        <tbody
+          className={cn('divide-y divide-border text-[#C9D1D9]', className)}
+          {...props}
+        >
+          {children}
+        </tbody>
+      ),
+      tr: ({ children, className, ...props }: React.ComponentPropsWithoutRef<'tr'>) => (
+        <tr
+          className={cn('transition-colors hover:bg-[#161B22]/60 even:bg-[#161B22]/20', className)}
+          {...props}
+        >
+          {children}
+        </tr>
+      ),
+      th: ({ children, className, ...props }: React.ComponentPropsWithoutRef<'th'>) => (
+        <th
+          className={cn(
+            'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[#E6EDF3] whitespace-nowrap',
+            className
+          )}
+          {...props}
+        >
+          {children}
+        </th>
+      ),
+      td: ({ children, className, ...props }: React.ComponentPropsWithoutRef<'td'>) => (
+        <td
+          className={cn('px-4 py-3 text-sm text-[#C9D1D9] align-top leading-relaxed', className)}
+          {...props}
+        >
+          {children}
+        </td>
       ),
     }),
     []
@@ -496,6 +554,7 @@ export function LessonDetailPage() {
           >
             {state.data.description && state.data.description.trim() ? (
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeSanitize]}
                 components={markdownComponents}
               >

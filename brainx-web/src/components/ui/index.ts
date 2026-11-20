@@ -6,3 +6,4 @@ export * from './code-block';
 export * from './resource-badge';
 export * from './throttled-banner';
 export * from './brainx-logo';
+export * from './mermaid-block';

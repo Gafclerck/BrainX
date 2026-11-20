@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/auth-store';
@@ -536,9 +536,11 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
         );
       });
 
-      expect(screen.getByTestId('current-location')).toHaveTextContent(
-        '/publisher/dashboard'
-      );
+      await waitFor(() => {
+        expect(screen.getByTestId('current-location')).toHaveTextContent(
+          '/publisher/dashboard'
+        );
+      });
       expect(
         screen.getByTestId('publisher-page-placeholder')
       ).toBeInTheDocument();
@@ -660,9 +662,11 @@ describe('Story FE-1.6: Gardes de Routage & Bannière de Temporisation Retry-Aft
         );
       });
 
-      expect(screen.getByTestId('current-location')).toHaveTextContent(
-        '/publisher/dashboard'
-      );
+      await waitFor(() => {
+        expect(screen.getByTestId('current-location')).toHaveTextContent(
+          '/publisher/dashboard'
+        );
+      });
       expect(
         screen.getByTestId('publisher-page-placeholder')
       ).toBeInTheDocument();
