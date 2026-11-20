@@ -43,6 +43,7 @@ urlpatterns = [
     path(f'{API_MOUNT}/', include('apps.users.urls')),
     path(f'{API_MOUNT}/', include('apps.content.urls')),
     path(f'{API_MOUNT}/', include('apps.search.urls')),
+    path(f'{API_MOUNT}/', include('apps.feedback.urls')),
     path(f'{API_MOUNT}/', include('apps.core.urls')),
     path(f'{API_MOUNT}/schema/', SpectacularAPIView.as_view(), name='schema'),
     path(

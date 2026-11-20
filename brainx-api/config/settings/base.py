@@ -76,6 +76,7 @@ LOCAL_APPS = [
     'apps.users',
     'apps.content',
     'apps.search',
+    'apps.feedback',
 ]
 
 # The account model is the project's own, not django.contrib.auth's User.

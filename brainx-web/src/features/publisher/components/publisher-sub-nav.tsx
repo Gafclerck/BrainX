@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, Trash2, BarChart2 } from 'lucide-react';
+import { BookOpen, Trash2, BarChart2, Inbox } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function PublisherSubNav({ className }: { className?: string }) {
@@ -13,6 +13,7 @@ export function PublisherSubNav({ className }: { className?: string }) {
 
   const isTrashActive = location.pathname.startsWith('/publisher/trash');
   const isAnalyticsActive = location.pathname.startsWith('/publisher/search-analytics');
+  const isFeedbackActive = location.pathname.startsWith('/publisher/feedback');
 
   const links = [
     {
@@ -35,6 +36,13 @@ export function PublisherSubNav({ className }: { className?: string }) {
       icon: BarChart2,
       isActive: isAnalyticsActive,
       testId: 'subnav-analytics',
+    },
+    {
+      to: '/publisher/feedback',
+      label: 'Boîte à suggestions',
+      icon: Inbox,
+      isActive: isFeedbackActive,
+      testId: 'subnav-feedback',
     },
   ];
 
