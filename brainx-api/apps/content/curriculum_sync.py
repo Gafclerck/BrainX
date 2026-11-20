@@ -186,42 +186,64 @@ def sync_curriculum(
                         lesson_files = sorted([f for f in ch_dir.glob('*.md')])
                         for lesson_idx, l_file in enumerate(lesson_files, start=1):
                             try:
-                                raw_text = l_file.read_text(encoding='utf-8')
-                                metadata, body = extract_frontmatter_and_body(raw_text)
+                                with transaction.atomic():
+                                    raw_text = l_file.read_text(encoding='utf-8')
+                                    metadata, body = extract_frontmatter_and_body(raw_text)
 
-                                title = metadata.get('title') or parse_clean_name(l_file.stem)
-                                teacher = metadata.get('teacher') or 'Équipe Pédagogique'
+                                    title = metadata.get('title') or parse_clean_name(l_file.stem)
+                                    teacher = metadata.get('teacher') or 'Équipe Pédagogique'
 
-                                raw_date = metadata.get('course_date')
-                                if isinstance(raw_date, (datetime, date)):
-                                    course_date = raw_date
-                                elif isinstance(raw_date, str):
-                                    try:
-                                        course_date = datetime.strptime(raw_date, '%Y-%m-%d').date()
-                                    except ValueError:
+                                    raw_date = metadata.get('course_date')
+                                    if isinstance(raw_date, (datetime, date)):
+                                        course_date = raw_date
+                                    elif isinstance(raw_date, str):
+                                        try:
+                                            course_date = datetime.strptime(raw_date, '%Y-%m-%d').date()
+                                        except ValueError:
+                                            course_date = date.today()
+                                    else:
                                         course_date = date.today()
-                                else:
-                                    course_date = date.today()
 
-                                description = body if body.strip() else (metadata.get('description') or f"Leçon sur {title}")
+                                    description = body if body.strip() else (metadata.get('description') or f"Leçon sur {title}")
 
-                                # Harmonize tags list and keywords string
-                                tags = metadata.get('tags')
-                                if isinstance(tags, list):
-                                    keywords = ', '.join(str(t) for t in tags)
-                                elif isinstance(tags, str):
-                                    keywords = tags
-                                else:
-                                    keywords = metadata.get('keywords') or course_name
+                                    # Harmonize tags list and keywords string
+                                    tags = metadata.get('tags')
+                                    if isinstance(tags, list):
+                                        keywords = ', '.join(str(t) for t in tags)
+                                    elif isinstance(tags, str):
+                                        keywords = tags
+                                    else:
+                                        keywords = metadata.get('keywords') or course_name
 
-                                is_published = bool(metadata.get('is_published', True))
+                                    is_published = bool(metadata.get('is_published', True))
 
-                                lesson = Lesson.objects.filter(chapter=chapter, title=title).first()
-                                l_created = False
-                                if not lesson:
-                                    lesson = Lesson.objects.filter(chapter=chapter, position=lesson_idx).first()
-                                    if lesson:
-                                        lesson.title = title
+                                    lesson = Lesson.objects.filter(chapter=chapter, title=title).first()
+                                    l_created = False
+                                    if not lesson:
+                                        lesson = Lesson.objects.filter(chapter=chapter, position=lesson_idx).first()
+                                        if lesson:
+                                            lesson.title = title
+                                            lesson.teacher = teacher
+                                            lesson.course_date = course_date
+                                            lesson.description = description
+                                            lesson.keywords = keywords
+                                            lesson.is_published = is_published
+                                            lesson.last_modified_by = publisher
+                                            lesson.save()
+                                        else:
+                                            lesson = Lesson.objects.create(
+                                                chapter=chapter,
+                                                title=title,
+                                                teacher=teacher,
+                                                course_date=course_date,
+                                                description=description,
+                                                keywords=keywords,
+                                                position=lesson_idx,
+                                                is_published=is_published,
+                                                last_modified_by=publisher,
+                                            )
+                                            l_created = True
+                                    else:
                                         lesson.teacher = teacher
                                         lesson.course_date = course_date
                                         lesson.description = description
@@ -229,91 +251,76 @@ def sync_curriculum(
                                         lesson.is_published = is_published
                                         lesson.last_modified_by = publisher
                                         lesson.save()
-                                    else:
-                                        lesson = Lesson.objects.create(
-                                            chapter=chapter,
-                                            title=title,
-                                            teacher=teacher,
-                                            course_date=course_date,
-                                            description=description,
-                                            keywords=keywords,
-                                            position=lesson_idx,
-                                            is_published=is_published,
-                                            last_modified_by=publisher,
-                                        )
-                                        l_created = True
-                                else:
-                                    lesson.teacher = teacher
-                                    lesson.course_date = course_date
-                                    lesson.description = description
-                                    lesson.keywords = keywords
-                                    lesson.is_published = is_published
-                                    lesson.last_modified_by = publisher
-                                    lesson.save()
 
-                                # Recompute search trigram document
-                                lesson.search_document = lesson.compose_search_document()
-                                lesson.save(update_fields=['search_document'])
+                                    # Recompute search trigram document
+                                    lesson.search_document = lesson.compose_search_document()
+                                    lesson.save(update_fields=['search_document'])
 
-                                if l_created:
-                                    counts['lessons'] += 1
-                                    log(f"       [Lesson +] {lesson.title}")
+                                    if l_created:
+                                        counts['lessons'] += 1
+                                        log(f"       [Lesson +] {lesson.title}")
 
-                                # Process attached resources
-                                resources_list = metadata.get('resources', [])
-                                for res_item in resources_list:
-                                    res_type = str(res_item.get('type', '')).lower()
-                                    res_title = res_item.get('title') or f"Ressource {res_type}"
-                                    res_note = res_item.get('note') or res_item.get('description', '')
+                                    # Process attached resources
+                                    resources_list = metadata.get('resources', [])
+                                    for res_item in resources_list:
+                                        res_type = str(res_item.get('type', '')).lower()
+                                        res_title = res_item.get('title') or f"Ressource {res_type}"
+                                        res_note = res_item.get('note') or res_item.get('description', '')
 
-                                    if res_type in (Resource.Type.VIDEO, Resource.Type.EXTERNAL_LINK):
-                                        res_url = res_item.get('url', '')
-                                        if res_url:
-                                            res, r_created = Resource.objects.get_or_create(
-                                                lesson=lesson,
-                                                title=res_title,
-                                                type=res_type,
-                                                defaults={
-                                                    'url': res_url,
-                                                    'note': res_note,
-                                                    'last_modified_by': publisher,
-                                                },
-                                            )
-                                            if r_created:
-                                                counts['resources'] += 1
-                                            elif res.note != res_note:
-                                                res.note = res_note
-                                                res.last_modified_by = publisher
-                                                res.save(update_fields=['note', 'last_modified_by'])
-
-                                    elif res_type in (Resource.Type.DOCUMENT, Resource.Type.IMAGE):
-                                        rel_file_path = res_item.get('file', '')
-                                        if rel_file_path:
-                                            file_abs_path = l_file.parent / rel_file_path
-                                            if file_abs_path.exists() and file_abs_path.is_file():
-                                                # Check if resource already exists
-                                                existing_res = Resource.objects.filter(
+                                        if res_type in (Resource.Type.VIDEO, Resource.Type.EXTERNAL_LINK):
+                                            res_url = res_item.get('url', '')
+                                            if res_url:
+                                                res, r_created = Resource.objects.get_or_create(
                                                     lesson=lesson,
                                                     title=res_title,
                                                     type=res_type,
-                                                ).first()
-
-                                                if not existing_res:
-                                                    with open(file_abs_path, 'rb') as f:
-                                                        Resource.objects.create(
-                                                            lesson=lesson,
-                                                            title=res_title,
-                                                            type=res_type,
-                                                            file=File(f, name=file_abs_path.name),
-                                                            note=res_note,
-                                                            last_modified_by=publisher,
-                                                        )
+                                                    defaults={
+                                                        'url': res_url,
+                                                        'note': res_note,
+                                                        'last_modified_by': publisher,
+                                                    },
+                                                )
+                                                if r_created:
                                                     counts['resources'] += 1
-                                                else:
-                                                    if existing_res.note != res_note:
-                                                        existing_res.note = res_note
-                                                        existing_res.last_modified_by = publisher
-                                                        existing_res.save(update_fields=['note', 'last_modified_by'])
+                                                elif res.note != res_note:
+                                                    res.note = res_note
+                                                    res.last_modified_by = publisher
+                                                    res.save(update_fields=['note', 'last_modified_by'])
+
+                                        elif res_type in (Resource.Type.DOCUMENT, Resource.Type.IMAGE):
+                                            rel_file_path = res_item.get('file', '')
+                                            if rel_file_path:
+                                                file_abs_path = l_file.parent / rel_file_path
+                                                if file_abs_path.exists() and file_abs_path.is_file():
+                                                    try:
+                                                        with transaction.atomic():
+                                                            # Check if resource already exists
+                                                            existing_res = Resource.objects.filter(
+                                                                lesson=lesson,
+                                                                title=res_title,
+                                                                type=res_type,
+                                                            ).first()
+
+                                                            if not existing_res:
+                                                                with open(file_abs_path, 'rb') as f:
+                                                                    Resource.objects.create(
+                                                                        lesson=lesson,
+                                                                        title=res_title,
+                                                                        type=res_type,
+                                                                        file=File(f, name=file_abs_path.name),
+                                                                        note=res_note,
+                                                                        last_modified_by=publisher,
+                                                                    )
+                                                                counts['resources'] += 1
+                                                            else:
+                                                                if existing_res.note != res_note:
+                                                                    existing_res.note = res_note
+                                                                    existing_res.last_modified_by = publisher
+                                                                    existing_res.save(update_fields=['note', 'last_modified_by'])
+                                                    except Exception as res_err:
+                                                        err_msg = f"Failed to attach resource {rel_file_path} to lesson '{lesson.title}': {res_err}"
+                                                        errors.append(err_msg)
+                                                        log(f"         [!] {err_msg}")
 
                             except Exception as lesson_err:
                                 err_msg = f"Error processing lesson {l_file}: {lesson_err}"
