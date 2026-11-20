@@ -465,6 +465,12 @@ class BulkPublishResultSerializer(serializers.Serializer):
     )
 
 
+class BulkUnpublishResultSerializer(serializers.Serializer):
+    """The 200 body of a bulk unpublish commit."""
+
+    changed = serializers.IntegerField(min_value=0)
+
+
 class ReorderSerializer(serializers.Serializer):
     """The request contract of a reorder: the children's new order.
 

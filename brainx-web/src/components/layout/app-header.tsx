@@ -139,7 +139,7 @@ export function AppHeader({
           >
             <BrainXLogo size="md" className="h-7 w-auto transition-transform group-hover:scale-105" />
             <span className="sr-only">BX</span>
-            <span className="hidden sm:inline font-semibold text-foreground text-base tracking-tight font-sans group-hover:text-primary transition-colors">
+            <span className="hidden sm:inline font-semibold text-foreground text-base tracking-tight font-sans group-hover:text-primary transition-colors leading-none translate-y-[1px]">
               BrainX
             </span>
           </Link>
@@ -268,7 +268,7 @@ export function AppHeader({
               <Link
                 to={`/login?returnUrl=${encodeURIComponent(location.pathname + location.search + location.hash)}`}
                 data-testid="header-auth-cta"
-                className="inline-flex items-center justify-center text-xs sm:text-sm font-medium rounded-md px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus shrink-0 text-center whitespace-nowrap min-h-[36px]"
+                className="hidden inline-flex items-center justify-center text-xs sm:text-sm font-medium rounded-md px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus shrink-0 text-center whitespace-nowrap min-h-[36px]"
               >
                 Se connecter / S'inscrire
               </Link>

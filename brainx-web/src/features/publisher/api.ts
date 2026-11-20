@@ -232,6 +232,21 @@ export async function commitModuleBulkPublish(
 }
 
 /**
+ * Unpublish all published descendant lessons in a Module under row lock.
+ * POST /api/v1/modules/:id/bulk-unpublish/
+ */
+export async function bulkUnpublishModule(
+  moduleId: string
+): Promise<{ changed: number }> {
+  return apiClient<{ changed: number }>(
+    `/api/v1/modules/${encodeURIComponent(moduleId)}/bulk-unpublish/`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
  * Fetch manageable chapters under a Module.
  * GET /api/v1/modules/:moduleId/chapters/?page=...
  */
@@ -330,6 +345,21 @@ export async function commitChapterBulkPublish(
     {
       method: 'POST',
       data: payload,
+    }
+  );
+}
+
+/**
+ * Unpublish all published descendant lessons in a Chapter under row lock.
+ * POST /api/v1/chapters/:id/bulk-unpublish/
+ */
+export async function bulkUnpublishChapter(
+  chapterId: string
+): Promise<{ changed: number }> {
+  return apiClient<{ changed: number }>(
+    `/api/v1/chapters/${encodeURIComponent(chapterId)}/bulk-unpublish/`,
+    {
+      method: 'POST',
     }
   );
 }

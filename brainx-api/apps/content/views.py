@@ -56,6 +56,7 @@ from .models import Chapter, Course, Lesson, Module, Resource
 from .mutations import (
     LEVEL_NAMES,
     bulk_publish,
+    bulk_unpublish,
     move_lesson,
     mutate,
     next_position,
@@ -72,6 +73,7 @@ from .serializers import (
     BulkPublishCommitSerializer,
     BulkPublishPreviewSerializer,
     BulkPublishResultSerializer,
+    BulkUnpublishResultSerializer,
     ChapterSerializer,
     CourseSerializer,
     LessonDetailSerializer,
@@ -1183,6 +1185,54 @@ class ChapterBulkPublishView(APIView):
         )
 
 
+class ChapterBulkUnpublishView(APIView):
+    """Withdraw every live published Lesson in a Chapter at once.
+
+    Unpublishes all descendant lessons of the Chapter under a row lock.
+    Returns the count of lessons actually changed.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: BulkUnpublishResultSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        result = bulk_unpublish(actor=request.user, container=chapter)
+        return Response(BulkUnpublishResultSerializer(result).data)
+
+
+class ModuleBulkUnpublishView(APIView):
+    """Withdraw every live published Lesson in a Module at once.
+
+    Unpublishes all descendant lessons of every Chapter in the Module under a row lock.
+    Returns the count of lessons actually changed.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: BulkUnpublishResultSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        result = bulk_unpublish(actor=request.user, container=module)
+        return Response(BulkUnpublishResultSerializer(result).data)
+
+
 class ModuleBulkPublishView(APIView):
     """Commit the bulk publish of a Module's whole live subtree.
 
@@ -1224,6 +1274,54 @@ class ModuleBulkPublishView(APIView):
                 }
             ).data
         )
+
+
+class ChapterBulkUnpublishView(APIView):
+    """Withdraw every live published Lesson in a Chapter at once.
+
+    Unpublishes all descendant lessons of the Chapter under a row lock.
+    Returns the count of lessons actually changed.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: BulkUnpublishResultSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, chapter_id):
+        chapter = get_object_or_404(Chapter, pk=chapter_id)
+        result = bulk_unpublish(actor=request.user, container=chapter)
+        return Response(BulkUnpublishResultSerializer(result).data)
+
+
+class ModuleBulkUnpublishView(APIView):
+    """Withdraw every live published Lesson in a Module at once.
+
+    Unpublishes all descendant lessons of every Chapter in the Module under a row lock.
+    Returns the count of lessons actually changed.
+    """
+
+    permission_classes = [IsAuthenticated, IsPublisher]
+
+    @extend_schema(
+        request=None,
+        responses={
+            200: BulkUnpublishResultSerializer,
+            401: ENVELOPE_RESPONSE,
+            403: ENVELOPE_RESPONSE,
+            404: ENVELOPE_RESPONSE,
+        },
+    )
+    def post(self, request, module_id):
+        module = get_object_or_404(Module, pk=module_id)
+        result = bulk_unpublish(actor=request.user, container=module)
+        return Response(BulkUnpublishResultSerializer(result).data)
 
 
 class CourseRestoreView(APIView):

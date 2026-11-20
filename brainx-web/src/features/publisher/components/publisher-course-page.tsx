@@ -41,6 +41,8 @@ import {
   reorderLessons,
   publishLesson,
   unpublishLesson,
+  bulkUnpublishChapter,
+  bulkUnpublishModule,
 } from '../api';
 import type {
   PublisherCourseItem,
@@ -160,6 +162,12 @@ export function PublisherCoursePage() {
     type: 'module' | 'chapter';
     item: { id: string; name: string };
   } | null>(null);
+
+  const [bulkUnpublishTarget, setBulkUnpublishTarget] = useState<{
+    type: 'module' | 'chapter';
+    item: { id: string; name: string };
+  } | null>(null);
+  const [isBulkUnpublishing, setIsBulkUnpublishing] = useState(false);
 
   const [lessonModal, setLessonModal] = useState<{
     isOpen: boolean;
@@ -1270,6 +1278,28 @@ export function PublisherCoursePage() {
     [bulkPublishTarget, chaptersByModule, loadLessonsForChapter]
   );
 
+  const handleConfirmBulkUnpublish = useCallback(async () => {
+    if (!bulkUnpublishTarget || isBulkUnpublishing) return;
+    setIsBulkUnpublishing(true);
+    try {
+      if (bulkUnpublishTarget.type === 'chapter') {
+        await bulkUnpublishChapter(bulkUnpublishTarget.item.id);
+        await loadLessonsForChapter(bulkUnpublishTarget.item.id);
+      } else if (bulkUnpublishTarget.type === 'module') {
+        await bulkUnpublishModule(bulkUnpublishTarget.item.id);
+        const chapters = chaptersByModule[bulkUnpublishTarget.item.id]?.chapters || [];
+        for (const chap of chapters) {
+          await loadLessonsForChapter(chap.id);
+        }
+      }
+      setBulkUnpublishTarget(null);
+    } catch (err: unknown) {
+      console.error('Erreur de dépublication en masse:', err);
+    } finally {
+      setIsBulkUnpublishing(false);
+    }
+  }, [bulkUnpublishTarget, isBulkUnpublishing, chaptersByModule, loadLessonsForChapter]);
+
   return (
     <div
       data-testid="publisher-course-page"
@@ -1619,6 +1649,26 @@ export function PublisherCoursePage() {
                           type="button"
                           variant="outline"
                           size="sm"
+                          data-testid={`bulk-unpublish-module-btn-${mod.id}`}
+                          disabled={!isPublisher || Boolean(mod.is_deleted)}
+                          onClick={() => {
+                            if (!isPublisher || mod.is_deleted) return;
+                            setBulkUnpublishTarget({
+                              type: 'module',
+                              item: { id: mod.id, name: mod.name },
+                            });
+                          }}
+                          aria-label={`Dépublier le module en masse ${mod.name}`}
+                          className="min-h-[44px] min-w-[44px] text-xs font-medium border-border inline-flex items-center gap-1.5 text-foreground-muted hover:text-foreground"
+                        >
+                          <EyeOff className="h-3.5 w-3.5" />
+                          <span className="sr-only sm:not-sr-only">Dépublier tout</span>
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
                           data-testid={`create-chapter-btn-${mod.id}`}
                           onClick={() => openCreateChapter(mod.id)}
                           className="min-h-[44px] min-w-[44px] text-xs font-medium border-border inline-flex items-center gap-1.5"
@@ -1826,6 +1876,27 @@ export function PublisherCoursePage() {
                                     >
                                       <Globe className="h-3.5 w-3.5" />
                                       <span className="sr-only sm:not-sr-only">Publier en masse</span>
+                                    </Button>
+
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      data-testid={`bulk-unpublish-chapter-btn-${chap.id}`}
+                                      disabled={!isPublisher || Boolean(chap.is_deleted)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!isPublisher || chap.is_deleted) return;
+                                        setBulkUnpublishTarget({
+                                          type: 'chapter',
+                                          item: { id: chap.id, name: chap.name },
+                                        });
+                                      }}
+                                      aria-label={`Dépublier le chapitre en masse ${chap.name}`}
+                                      className="min-h-[44px] min-w-[44px] text-xs hover:bg-surface text-foreground-muted hover:text-foreground inline-flex items-center gap-1"
+                                    >
+                                      <EyeOff className="h-3.5 w-3.5" />
+                                      <span className="sr-only sm:not-sr-only">Dépublier tout</span>
                                     </Button>
 
                                     <Button
@@ -2146,6 +2217,55 @@ export function PublisherCoursePage() {
         chapterName={lessonModal.chapterName}
         onSuccess={handleLessonCreated}
       />
+
+      {/* Bulk Unpublish Confirmation Dialog */}
+      {bulkUnpublishTarget && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-unpublish-dialog-title"
+          data-testid="bulk-unpublish-dialog"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+        >
+          <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-warning">
+              <AlertCircle className="h-6 w-6 shrink-0" />
+              <h3 id="bulk-unpublish-dialog-title" className="text-lg font-semibold text-foreground">
+                Confirmer la dépublication
+              </h3>
+            </div>
+            <p className="text-sm text-foreground-muted">
+              Êtes-vous sûr de vouloir dépublier l'ensemble des leçons {bulkUnpublishTarget.type === 'chapter' ? 'du chapitre' : 'du module'}{' '}
+              <strong className="text-foreground">{bulkUnpublishTarget.item.name}</strong> ?
+              Toutes les leçons publiées repasseront immédiatement en statut brouillon et ne seront plus visibles par les étudiants.
+            </p>
+            <div className="flex justify-end gap-2.5 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isBulkUnpublishing}
+                onClick={() => setBulkUnpublishTarget(null)}
+                data-testid="bulk-unpublish-cancel-btn"
+              >
+                Annuler
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={isBulkUnpublishing}
+                onClick={handleConfirmBulkUnpublish}
+                data-testid="bulk-unpublish-confirm-btn"
+                className="gap-1.5"
+              >
+                {isBulkUnpublishing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                <span>Dépublier tout</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

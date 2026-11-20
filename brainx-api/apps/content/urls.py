@@ -7,6 +7,7 @@ from .views import (
     BrowseModuleListView,
     ChapterBulkPublishPreviewView,
     ChapterBulkPublishView,
+    ChapterBulkUnpublishView,
     ChapterCreateView,
     ChapterLessonsReorderView,
     ChapterRemovalPreviewView,
@@ -30,6 +31,7 @@ from .views import (
     LessonUpdateView,
     ModuleBulkPublishPreviewView,
     ModuleBulkPublishView,
+    ModuleBulkUnpublishView,
     ModuleChaptersReorderView,
     ModuleCreateView,
     ModuleRemovalPreviewView,
@@ -88,6 +90,11 @@ urlpatterns = [
         name='module-bulk-publish',
     ),
     path(
+        'modules/<uuid:module_id>/bulk-unpublish/',
+        ModuleBulkUnpublishView.as_view(),
+        name='module-bulk-unpublish',
+    ),
+    path(
         'modules/<uuid:module_id>/restore/',
         ModuleRestoreView.as_view(),
         name='module-restore',
@@ -116,6 +123,11 @@ urlpatterns = [
         'chapters/<uuid:chapter_id>/bulk-publish/',
         ChapterBulkPublishView.as_view(),
         name='chapter-bulk-publish',
+    ),
+    path(
+        'chapters/<uuid:chapter_id>/bulk-unpublish/',
+        ChapterBulkUnpublishView.as_view(),
+        name='chapter-bulk-unpublish',
     ),
     path(
         'chapters/<uuid:chapter_id>/restore/',

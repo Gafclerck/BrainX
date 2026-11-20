@@ -310,6 +310,34 @@ def bulk_publish(*, actor, container, previewed):
         return {'changed': changed, 'blocked': blocked}
 
 
+def bulk_unpublish(*, actor, container):
+    """Commit a bulk unpublish over `container`'s live descendant Lessons.
+
+    Runs in one transaction under a row lock on the addressed Chapter or Module.
+    Every live published candidate is unpublished through mutate, one row at a
+    time, stamped with the acting Publisher, so the whole unpublish commits or
+    rolls back as one. Already-unpublished candidates are left untouched.
+    Returns the count actually unpublished.
+    """
+    with transaction.atomic():
+        locked = type(container).objects.select_for_update().get(
+            pk=container.pk
+        )
+        lessons = _live_descendant_lessons(locked)
+        changed = 0
+        for lesson in lessons:
+            if not lesson.is_published:
+                continue
+            mutate(
+                actor=actor,
+                model=Lesson,
+                instance=lesson,
+                data={'is_published': False},
+            )
+            changed += 1
+        return {'changed': changed}
+
+
 def remove(*, actor, model, node):
     """Soft-delete `node` and every live descendant, stamped with `actor`.
 

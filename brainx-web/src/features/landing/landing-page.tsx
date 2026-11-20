@@ -79,12 +79,12 @@ export function LandingPage() {
           <div className="flex items-center space-x-3">
             <Link
               to="/"
-              className="flex items-center gap-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md"
+              className="flex items-center gap-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-md group"
               aria-label="Accueil BrainX"
             >
-              <BrainXLogo size="md" />
+              <BrainXLogo size="md" className="transition-transform group-hover:scale-105" />
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-foreground text-base tracking-tight font-sans">
+                <span className="font-semibold text-foreground text-base tracking-tight font-sans leading-none translate-y-[1px]">
                   BrainX
                 </span>
                 <span
@@ -98,6 +98,22 @@ export function LandingPage() {
           </div>
 
           <div className="flex items-center space-x-2 sm:space-x-3">
+            <Button
+              asChild
+              variant="ghost"
+              size="default"
+              className="min-h-[44px]"
+            >
+              <Link
+                to="/courses"
+                data-testid="nav-courses-link"
+                className="flex items-center gap-1.5"
+              >
+                <BookOpen className="h-4 w-4" />
+                <span>Cours</span>
+              </Link>
+            </Button>
+
             {Boolean(accessToken && isPublisher) && (
               <Button
                 asChild
@@ -116,40 +132,23 @@ export function LandingPage() {
               </Button>
             )}
             {accessToken ? (
-              <>
-                <Button
-                  asChild
-                  variant="ghost"
-                  size="default"
-                  className="min-h-[44px]"
-                >
-                  <Link
-                    to="/courses"
-                    data-testid="nav-courses-link"
-                    className="flex items-center gap-1.5"
-                  >
-                    <BookOpen className="h-4 w-4" />
-                    <span>Cours</span>
-                  </Link>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="default"
-                  onClick={logout}
-                  data-testid="nav-logout-btn"
-                  className="min-h-[44px] flex items-center gap-1.5"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span>Se déconnecter</span>
-                </Button>
-              </>
+              <Button
+                variant="ghost"
+                size="default"
+                onClick={logout}
+                data-testid="nav-logout-btn"
+                className="min-h-[44px] flex items-center gap-1.5"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>Se déconnecter</span>
+              </Button>
             ) : (
               <>
                 <Button
                   asChild
                   variant="ghost"
                   size="default"
-                  className="min-h-[44px]"
+                  className="min-h-[44px] hidden"
                 >
                   <Link
                     to="/login"
@@ -164,7 +163,7 @@ export function LandingPage() {
                   asChild
                   variant="default"
                   size="default"
-                  className="min-h-[44px] shadow-sm shadow-primary/20"
+                  className="min-h-[44px] shadow-sm shadow-primary/20 hidden"
                 >
                   <Link
                     to="/register"
@@ -209,24 +208,21 @@ export function LandingPage() {
           </div>
         )}
 
-        {/* Futuristic Hero Section */}
+        {/* Sober & Direct Hero Section */}
         <section className="text-center max-w-3xl mx-auto space-y-6 pt-4">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface border border-border shadow-inner text-xs font-mono text-primary">
-            <Cpu className="h-3.5 w-3.5 text-primary animate-pulse" />
-            <span>PLATEFORME PÉDAGOGIQUE CENTRALISÉE</span>
-            <span className="text-foreground-muted">|</span>
-            <span className="text-foreground-muted">MODE SOMBRE NATIF</span>
-          </div>
-
           <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-foreground leading-tight">
-            L'apprentissage et le rattrapage de cours,{' '}
+            Arrête de chercher partout,{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-sky-300 to-indigo-400">
-              réinventés.
+              retrouve facilement tous tes cours ici.
             </span>
           </h1>
 
           <p className="text-base sm:text-lg text-foreground-muted leading-relaxed max-w-2xl mx-auto">
-            Retrouvez en quelques secondes le cours manqué, son plan détaillé et tout le matériel pédagogique associé (documents PDF, vidéos, code source et schémas).
+            Accède en un clic à l'ensemble des leçons, documents et ressources. Fais{' '}
+            <kbd className="px-2 py-0.5 text-xs font-mono font-semibold rounded bg-surface border border-border text-primary inline-flex items-center gap-1 mx-0.5 shadow-sm">
+              Ctrl+K
+            </kbd>{' '}
+            (ou <kbd className="px-1.5 py-0.5 text-xs font-mono rounded bg-surface border border-border text-foreground-muted">Cmd+K</kbd>) et tape ton mot-clé pour accéder directement à ce que tu cherches.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
@@ -246,7 +242,7 @@ export function LandingPage() {
               asChild
               variant="outline"
               size="lg"
-              className="w-full sm:w-auto min-h-[48px] px-8 text-base gap-2 bg-surface/50 border-border hover:bg-surface"
+              className="w-full sm:w-auto min-h-[48px] px-8 text-base gap-2 bg-surface/50 border-border hover:bg-surface hidden"
             >
               <Link to="/login" data-testid="hero-login-btn">
                 <LogIn className="h-5 w-5" />
@@ -551,19 +547,25 @@ export function LandingPage() {
         <section className="text-center rounded-2xl border border-primary/30 bg-gradient-to-b from-primary/10 via-surface/80 to-surface p-8 sm:p-12 space-y-6 relative overflow-hidden">
           <div className="max-w-xl mx-auto space-y-3 relative z-10">
             <h2 className="text-2xl sm:text-3xl font-extrabold text-foreground tracking-tight">
-              Prêt à accélérer vos apprentissages ?
+              Prêt à accélérer tes apprentissages ?
             </h2>
             <p className="text-sm sm:text-base text-foreground-muted">
-              Rejoignez BrainX dès aujourd'hui et accédez à l'ensemble des cours et ressources pédagogiques.
+              Explore le catalogue complet et accède directement à l'ensemble des cours, leçons et ressources.
             </p>
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
               <Button asChild variant="default" size="lg" className="min-h-[48px] px-8 text-base shadow-lg shadow-primary/20">
-                <Link to="/register">
-                  <span>Créer mon compte</span>
+                <Link to="/courses">
+                  <BookOpen className="h-5 w-5 mr-1" />
+                  <span>Explorer les cours</span>
                   <ArrowRight className="h-4 w-4 ml-1" />
                 </Link>
               </Button>
-              <Button asChild variant="outline" size="lg" className="min-h-[48px] px-8 text-base bg-surface">
+              <Button asChild variant="outline" size="lg" className="min-h-[48px] px-8 text-base bg-surface hidden">
+                <Link to="/register">
+                  <span>Créer mon compte</span>
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="lg" className="min-h-[48px] px-8 text-base bg-surface hidden">
                 <Link to="/login">
                   <span>Se connecter</span>
                 </Link>
@@ -578,7 +580,7 @@ export function LandingPage() {
         <div className="max-w-page-max mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between text-xs text-foreground-muted gap-4">
           <div className="flex items-center gap-2">
             <BrainXLogo size="sm" />
-            <span>BrainX &copy; 2026 &mdash; Plateforme Pédagogique</span>
+            <span className="leading-none translate-y-[1px]">BrainX &copy; 2026 &mdash; Plateforme Pédagogique</span>
           </div>
           <p className="font-mono text-foreground-subtle">
             WCAG 2.1 AAA &bull; Canvas #0D1117 &bull; Inter &amp; JetBrains Mono
