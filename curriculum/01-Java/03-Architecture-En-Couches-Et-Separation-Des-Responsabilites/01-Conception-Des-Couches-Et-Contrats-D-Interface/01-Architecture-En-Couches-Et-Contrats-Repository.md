@@ -124,31 +124,7 @@ public interface BaseRepository<T extends AbstractEntity> {
 
 ### 3.2 Le Contrat Réel du Dépôt : `EtudiantRepository`
 
-Dans notre architecture métier `com.ism.repository`, l'interface d'accès aux données formalise les opérations directes :
-
-```java
-package com.ism.repository;
-
-import java.util.List;
-import java.util.Optional;
-import com.ism.domain.Etudiant;
-
-/**
- * Contrat de persistance pour l'entité Étudiant.
- * 
- * @author Baila Wane
- */
-public interface EtudiantRepository {
-    boolean insert(Etudiant nouveau);
-    List<Etudiant> selectAll();
-    Optional<Etudiant> selectByMatricule(String matricule);
-}
-```
-
-> 📘 **Nomenclature des Méthodes : Style SQL vs Abstraction DDD / Spring Data**
-> Débuter avec des verbes comme `insert()` et `selectAll()` permet d'établir une passerelle mentale directe et limpide avec les requêtes SQL relationnelles sous-jacentes. Dans des architectures plus abstraites (comme Spring Data JPA ou les principes du Domain-Driven Design), ces méthodes sont souvent généralisées sous les termes `save(entity)` et `findAll()` pour modéliser le repository comme une collection en mémoire.
-
-L'interface spécifique hérite du contrat générique et ajoute les méthodes de recherche propres aux besoins métier de l'étudiant :
+Dans notre architecture métier `com.ism.repository`, l'interface `EtudiantRepository` hérite du contrat générique `BaseRepository<Etudiant>` et y ajoute les méthodes de recherche propres aux besoins métier de l'étudiant :
 
 ```java
 package com.ism.repository;
@@ -158,6 +134,9 @@ import java.util.Optional;
 
 /**
  * Contrat de persistance pour l'entité Etudiant.
+ * Hérite des opérations CRUD universelles de BaseRepository.
+ *
+ * @author Baila Wane
  */
 public interface EtudiantRepository extends BaseRepository<Etudiant> {
 
@@ -175,6 +154,9 @@ public interface EtudiantRepository extends BaseRepository<Etudiant> {
     boolean existsByMatricule(String matricule);
 }
 ```
+
+> 📘 **Nomenclature des Méthodes : Style SQL vs Abstraction DDD / Spring Data**
+> Certains développeurs débutants utilisent des verbes SQL natifs comme `insert()`, `update()` et `selectAll()`. Dans l'ingénierie d'entreprise moderne (Domain-Driven Design, Spring Data JPA), nous préférons les termes `save(entity)` et `findAll()`. Le repository émule ainsi une collection d'objets en mémoire vive : le client demande simplement à « sauvegarder » l'entité, sans se préoccuper de savoir si le moteur sous-jacent exécute un `INSERT` ou un `UPDATE` SQL !
 
 ### 3.3 L'Implémentation Mémoire `EtudiantRepositoryMemory`
 
@@ -261,6 +243,22 @@ public class EtudiantRepositoryMemory implements EtudiantRepository {
     }
 }
 ```
+
+### 3.4 Le Piège Démonstratif des Repositories Multiples et la Solution `DatabaseMemory`
+
+Lors de la séance de cours pratique, le Professeur Baila Wane met régulièrement en scène un bogue d'architecture déroutant pour les étudiants débutants :
+1. Un premier composant instancie son propre repository : `EtudiantRepository repoAjout = new EtudiantRepositoryMemory();` et y enregistre 3 étudiants.
+2. Un second composant (la vue console d'affichage) instancie à son tour : `EtudiantRepository repoLecture = new EtudiantRepositoryMemory();` et appelle `findAll()`.
+3. **Résultat :** La console affiche *"Aucun étudiant trouvé"* ! Les étudiants semblent s'être volatilisés !
+
+> ⚠️ **Analyse de la cause racine :**
+> Sans centralisation de la persistance, chaque `new EtudiantRepositoryMemory()` alloue sa propre `ArrayList<Etudiant>` distincte dans la mémoire Heap. L'insertion s'effectue dans la liste A, et la recherche lit dans la liste B !
+> 
+> **La solution d'architecture imposée :**
+> 1. Extraire la détention des données hors du repository pour la confier à une classe dédiée : `DatabaseMemory`.
+> 2. Verrouiller `DatabaseMemory` sous forme de **Singleton** (`getInstance()`), garantissant qu'une seule et unique instance physique existe dans toute la machine virtuelle.
+> 3. Encapsuler les collections internes sous forme de listes protégées : `private final List<Etudiant> etudiants = new ArrayList<>();` accessibles via `getEtudiants()`. Le mot-clé `final` empêche toute réassignation accidentelle de la référence en mémoire.
+> 4. Centraliser l'auto-incrémentation des clés primaires dans `DatabaseMemory` (`nextEtudiantId()`), de manière à ce qu'aucune instanciation de repository ne réinitialise les compteurs d'identifiants.
 
 ---
 

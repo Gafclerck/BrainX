@@ -269,6 +269,18 @@ public class MoyenneServiceImpl implements MoyenneService {
 }
 ```
 
+### 3.4 L'Association Unidirectionnelle : Le Choix Architectural `Note` vers `Etudiant`
+
+Dans le domaine de gestion académique, une décision de modélisation fondamentale prise par le Professeur Baila Wane concerne la relation entre `Note` et `Etudiant` :
+- Faut-il une relation bidirectionnelle (`Etudiant` contient `List<Note>` et `Note` contient `Etudiant`) ?
+- Ou une relation **unidirectionnelle `ManyToOne`** (`Note` connaît son `Etudiant`, mais `Etudiant` ne détient aucune collection de notes) ?
+
+> 📘 **Décision d'Architecture de Référence : Unidirectionnalité Stricte**
+> Dans notre système, nous privilégions expressément l'association unidirectionnelle `Note --> Etudiant` :
+> 1. **Suppression des dépendances cycliques** : Élimine tout risque de récursion infinie lors de la sérialisation JSON ou des appels à `toString()`.
+> 2. **Opérations d'insertion ultra-légères** : Pour attribuer une note, le service instancie simplement `new Note(valeur, matiere, etudiant)`. Il n'a pas besoin de charger en mémoire la liste de toutes les anciennes notes de l'étudiant pour y ajouter un élément.
+> 3. **Isolation et performance de la mémoire vive** : Si un étudiant possède 50 notes sur son cursus, charger un objet `Etudiant` pour afficher son identité ne charge pas inutilement ses 50 notes en mémoire Heap.
+
 ---
 
 ## 4. Bonnes Pratiques, Pièges & Débogage

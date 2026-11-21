@@ -104,64 +104,12 @@ Examinons les records réels extraits du package `com.ism.dto`.
 
 ### 3.1 Conception des DTOs Métier dans `com.ism.dto`
 
-Examinons les records et classes de transfert réels extraits du package `com.ism.dto` :
+Dans notre projet de référence `com.ism.dto`, les DTOs obéissent à un **stéréotypage rigoureux des noms** préconisé par Baila Wane :
+- Les DTOs de saisie / commande portent le suffixe `CreateDto` ou `AddDto` (ex: `EtudiantCreateDto`, `ProduitAddDto`). Ils ne contiennent **aucun ID système**, car l'identifiant est généré par le moteur de persistance.
+- Les DTOs de restitution / lecture portent le suffixe `ListeDto` ou `ShowDto` (ex: `EtudiantListeDto`, `ProduitShowDto`). Ils regroupent les projections adaptées à l'écran.
 
 #### 1. `EtudiantCreateDto` (Données de saisie utilisateur)
-Dans sa forme initiale, le DTO de création est une classe immuable finale :
-```java
-package com.ism.dto;
-
-import lombok.AllArgsConstructor;
-
-/**
- * DTO de création d'étudiant.
- */
-@AllArgsConstructor 
-public final class EtudiantCreateDto {
-    public final String nomComplet;
-    public final String matricule;
-    public final String classe;    
-}
-```
-*Note moderne :* En Java 16+, cette classe s'exprime de façon équivalente et ultra-concise par un record :
-```java
-public record EtudiantCreateDto(String nomComplet, String matricule, String classe) {}
-```
-
-#### 2. `EtudiantListeDto` : La Puissance du DTO Composite
-Observez la structure remarquable du DTO composite `EtudiantListeDto` :
-```java
-package com.ism.dto;
-
-import java.util.List;
-
-/**
- * DTO Composite projetant l'étudiant avec la liste de ses notes et sa moyenne calculée.
- */
-public record EtudiantListeDto(
-    String matricule, 
-    String nomComplet, 
-    List<NoteListeDto> notes, 
-    double moyenne
-) {}
-```
-
-#### 3. `NoteListeDto` et `NoteCreateDto`
-```java
-package com.ism.dto;
-
-public record NoteListeDto(double valeur, String matiere) {}
-
-public record NoteCreateDto(double valeur, String matiere, com.ism.domain.Etudiant etudiant) {}
-```
-
-> 💡 **La Puissance du DTO Composite :**
-> **Pourquoi `EtudiantListeDto` est-il un modèle d'école ?**
-> Plutôt que de forcer la vue console ou un client Web à faire trois requêtes distinctes (une pour l'étudiant, une pour ses notes, une pour calculer la moyenne), `EtudiantListeDto` rassemble en un seul transfert l'ensemble des données requises pour afficher le bulletin ! C'est l'essence même du patron DTO.
-
-#### 1. `EtudiantCreateDto` (Données de saisie utilisateur)
-Ce record intègre un constructeur compact pour vérifier que les champs obligatoires ne sont pas vides :
-
+Ce record Java compact garantit l'immutabilité et valide les préconditions de format :
 ```java
 package com.ism.dto;
 
@@ -174,7 +122,8 @@ public record EtudiantCreateDto(
         String nom,
         String prenom,
         String email,
-        String telephone
+        String telephone,
+        String classe
 ) {
     // Constructeur compact de validation
     public EtudiantCreateDto {
@@ -191,26 +140,42 @@ public record EtudiantCreateDto(
 }
 ```
 
-#### 2. `EtudiantListeDto` (Données formatées pour l'affichage)
-
+#### 2. `EtudiantListeDto` : La Puissance du DTO Composite
+Observez la structure remarquable du DTO composite `EtudiantListeDto` :
 ```java
 package com.ism.dto;
 
+import java.util.List;
+
 /**
- * DTO optimisé pour l'affichage de la liste des étudiants.
+ * DTO Composite projetant l'étudiant avec la liste de ses notes et sa moyenne calculée.
  */
 public record EtudiantListeDto(
-        Long id,
-        String matricule,
-        String nomComplet,
-        String email,
-        String telephone
+    Long id,
+    String matricule, 
+    String nomComplet, 
+    String classe,
+    List<NoteListeDto> notes, 
+    double moyenne
 ) {}
 ```
 
-### 3.2 Les DTOs pour la gestion des Notes
+> 💡 **La Puissance du DTO Composite :**
+> **Pourquoi `EtudiantListeDto` est-il un modèle d'école ?**
+> Plutôt que de forcer la vue console ou un client Web à faire trois requêtes distinctes (une pour l'étudiant, une pour ses notes, une pour calculer la moyenne), `EtudiantListeDto` rassemble en un seul transfert l'ensemble des données requises pour afficher le bulletin ! C'est l'essence même du patron DTO.
+> De plus, la couche Présentation se contente d'afficher : **aucun calcul n'est autorisé dans la vue**.
 
-#### 1. `NoteCreateDto` (Attribution d'une note)
+### 3.2 Les DTOs de Gestion des Notes et Spécialisation Back-for-Front (BFF)
+
+Dans les architectures industrielles modernes, une entité unique sert de source de vérité pour de multiples canaux d'accès (BFF - Back-for-Front) :
+- Un **terminal console** nécessite un DTO compact.
+- Une **application mobile** sur réseau cellulaire lent requiert un DTO ultra-léger sans historique volumineux.
+- Un **tableau de bord administratif web** nécessite un DTO composite exhaustif.
+
+Voici la déclaration rigoureuse des DTOs de notation, isolant totalement le domaine :
+
+#### 1. `NoteCreateDto` (Attribution d'une note sans exposer l'entité)
+Remarquez que le DTO transporte uniquement le `matricule` sous forme de chaîne simple (`String etudiantMatricule`), et **jamais** une instance d'entité `Etudiant` :
 
 ```java
 package com.ism.dto;
@@ -253,8 +218,7 @@ public record NoteListeDto(
         Long id,
         String matiere,
         Double valeur,
-        Double coefficient,
-        String etudiantNomComplet
+        Double coefficient
 ) {}
 ```
 
@@ -268,6 +232,10 @@ package com.ism.service;
 import com.ism.domain.Etudiant;
 import com.ism.dto.EtudiantCreateDto;
 import com.ism.dto.EtudiantListeDto;
+import com.ism.dto.NoteListeDto;
+
+import java.util.Collections;
+import java.util.List;
 
 public final class EtudiantMapper {
 
@@ -285,20 +253,21 @@ public final class EtudiantMapper {
                 .prenom(dto.prenom())
                 .email(dto.email())
                 .telephone(dto.telephone())
+                .classe(dto.classe())
                 .build();
     }
 
     /**
-     * Convertit une entité métier Etudiant en DTO d'affichage.
+     * Convertit une entité métier Etudiant en DTO composite d'affichage.
      */
-    public static EtudiantListeDto toListeDto(Etudiant entity) {
-        String nomComplet = entity.getPrenom() + " " + entity.getNom().toUpperCase();
+    public static EtudiantListeDto toListeDto(Etudiant entity, List<NoteListeDto> notes, double moyenne) {
         return new EtudiantListeDto(
                 entity.getId(),
                 entity.getMatricule(),
-                nomComplet,
-                entity.getEmail(),
-                entity.getTelephone()
+                entity.getNomComplet(),
+                entity.getClasse(),
+                notes != null ? notes : Collections.emptyList(),
+                moyenne
         );
     }
 }

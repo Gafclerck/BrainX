@@ -92,46 +92,133 @@ classDiagram
    - Conçues pour les erreurs de programmation (ex: `NullPointerException`, `IndexOutOfBoundsException`) ou les violations de préconditions métier.
    - C'est aujourd'hui le **standard architectural moderne** adopté par Spring, Hibernate et l'ingénierie Java moderne pour concevoir les exceptions métier.
 
+### 2.3 Les Trois Scénarios d'un Algorithme selon Baila Wane
+
+Dans l'analyse et la modélisation rigoureuse de tout cas d'usage, le Professeur Baila Wane distingue formellement **trois scénarios d'exécution** :
+
+```mermaid
+flowchart TD
+    START(["Début de l'opération"]) --> EVAL{"Évaluation des conditions"}
+    
+    EVAL -->|1. Toutes les conditions sont remplies| NOMINAL["1. Scénario Nominal (Happy Path)
+- Inscription réussie, calcul validé
+- L'algorithme se termine avec succès"]
+    
+    EVAL -->|2. Saisie utilisateur erronée ou incomplète| ALTERNANCE["2. Scénario d'Alternance (Récupérable)
+- Exemple : matricule vide, note hors bornes
+- On ne crash pas : on redonne la main à l'opérateur pour re-saisir"]
+    
+    EVAL -->|3. Rupture critique d'invariant système| EXCEPTION["3. Scénario d'Exception (Non récupérable)
+- Exemple : doublon de clé primaire en base, ressource vitale corrompue
+- Une exception est immédiatement levée (throw) et interrompt le traitement"]
+```
+
+1. **Le Scénario Nominal** : Le flux idéal où les entrées sont saines et où la transaction s'exécute parfaitement.
+2. **Le Scénario d'Alternance** : Une anomalie de premier niveau (formatage de date incorrect, saisie d'un caractère au lieu d'un nombre). Ce scénario doit être intercepté localement par les validateurs pour inviter l'utilisateur à rectifier sa saisie sans lever de lourdes exceptions.
+3. **Le Scénario d'Exception** : Un événement grave violant les règles fondamentales du domaine. Le service doit impérativement interrompre son exécution par un `throw new BusinessException(...)` afin de prévenir toute corruption de la base de données.
+
 ---
 
 ## 3. Implémentation Pratique & Code de Référence
 
-### 3.1 Création d'une Hiérarchie d'Exceptions Métier
+### 3.1 Découplage des Messages et Support Multilingue : `EnumError`
 
-Nous créons une racine commune pour toutes les anomalies de notre application dans le package `com.ism.exception` :
+L'une des erreurs courantes consiste à coder en dur (*hardcoder*) des messages d'erreur textuels au milieu des méthodes du service métier (`throw new Exception("Le produit existe déjà")`).
+Cette mauvaise pratique empêche toute traduction de l'application (internationalisation / i18n) et rend le code fragile.
+
+Baila Wane préconise de centraliser les erreurs dans une énumération typée :
+
+```java
+package com.ism.enums;
+
+/**
+ * Énumération centralisant les codes et messages d'erreur applicatifs.
+ * Permet la séparation stricte entre la logique de traitement et les libellés affichés.
+ */
+public enum EnumError {
+    SUCCES(200, "Opération réalisée avec succès."),
+    CHAMP_OBLIGATOIRE(101, "Ce champ est obligatoire et ne peut pas être vide."),
+    FORMAT_NUMERIQUE_INVALIDE(102, "Le format numérique saisi est invalide."),
+    MATRICULE_EXISTANT(103, "Un étudiant possédant ce matricule existe déjà dans le système."),
+    NOTE_HORS_PLAGE(104, "La note doit obligatoirement être comprise entre 0 et 20."),
+    RESSOURCE_INTROUVABLE(404, "La ressource demandée est introuvable.");
+
+    private final int code;
+    private final String messageFr;
+
+    EnumError(int code, String messageFr) {
+        this.code = code;
+        this.messageFr = messageFr;
+    }
+
+    public int getCode() {
+        return code;
+    }
+
+    public String getMessage() {
+        return messageFr;
+    }
+
+    /**
+     * Méthode d'extraction adaptée au support multi-langue (i18n).
+     */
+    public static String getMessageByCode(int code, String langue) {
+        for (EnumError err : values()) {
+            if (err.getCode() == code) {
+                if ("EN".equalsIgnoreCase(langue)) {
+                    // Possibilité d'aiguiller vers un dictionnaire anglais
+                    return err.name().replace('_', ' ');
+                }
+                return err.getMessage();
+            }
+        }
+        return "Erreur inconnue.";
+    }
+}
+```
+
+### 3.2 La Racine Commune des Exceptions Métier : `BusinessException`
+
+Nous créons une racine commune pour toutes les anomalies de notre application dans le package `com.ism.exception`, intimement liée à notre `EnumError` :
 
 ```java
 package com.ism.exception;
+
+import com.ism.enums.EnumError;
 
 /**
  * Exception racine pour toutes les erreurs métier du système ISM.
  */
 public class BusinessException extends RuntimeException {
 
-    private final String errorCode;
+    private final EnumError error;
 
-    public BusinessException(String message) {
-        super(message);
-        this.errorCode = "BUS_ERROR_GENERIC";
+    public BusinessException(EnumError error) {
+        super(error.getMessage());
+        this.error = error;
     }
 
-    public BusinessException(String errorCode, String message) {
-        super(message);
-        this.errorCode = errorCode;
+    public BusinessException(EnumError error, String details) {
+        super(error.getMessage() + " [Détails: " + details + "]");
+        this.error = error;
     }
 
-    public BusinessException(String errorCode, String message, Throwable cause) {
-        super(message, cause);
-        this.errorCode = errorCode;
+    public BusinessException(EnumError error, Throwable cause) {
+        super(error.getMessage(), cause);
+        this.error = error;
     }
 
-    public String getErrorCode() {
-        return errorCode;
+    public EnumError getError() {
+        return error;
+    }
+
+    public int getErrorCode() {
+        return error.getCode();
     }
 }
 ```
 
-### 3.2 Exceptions Métier Spécifiques
+### 3.3 Exceptions Métier Spécifiques
 
 #### 1. `EntityNotFoundException` (Entité introuvable)
 

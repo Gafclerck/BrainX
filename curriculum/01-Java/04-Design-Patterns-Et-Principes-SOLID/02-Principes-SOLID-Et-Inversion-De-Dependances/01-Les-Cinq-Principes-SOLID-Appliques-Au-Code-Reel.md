@@ -32,7 +32,35 @@ Analysons chacun des 5 principes à travers le prisme du code source concret de 
 
 ## 2. Architecture & Fondations Conceptuelles
 
-### 2.1 Synthèse Visuelle des Principes SOLID
+### 2.1 Couplage Fort vs Couplage Faible : L'Analogie Réelle Wave vs OrangeMoney
+
+Avant d'aborder les 5 principes SOLID, il est impératif de comprendre le combat fondamental du génie logiciel : **la lutte contre le couplage fort**.
+
+Le Professeur Baila Wane illustre ce défi par une démonstration concrète tirée des paiements électroniques :
+- **Couplage Fort (Rigide & Fragile)** :
+  ```java
+  // Dans votre classe de service :
+  WavePayment wp = new WavePayment();
+  wp.pay(50000);
+  ```
+  La classe métier sait explicitement qu'elle utilise `WavePayment`. Si demain l'établissement décide de basculer vers OrangeMoney ou FreeMoney, ou si l'API de Wave modifie ses signatures, toute la classe métier est brisée et doit être réécrite et retestée !
+- **Couplage Faible (Souple & Extensible)** :
+  ```java
+  // On définit une abstraction commune :
+  public interface IPayment {
+      void pay(double montant);
+  }
+
+  // La classe de service manipule l'interface, injectée depuis l'extérieur :
+  public class InscriptionService {
+      private final IPayment payment;
+      public InscriptionService(IPayment payment) { this.payment = payment; }
+      public void valider(double montant) { payment.pay(montant); }
+  }
+  ```
+  Grâce à ce découplage, nous pouvons remplacer instantanément `new Wave()` par `new OrangeMoney()` sans modifier une seule ligne du service métier !
+
+### 2.2 Synthèse Visuelle des Principes SOLID
 
 ```mermaid
 flowchart TD
@@ -44,7 +72,7 @@ flowchart TD
         L["L - Liskov Substitution Principle
 (Etudiant et Note substituables à AbstractEntity)"]
         I["I - Interface Segregation Principle
-(EtudiantRepository distinct de NoteRepository)"]
+(Contrat IRepository<T> et IReservationRepository spécialisé)"]
         D["D - Dependency Inversion Principle
 (EtudiantServiceImpl dépend du contrat d'interface, injecté par constructeur)"]
     end
@@ -80,7 +108,7 @@ import java.util.List;
  * calculer la moyenne d'une collection de notes.
  */
 public interface MoyenneService {
-    double moyenne(List<Note> notes);
+    double calculerMoyenne(List<Note> notes);
 }
 ```
 
@@ -137,22 +165,43 @@ Partout où une fonction du système attend une `AbstractEntity` (par exemple un
 
 > **Définition formelle :** *"Aucun client ne doit être contraint de dépendre de méthodes qu'il n'utilise pas."*
 
-#### Violation classique :
-Créer une interface gigantesque `BigRepository` contenant :
+#### Cas Pratique Démonstratif : Le Projet de Réservation de Salles
+Le Professeur Baila Wane pose le problème à travers le système de gestion des salles universitaires :
+Supposons que nous définissions une interface générique `IRepository<T>` :
 ```java
-public interface BigRepository {
-    void saveEtudiant(Etudiant e);
-    void saveNote(Note n);
-    void saveProfesseur(Professeur p);
-    void archiverAnneeScolaire();
+public interface IRepository<T> {
+    T save(T entity);
+    List<T> findAll();
 }
 ```
-Si un service n'a besoin que des notes, il se retrouve pollué par les méthodes des étudiants et des professeurs !
+Si un développeur ajoute imprudemment une méthode de recherche par date dans cette interface commune :
+`List<T> findByDate(LocalDate date);`
+Que se passe-t-il pour `SalleRepository` qui implémente `IRepository<Salle>` ?
+Une salle n'a pas de date (elle a un code et une capacité) ! `SalleRepository` est pourtant contrainte d'implémenter `findByDate()` avec un `return null;` ou de lever une exception, ou de devenir une classe abstraite. C'est une violation flagrante de l'ISP !
 
-#### Solution adoptée dans `com.ism` :
-Nous ségréguons nos interfaces en contrats fins et cohérents :
-- `EtudiantRepository` : dédié exclusivement aux opérations sur l'étudiant.
-- `NoteRepository` : dédié exclusivement à la persistance des notes.
+#### La Solution d'Ingénierie : La Spécialisation d'Interfaces
+Nous fragmentons le contrat en petites interfaces hautement cohérentes :
+```java
+// 1. Contrat générique de base (uniquement le CRUD universel)
+public interface IRepository<T> {
+    T save(T entity);
+    List<T> findAll();
+}
+
+// 2. Interface spécialisée étendant le contrat de base pour la réservation
+public interface IReservationRepository extends IRepository<Reservation> {
+    List<Reservation> findByDate(LocalDate date);
+}
+
+// 3. Implémentations ciblées
+public class SalleRepositoryMemory implements IRepository<Salle> {
+    // Ne redéfinit que save() et findAll() : aucune méthode parasite !
+}
+
+public class ReservationRepositoryMemory implements IReservationRepository {
+    // Redéfinit save(), findAll() ET findByDate()
+}
+```
 
 ---
 
@@ -193,6 +242,33 @@ public class EtudiantServiceImpl implements EtudiantService {
 ```
 
 `EtudiantServiceImpl` (module de haut niveau contenant les règles métier de l'ISM) ne fait aucun `new EtudiantRepositoryMemory()`. Il ne sait même pas comment les données sont sauvegardées physiquement. C'est l'inversion de dépendance totale !
+
+---
+
+### 3.6 Pattern Strategy : Élimination des Cascades `if / else` dans les Règles Métier
+
+Dans toute application d'entreprise, coder de longues chaînes de `if / else` pour gérer des variantes d'algorithmes métier est un anti-patron destructeur :
+```java
+// ANTI-PATRON : Toute nouvelle catégorie oblige à modifier cette méthode (casse OCP !)
+if (typeClient.equals("ETUDIANT")) {
+    remise = montant * 0.10;
+} else if (typeClient.equals("PROFESSEUR")) {
+    remise = montant * 0.20;
+} else if (typeClient.equals("PARTENAIRE")) {
+    remise = montant * 0.15;
+}
+```
+
+> 💡 **La Règle de Baila Wane : Remplacer les embranchements par des Stratégies Polymorphiques**
+> 1. Définir une interface commune de stratégie :
+> ```java
+> public interface RemiseStrategy {
+>     double calculerRemise(double montant);
+> }
+> ```
+> 2. Créer une classe d'implémentation par variante (`RemiseEtudiant`, `RemiseProfesseur`, `RemisePartenaire`).
+> 3. La classe consommatrice reçoit l'interface `RemiseStrategy` : l'algorithme devient fermé à la modification et ouvert à l'ajout de n'importe quel nouveau profil commercial !
+> *Cette approche s'applique également au calcul de surface (`SurfaceCarre`, `SurfaceRectangle`) et à la tarification d'inscription (`InscriptionL1`, `InscriptionBoursier`).*
 
 ---
 

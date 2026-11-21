@@ -96,15 +96,30 @@ Pour comparer l'égalité logique métier, nous devons redéfinir la méthode `e
 > ⚠️ **Règle absolue du contrat Java :**
 > Si deux objets sont égaux selon `equals()`, ils **DOIVENT** obligatoirement renvoyer le même `hashCode()`. Si vous oubliez cette règle, vos entités deviendront invisibles ou dupliquées lorsqu'elles seront stockées dans des collections de type `HashSet` ou `HashMap` !
 
+### 2.4 Statique vs Instance : Mémoire et Incompatibilité avec l'Héritage
+
+L'un des enseignements cardinaux dispensés par le Professeur Baila Wane porte sur la frontière étanche entre ce qui relève de la **classe (statique)** et ce qui relève de **l'objet (instance)** :
+
+| Dimension | Membre Statique (`static`) | Membre d'Instance |
+| :--- | :--- | :--- |
+| **Zone Mémoire** | Metaspace (zone partagée commune à toute la JVM). | Heap (tas dynamique alloué par objet). |
+| **Partage** | Une seule case mémoire partagée entre tous les objets. | Chaque objet possède sa propre copie indépendante. |
+| **Polymorphisme** | **IMPOSSIBLE**. Pas de liaison tardive, pas d'@Override. | **Natif**. Liaison dynamique selon le type réel à l'exécution. |
+| **Usage Légitime** | Constantes immuables (`final static`), configuration globale. | Données et algorithmes métier, entités, repositories. |
+
+> 📘 **Pourquoi le `static` est banni des algorithmes métier ?**
+> Une méthode statique a un comportement figé et scellé dès la compilation. Dès lors que vous déclarez une logique métier en `static`, vous interdisez le polymorphisme, vous empêchez l'injection de dépendances, et vous rendez vos composants impossibles à tester avec des doublures (Mocks).
+> Le mot-clé `final static` est réservé aux constantes universelles immuables (ex: `public static final int NOTE_MAX = 20;`).
+
 ---
 
 ## 3. Implémentation Pratique & Code de Référence
 
 Examinons le code réel extrait de notre projet de référence `com.ism.domain`.
 
-### 3.1 La classe générique abstraite `AbstractEntity`
+### 3.1 La classe générique abstraite `AbstractEntity` et Traçabilité d'Audit
 
-Toute entité de notre système partage des métadonnées de cycle de vie. Plutôt que de dupliquer `id`, `createdAt` et `updatedAt` dans chaque entité, nous factorisons ce comportement dans une classe abstraite :
+Toute entité de notre système partage des métadonnées de cycle de vie et de traçabilité. Plutôt que de dupliquer `id`, `createdAt`, `updatedAt`, `createdBy` et `updatedBy` dans chaque classe, nous factorisons ce comportement dans une classe mère abstraite :
 
 ```java
 package com.ism.domain;
@@ -126,12 +141,20 @@ import java.time.LocalDateTime;
 public abstract class AbstractEntity implements Serializable {
 
     protected Long id;
-    protected LocalDateTime createdAt;
+    
+    // createdAt est immuable : horodaté à la création, jamais réécrit
+    protected final LocalDateTime createdAt;
     protected LocalDateTime updatedAt;
+    
+    // Audit d'ingénierie : traçabilité de l'opérateur en production
+    protected String createdBy;
+    protected String updatedBy;
 
     public AbstractEntity() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+        this.createdBy = "SYSTEM";
+        this.updatedBy = "SYSTEM";
     }
 
     public AbstractEntity(Long id) {
@@ -141,9 +164,13 @@ public abstract class AbstractEntity implements Serializable {
 }
 ```
 
+> ⚠️ **Pourquoi l'annotation Lombok `@Builder` ne peut pas être placée sur `AbstractEntity` ?**
+> Une classe marquée `abstract` ne peut jamais être instanciée directement (`new AbstractEntity()` est interdit). Le patron Builder généré par Lombok exigeant d'instancier la classe cible, placer `@Builder` sur une classe abstraite génère une erreur de compilation !
+> **Règle absolue :** `@Builder` doit toujours être placé sur les sous-classes concrètes instanciables (`Etudiant`, `Note`, `Salle`, `Produit`).
+
 ### 3.2 L'entité métier `Etudiant`
 
-Conformément au code de référence de notre dépôt GitHub `com.ism.domain.Etudiant`, l'étudiant est identifié par son matricule unique, son nom complet et sa classe académique :
+Conformément à l'architecture de notre domaine `com.ism.domain.Etudiant`, l'étudiant est identifié par son matricule unique, ses coordonnées civiles et sa classe académique. Il hérite de `AbstractEntity` pour la gestion de sa clé primaire `Long id` et de ses métadonnées d'audit :
 
 ```java
 package com.ism.domain;
@@ -153,8 +180,8 @@ import lombok.*;
 import java.util.Objects;
 
 /**
- * Entité représentant un étudiant inscrit à l'ISM.
- * Entité représentant un étudiant au sein du système académique.
+ * Entité représentant un étudiant inscrit au sein du système académique.
+ * Hérite des propriétés d'audit et d'identité de AbstractEntity.
  *
  * @author Baila Wane
  */
@@ -166,16 +193,29 @@ import java.util.Objects;
 @Builder
 public class Etudiant extends AbstractEntity {
 
-    private String nomComplet;
     private String matricule;
+    private String nom;
+    private String prenom;
+    private String email;
+    private String telephone;
     private String classe; // Ex: "L3 GLRS", "Master 1 ISI"
 
     // Constructeur complet avec ID hérité
-    public Etudiant(int id, String nomComplet, String matricule, String classe) {
-        this.id = id;
-        this.nomComplet = nomComplet;
+    public Etudiant(Long id, String matricule, String nom, String prenom, String email, String telephone, String classe) {
+        super(id);
         this.matricule = matricule;
+        this.nom = nom;
+        this.prenom = prenom;
+        this.email = email;
+        this.telephone = telephone;
         this.classe = classe;
+    }
+
+    /**
+     * Méthode utilitaire renvoyant le nom complet formaté.
+     */
+    public String getNomComplet() {
+        return (prenom != null ? prenom : "") + " " + (nom != null ? nom.toUpperCase() : "");
     }
 
     /**
@@ -197,61 +237,7 @@ public class Etudiant extends AbstractEntity {
 ```
 
 > 💡 **Perspective d'Évolution en Entreprise :**
-> Dans le cadre d'un système de production à grande échelle, cette entité de base peut être enrichie d'attributs complémentaires (`email`, `telephone`, `dateNaissance`) sans briser le contrat d'héritage ni la règle d'égalité basée sur le matricule.
-
-L'entité `Etudiant` étend `AbstractEntity`, encapsule ses données et utilise Lombok pour générer un constructeur fluide (*Builder Pattern*) et des accesseurs rigoureux :
-
-```java
-package com.ism.domain;
-
-import lombok.*;
-
-import java.util.Objects;
-
-/**
- * Entité représentant un étudiant inscrit à l'ISM.
- */
-@Getter
-@Setter
-@ToString(callSuper = true)
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
-public class Etudiant extends AbstractEntity {
-
-    private String matricule;
-    private String nom;
-    private String prenom;
-    private String email;
-    private String telephone;
-
-    // Constructeur complet avec ID hérité
-    public Etudiant(Long id, String matricule, String nom, String prenom, String email, String telephone) {
-        super(id);
-        this.matricule = matricule;
-        this.nom = nom;
-        this.prenom = prenom;
-        this.email = email;
-        this.telephone = telephone;
-    }
-
-    /**
-     * Deux étudiants sont égaux si et seulement si leur matricule unique est identique.
-     */
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Etudiant etudiant = (Etudiant) o;
-        return Objects.equals(matricule, etudiant.matricule);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(matricule);
-    }
-}
-```
+> L'utilisation conjointe des annotations Lombok `@Getter`, `@Setter`, `@Builder` et `@ToString(callSuper = true)` permet de conserver un modèle d'une concision exemplaire tout en garantissant l'encapsulation stricte et la traçabilité des attributs hérités de `AbstractEntity`.
 
 ### 3.3 L'entité métier `Note`
 
@@ -290,14 +276,19 @@ public class Note extends AbstractEntity {
 
 ### 3.4 Démonstration du Polymorphisme Dynamique
 
-Le polymorphisme permet de manipuler des objets dérivés à travers la référence de leur type parent (`AbstractEntity`), la JVM se chargeant d'invoquer la méthode appropriée à l'exécution (*liaison tardive / dynamic dispatch*) :
+Le polymorphisme naît automatiquement dès qu'il y a relation d'héritage ou implémentation d'interface. Il permet de substituer un objet d'une classe fille à une classe mère sans modifier le code client.
+
+Comme l'explique le Professeur Baila Wane à travers une analogie frappante :
+> *"Dans une application de dessin vectoriel, un développeur non formé écrira trois méthodes distinctes : `addCarre(Carre c)`, `addRectangle(Rectangle r)`, `addTriangle(Triangle t)`. Dès qu'il doit ajouter 20 nouvelles formes géométriques, il doit créer 20 nouvelles méthodes ! Avec le polymorphisme, nous définissons une classe ou interface mère `Figure`, et une unique méthode générique `add(Figure f)`. Que vous passiez un carré, un cercle ou un losange, la méthode `add` reste inchangée ! C'est cela, la véritable économie de code et la flexibilité logicielle."*
+
+Dans notre architecture académique, le polymorphisme permet de manipuler des objets dérivés à travers la référence de leur type parent (`AbstractEntity`), la JVM se chargeant d'invoquer la méthode appropriée à l'exécution (*liaison tardive / dynamic dispatch*) :
 
 ```java
 public class PolymorphismDemo {
     public static void main(String[] args) {
         // Déclaration via le type générique abstrait
-        Etudiant e1 = new Etudiant(1, "Awa Diop", "ETU-2026-001", "L3 GLRS");
-        AbstractEntity n1 = new Note(10L, 17.5, 3.0, "Architecture Logicielle Java", (Etudiant) e1);
+        Etudiant e1 = new Etudiant(1L, "ETU-2026-001", "Diop", "Awa", "awa.diop@ism.sn", "771002030", "L3 GLRS");
+        AbstractEntity n1 = new Note(10L, 17.5, 3.0, "Architecture Logicielle Java", e1);
 
         // Appel polymorphique : la JVM résout dynamiquement le toString() propre à chaque classe
         afficherEntite(e1);

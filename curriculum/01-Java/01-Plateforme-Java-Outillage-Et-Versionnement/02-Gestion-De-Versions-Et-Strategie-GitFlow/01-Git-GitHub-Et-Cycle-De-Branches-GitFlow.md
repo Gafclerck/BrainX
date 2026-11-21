@@ -130,7 +130,7 @@ git clone -b features/notes https://github.com/DianaFerradini/Gestion-etudiants-
 cd Gestion-etudiants-notes-java
 ```
 
-### 3.2 Cycle de travail complet sur une fonctionnalité
+### 3.2 Cycle de travail complet sur une fonctionnalité et Discipline de Commits
 
 Voici la séquence pas à pas appliquée pour développer la gestion des notes dans `com.ism` :
 
@@ -142,23 +142,55 @@ git pull origin develop
 # 2. Créer une nouvelle branche de fonctionnalité isolée
 git checkout -b feature/notes
 
-# 3. Réaliser les développements (création de Note.java, NoteService.java)
-# 4. Vérifier l'état des fichiers modifiés
-git status
-
-# 5. Indexer les fichiers métier pertinents
+# 3. Réaliser les développements par petits incréments fonctionnels
+# Règle de Baila Wane : Effectuer des commits fréquents à chaque étape validée !
+# Exemple 1 : Commit de la couche Entité
 git add src/main/java/com/ism/domain/Note.java
+git commit -m "feat(domain): creation de l'entite Note avec annotations Lombok et AbstractEntity"
+
+# Exemple 2 : Commit de la couche Repository
+git add src/main/java/com/ism/repository/NoteRepository.java
+git add src/main/java/com/ism/repository/memory/NoteRepositoryMemory.java
+git commit -m "feat(repository): contrat NoteRepository et implementation en memoire vive"
+
+# Exemple 3 : Commit de la couche Service et calculs
 git add src/main/java/com/ism/service/NoteService.java
 git add src/main/java/com/ism/service/NoteServiceImpl.java
+git commit -m "feat(service): implementation de NoteServiceImpl avec validation et injection de dependance"
 
-# 6. Créer un commit conventionnel et explicite (Conventional Commits)
-git commit -m "feat(domain): ajout de l'entite Note et du service d'attribution de notes"
-
-# 7. Pousser la branche de fonctionnalité sur GitHub
+# 4. Pousser la branche de fonctionnalité sur GitHub
 git push -u origin feature/notes
+
+# 5. Fusionner proprement dans develop avec préservation de l'historique
+git checkout develop
+git pull origin develop
+git merge --no-ff feature/notes -m "Merge feature/notes into develop : finalisation du module de notation"
 ```
 
-### 3.3 Le fichier critique `.gitignore`
+> 💡 **Pourquoi des commits fréquents plutôt qu'un "gros commit de fin de journée" ?**
+> Comme l'enseigne Baila Wane en cours : si vous réalisez 4 heures de travail sans committer et que vous introduisez une erreur subtile impossible à déboguer, vous perdez tout votre code pour revenir en arrière. En commitant chaque étape fonctionnelle (Entité, puis Repository, puis Service), vous conservez des points de restauration sûrs grâce à `git checkout <commit_hash>` ou `git revert`.
+
+### 3.3 Versionnement Sémantique (SemVer) et Marquage par Tags Git
+
+Dans le projet de référence, nous appliquons la norme industrielle **Semantic Versioning (`MAJOR.MINOR.PATCH`)** combinée aux tags Git :
+
+1. **Phase de prototypage (`0.x.x`)** :
+   - Les versions débutant par `0.` (ex: `v0.1.0`, `v0.3.0`, `v0.7.0`) signalent un projet en cours d'élaboration, **non déployable en production**. L'API et les structures de données peuvent encore évoluer radicalement.
+2. **Première version livrable (`1.0.0`)** :
+   - Dès que le cœur métier est stabilisé (gestion des étudiants, attribution des notes, calculs de moyenne, persistance mémoire et DTOs hermétiques), nous scellons la version officielle livrable par le tag :
+   ```bash
+   git tag -a v1.0.0 -m "Release v1.0.0 : Premiere version livrable avec architecture en couches complete"
+   git push origin v1.0.0
+   ```
+3. **Incrémentation des versions** :
+   - **Patch (`1.0.1`, `1.0.2`)** : Réservé exclusivement aux corrections d'anomalies (bugfixes) sans ajout de fonctionnalités.
+   - **Minor (`1.1.0`)** : Ajout d'une nouvelle fonctionnalité rétro-compatible (ex: export PDF du relevé de notes).
+   - **Major (`2.0.0`)** : Changement d'architecture majeur rompant la compatibilité descendante (ex: passage à une API REST ou réécriture des modèles).
+
+> ⚠️ **La règle d'or du tag avant migration :**
+> Avant d'entamer une migration technique à haut risque — par exemple remplacer le stockage `DatabaseMemory` par une base relationnelle via JDBC —, posez impérativement un tag Git (ex: `v1.0.1`). Si la migration JDBC s'avère complexe, vous pourrez instantanément redéployer la version stable précédente sans le moindre doute.
+
+### 3.4 Le fichier critique `.gitignore`
 
 Il est formellement interdit de committer des artefacts générés ou des fichiers propres à votre IDE. Voici le fichier `.gitignore` obligatoire à la racine de votre projet Java Maven :
 

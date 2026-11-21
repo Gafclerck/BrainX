@@ -94,7 +94,7 @@ Le **DevLog (Developer's Log)** est le journal de bord de l'ingénieur logiciel.
     }
     ```
 - *Incident 02* : L'invite de saisie de la matière dans `Main.java` affichait à tort `"Matricule : "` suite à un copier-coller hâtif.
-  - *Correction appliquée* : Nettoyage de la chaîne de prompt et bascule vers `ConsoleScanner.lireChaineNonVide("Matière")`.
+  - *Correction appliquée* : Nettoyage de la chaîne de prompt et bascule vers `etudiantView.lireTexte("Matière")`.
 
 #### 3. Preuves de Validation & Recette
 - `mvn test` : 100% succès (8 tests unitaires passés).

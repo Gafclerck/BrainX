@@ -106,12 +106,13 @@ package com.ism.service;
 import com.ism.domain.Note;
 import java.util.List;
 
-public class MoyenneStreamCalculator {
+public class MoyenneStreamCalculator implements MoyenneService {
 
     /**
-     * Calcule la moyenne pondérée selon les coefficients de chaque note.
+     * Calcule la moyenne pondérée selon les coefficients de chaque note via l'API Stream.
      */
-    public static double calculerMoyennePonderee(List<Note> notes) {
+    @Override
+    public double calculerMoyenne(List<Note> notes) {
         if (notes == null || notes.isEmpty()) {
             return 0.0;
         }

@@ -71,29 +71,39 @@ La classe `Scanner` de Java présente un comportement déroutant pour les néoph
 > **Ne mélangez jamais `nextInt()` ou `nextDouble()` avec `nextLine()` !**
 > Lisez TOUJOURS la ligne entière sous forme de chaîne de caractères avec `scanner.nextLine().trim()`, puis effectuez la conversion vous-même avec `Integer.parseInt(...)` ou `Double.parseDouble(...)` au sein d'un bloc de contrôle.
 
+### 2.3 Architecture Industrielle de la Vue Console : La Classe Mère `View`
+
+Dans une application professionnelle, chaque vue d'entité ne doit pas réinventer ses propres méthodes de lecture du clavier.
+Baila Wane préconise d'organiser la présentation en couches d'héritage maîtrisé :
+1. **Une classe mère abstraite `View`** : regroupe les primitives de saisie sécurisées (`lireTexte`, `lireEntier`, `lireDecimale`). Elle encapsule une instance unique de `Scanner` injectée par constructeur ou gérée en Singleton.
+2. **Des classes de vues concrètes marquées `final`** (ex: `EtudiantView`, `ProduitView`, `SalleView`) : elles héritent de `View` et implémentent les formulaires spécifiques au domaine sans pouvoir être dérivées de façon anarchique.
+
 ---
 
 ## 3. Implémentation Pratique & Code de Référence
 
-### 3.1 Utilitaire de Saisie Sécurisée `ConsoleScanner`
-
-Pour encapsuler la lecture clavier et réitérer la demande jusqu'à ce que l'utilisateur saisisse une valeur valide :
+### 3.1 La Classe Mère Abstraite `View` et le Scanner Singleton
 
 ```java
-package com.ism.util;
+package com.ism.view;
 
 import java.util.Scanner;
 
-public final class ConsoleScanner {
+/**
+ * Classe mère abstraite pour toutes les vues console de l'application.
+ * Factorise la saisie clavier et sécurise les conversions de types.
+ *
+ * @author Baila Wane
+ */
+public abstract class View {
 
-    private static final Scanner scanner = new Scanner(System.in);
+    protected final Scanner scanner;
 
-    private ConsoleScanner() {}
+    protected View(Scanner scanner) {
+        this.scanner = scanner;
+    }
 
-    /**
-     * Lit une chaîne obligatoire non vide.
-     */
-    public static String lireChaineNonVide(String prompt) {
+    public String lireTexte(String prompt) {
         String saisie;
         do {
             System.out.print(prompt + " : ");
@@ -105,10 +115,7 @@ public final class ConsoleScanner {
         return saisie;
     }
 
-    /**
-     * Lit un entier avec contrôle de validité numérique et de plage.
-     */
-    public static int lireEntier(String prompt, int min, int max) {
+    public int lireEntier(String prompt, int min, int max) {
         while (true) {
             System.out.print(prompt + " (" + min + "-" + max + ") : ");
             String saisie = scanner.nextLine().trim();
@@ -119,15 +126,12 @@ public final class ConsoleScanner {
                 }
                 System.out.println(" ⚠️ Veuillez entrer un entier compris entre " + min + " et " + max + ".");
             } catch (NumberFormatException e) {
-                System.out.println(" ⚠️ Saisie invalide : veuillez entrer un nombre entier valide.");
+                System.out.println(" ⚠️ Saisie invalide : veuillez entrer un nombre entier.");
             }
         }
     }
 
-    /**
-     * Lit un nombre décimal pour la saisie d'une note.
-     */
-    public static double lireDouble(String prompt, double min, double max) {
+    public double lireDecimale(String prompt, double min, double max) {
         while (true) {
             System.out.print(prompt + " (" + min + "-" + max + ") : ");
             String saisie = scanner.nextLine().trim().replace(',', '.');
@@ -145,9 +149,127 @@ public final class ConsoleScanner {
 }
 ```
 
-### 3.2 La Boucle Principale de `com.ism.Main`
+### 3.2 La Vue Concrète `EtudiantView`
 
-Examinons l'orchestration réelle dans la classe `Main` de notre projet :
+En dérivant de la classe mère `View`, la classe concrète `EtudiantView` orchestre les formulaires de saisie et les affichages du domaine étudiant sans réécrire la tuyauterie de bas niveau :
+
+```java
+package com.ism.view;
+
+import com.ism.dto.EtudiantCreateDto;
+import com.ism.dto.EtudiantListeDto;
+import com.ism.dto.NoteCreateDto;
+import com.ism.dto.NoteListeDto;
+
+import java.util.List;
+import java.util.Scanner;
+
+public final class EtudiantView extends View {
+
+    public EtudiantView(Scanner scanner) {
+        super(scanner);
+    }
+
+    public EtudiantCreateDto saisirNouveauEtudiant() {
+        System.out.println("\n--- INSCRIPTION D'UN ÉTUDIANT ---");
+        String matricule = lireTexte("Matricule");
+        String nom = lireTexte("Nom");
+        String prenom = lireTexte("Prénom");
+        String email = lireTexte("Email");
+        String telephone = lireTexte("Téléphone");
+        String classe = lireTexte("Classe (ex: L3-GL, M1-INFO)");
+
+        return new EtudiantCreateDto(matricule, nom, prenom, email, telephone, classe);
+    }
+
+    public NoteCreateDto saisirNouvelleNote() {
+        System.out.println("\n--- ATTRIBUTION DE NOTE ---");
+        String matricule = lireTexte("Matricule de l'étudiant");
+        String matiere = lireTexte("Matière");
+        double valeur = lireDecimale("Note obtenue", 0.0, 20.0);
+        double coeff = lireDecimale("Coefficient", 1.0, 10.0);
+
+        return new NoteCreateDto(valeur, coeff, matiere, matricule);
+    }
+
+    public void afficherEtudiants(List<EtudiantListeDto> etudiants) {
+        System.out.println("\n--- PROMOTION DES ÉTUDIANTS INSCRITS ---");
+        if (etudiants == null || etudiants.isEmpty()) {
+            System.out.println("ℹ️ Aucun étudiant enregistré pour le moment.");
+            return;
+        }
+
+        System.out.printf("%-5s | %-15s | %-25s | %-10s | %-25s\n", "ID", "MATRICULE", "NOM COMPLET", "CLASSE", "EMAIL");
+        System.out.println("---------------------------------------------------------------------------------------");
+        for (EtudiantListeDto e : etudiants) {
+            System.out.printf("%-5d | %-15s | %-25s | %-10s | %-25s\n", e.id(), e.matricule(), e.nomComplet(), e.classe(), e.email());
+        }
+    }
+
+    public void afficherBulletin(EtudiantListeDto etudiant, List<NoteListeDto> notes, double moyenne) {
+        System.out.println("\n--- BULLETIN DE NOTES ---");
+        System.out.println("Étudiant : " + etudiant.nomComplet() + " (" + etudiant.matricule() + ") | Classe : " + etudiant.classe());
+        System.out.println("--------------------------------------------------");
+        if (notes == null || notes.isEmpty()) {
+            System.out.println("ℹ️ Aucune note attribuée pour cet étudiant.");
+            return;
+        }
+
+        for (NoteListeDto n : notes) {
+            System.out.printf("- %-20s : %5.2f / 20 (Coeff: %.1f)\n", n.matiere(), n.valeur(), n.coefficient());
+        }
+        System.out.println("--------------------------------------------------");
+        System.out.printf("MOYENNE GÉNÉRALE PONDÉRÉE : %.2f / 20\n", moyenne);
+        System.out.println("DÉCISION DU JURY : " + (moyenne >= 10.0 ? "ADMIS ✅" : "AJOURNÉ ❌"));
+    }
+}
+```
+
+### 3.3 La Couche Validateur Statique (`Validator`) et Codes `EnumError`
+
+Pour respecter le principe de responsabilité unique (SRP), la vérification des données de formulaire ne doit pas encombrer la classe de vue.
+Nous créons une couche de validation dédiée composée de classes utilitaires statiques :
+
+```java
+package com.ism.validator;
+
+import com.ism.enums.EnumError;
+
+/**
+ * Validateur syntaxique de chaînes de caractères.
+ */
+public final class StringValidator {
+
+    private StringValidator() {}
+
+    public static EnumError validerObligatoire(String valeur) {
+        if (valeur == null) {
+            return EnumError.CHAMP_OBLIGATOIRE;
+        }
+        if (valeur.trim().isEmpty()) {
+            return EnumError.CHAMP_OBLIGATOIRE;
+        }
+        return EnumError.SUCCES;
+    }
+}
+```
+
+> 📘 **Règle Majeure de Conception : Les Validateurs renvoient des `EnumError`**
+> Un validateur ne doit jamais renvoyer un simple `boolean` (qui ne dit pas pourquoi la validation a échoué) ni une chaîne de caractères brute (qui empêche l'internationalisation). En renvoyant un code `EnumError`, la vue peut instantanément afficher le message dans la langue appropriée.
+
+### 3.4 Frontière Étanche : Validation Syntaxique vs Validation Métier
+
+Une distinction essentielle enseignée par Baila Wane sépare deux univers de validation :
+1. **La Validation Syntaxique / Structurelle (Vue / Validateur / DTO)** :
+   - Vérifie si le matricule n'est pas vide, si le format e-mail contient un `@`, si la note est un nombre positif.
+   - Ne nécessite **aucun accès à la base de données**. Elle s'exécute immédiatement en périphérie de l'application.
+2. **La Validation Métier (Couche Service)** :
+   - Vérifie si le matricule n'est pas déjà attribué à un autre étudiant en base, si la salle est libre sur le créneau demandé, si le solde financier de l'étudiant autorise l'inscription.
+   - Nécessite **l'interrogation des Repositories**. Elle s'exécute obligatoirement dans la couche Service.
+
+### 3.5 La Boucle Principale de `com.ism.Main`
+
+Examinons l'orchestration réelle dans la classe `Main` de notre projet, qui instancie la vue et délègue l'exécution aux services :
 
 ```java
 package com.ism;
@@ -160,13 +282,17 @@ import com.ism.exception.BusinessException;
 import com.ism.factory.ServiceFactory;
 import com.ism.service.EtudiantService;
 import com.ism.service.NoteService;
-import com.ism.util.ConsoleScanner;
+import com.ism.view.EtudiantView;
 
 import java.util.List;
+import java.util.Scanner;
 
 public class Main {
 
     public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+        EtudiantView etudiantView = new EtudiantView(scanner);
+
         EtudiantService etudiantService = ServiceFactory.getEtudiantService();
         NoteService noteService = ServiceFactory.getNoteService();
 
@@ -177,31 +303,47 @@ public class Main {
 
         while (running) {
             afficherMenu();
-            int choix = ConsoleScanner.lireEntier("Votre choix", 1, 5);
+            int choix = etudiantView.lireEntier("Votre choix", 1, 5);
 
             try {
                 switch (choix) {
-                    case 1 -> ajouterEtudiant(etudiantService);
-                    case 2 -> listerEtudiants(etudiantService);
-                    case 3 -> attribuerNote(noteService);
-                    case 4 -> afficherBulletin(etudiantService, noteService);
+                    case 1 -> {
+                        EtudiantCreateDto dto = etudiantView.saisirNouveauEtudiant();
+                        EtudiantListeDto enregistre = etudiantService.inscrireEtudiant(dto);
+                        System.out.println("✅ Étudiant inscrit avec succès ! ID attribué : " + enregistre.id());
+                    }
+                    case 2 -> {
+                        List<EtudiantListeDto> liste = etudiantService.listerTous();
+                        etudiantView.afficherEtudiants(liste);
+                    }
+                    case 3 -> {
+                        NoteCreateDto dto = etudiantView.saisirNouvelleNote();
+                        noteService.ajouterNote(dto);
+                        System.out.println("✅ Note enregistrée avec succès pour l'étudiant " + dto.etudiantMatricule() + " !");
+                    }
+                    case 4 -> {
+                        String matricule = etudiantView.lireTexte("Matricule de l'étudiant à consulter");
+                        EtudiantListeDto etudiant = etudiantService.trouverParMatricule(matricule);
+                        List<NoteListeDto> notes = noteService.listerNotesParEtudiant(matricule);
+                        double moyenne = etudiantService.calculerMoyenneEtudiant(matricule);
+                        etudiantView.afficherBulletin(etudiant, notes, moyenne);
+                    }
                     case 5 -> {
-                        System.out.println("
-[SYSTÈME] Fermeture de l'application. Au revoir !");
+                        System.out.println("\n[SYSTÈME] Fermeture de l'application. Au revoir !");
                         running = false;
                     }
                 }
             } catch (BusinessException e) {
                 // Interception ciblée des anomalies métier sans crasher le programme
-                System.out.println("
-❌ [ERREUR MÉTIER] Code: " + e.getErrorCode() + " | " + e.getMessage());
+                System.out.println("\n❌ [ERREUR MÉTIER] Code: " + e.getErrorCode() + " | " + e.getMessage());
             } catch (Exception e) {
                 // Interception de sécurité pour imprévus
-                System.out.println("
-❌ [ERREUR INATTENDUE] Une anomalie système est survenue : " + e.getMessage());
+                System.out.println("\n❌ [ERREUR INATTENDUE] Une anomalie système est survenue : " + e.getMessage());
             }
             System.out.println();
         }
+
+        scanner.close();
     }
 
     private static void afficherMenu() {
@@ -213,78 +355,6 @@ public class Main {
         System.out.println("5. Quitter");
         System.out.println("--------------------------------------------------");
     }
-
-    private static void ajouterEtudiant(EtudiantService service) {
-        System.out.println("
---- INSCRIPTION D'UN ÉTUDIANT ---");
-        String matricule = ConsoleScanner.lireChaineNonVide("Matricule");
-        String nom = ConsoleScanner.lireChaineNonVide("Nom");
-        String prenom = ConsoleScanner.lireChaineNonVide("Prénom");
-        String email = ConsoleScanner.lireChaineNonVide("Email");
-        String tel = ConsoleScanner.lireChaineNonVide("Téléphone");
-
-        EtudiantCreateDto dto = new EtudiantCreateDto(matricule, nom, prenom, email, tel);
-        EtudiantListeDto enregistre = service.inscrireEtudiant(dto);
-
-        System.out.println("✅ Étudiant inscrit avec succès ! ID attribué : " + enregistre.id());
-    }
-
-    private static void listerEtudiants(EtudiantService service) {
-        System.out.println("
---- PROMOTION DES ÉTUDIANTS INSCRITS ---");
-        List<EtudiantListeDto> liste = service.listerTous();
-        if (liste.isEmpty()) {
-            System.out.println("ℹ️ Aucun étudiant enregistré pour le moment.");
-            return;
-        }
-
-        System.out.printf("%-5s | %-15s | %-25s | %-25s
-", "ID", "MATRICULE", "NOM COMPLET", "EMAIL");
-        System.out.println("-----------------------------------------------------------------------------");
-        for (EtudiantListeDto e : liste) {
-            System.out.printf("%-5d | %-15s | %-25s | %-25s
-", e.id(), e.matricule(), e.nomComplet(), e.email());
-        }
-    }
-
-    private static void attribuerNote(NoteService service) {
-        System.out.println("
---- ATTRIBUTION DE NOTE ---");
-        String matricule = ConsoleScanner.lireChaineNonVide("Matricule de l'étudiant");
-        String matiere = ConsoleScanner.lireChaineNonVide("Matière");
-        double valeur = ConsoleScanner.lireDouble("Note obtenue", 0.0, 20.0);
-        double coeff = ConsoleScanner.lireDouble("Coefficient", 1.0, 10.0);
-
-        NoteCreateDto dto = new NoteCreateDto(valeur, coeff, matiere, matricule);
-        service.ajouterNote(dto);
-        System.out.println("✅ Note enregistrée avec succès pour l'étudiant " + matricule + " !");
-    }
-
-    private static void afficherBulletin(EtudiantService etudiantService, NoteService noteService) {
-        System.out.println("
---- BULLETIN DE NOTES ---");
-        String matricule = ConsoleScanner.lireChaineNonVide("Matricule de l'étudiant");
-        EtudiantListeDto etudiant = etudiantService.trouverParMatricule(matricule);
-        List<NoteListeDto> notes = noteService.listerNotesParEtudiant(matricule);
-
-        System.out.println("
-Étudiant : " + etudiant.nomComplet() + " (" + etudiant.matricule() + ")");
-        System.out.println("--------------------------------------------------");
-        if (notes.isEmpty()) {
-            System.out.println("ℹ️ Aucune note attribuée pour cet étudiant.");
-            return;
-        }
-
-        for (NoteListeDto n : notes) {
-            System.out.printf("- %-20s : %5.2f / 20 (Coeff: %.1f)
-", n.matiere(), n.valeur(), n.coefficient());
-        }
-        double moyenne = etudiantService.calculerMoyenneEtudiant(matricule);
-        System.out.println("--------------------------------------------------");
-        System.out.printf("MOYENNE GÉNÉRALE PONDÉRÉE : %.2f / 20
-", moyenne);
-        System.out.println("DÉCISION DU JURY : " + (moyenne >= 10.0 ? "ADMIS ✅" : "AJOURNÉ ❌"));
-    }
 }
 ```
 
@@ -295,8 +365,7 @@ public class Main {
 > ⚠️ **Revue de Code : Deux Pièges Majeurs en Interface Console**
 > Lors de la conception d'un terminal interactif, deux erreurs classiques doivent être évitées :
 > 1. **L'inversion de prompt** : afficher par mégarde une invite erronée (par exemple demander *"Matricule : "* alors que le programme attend le nom d'une matière suite à une copie hâtive de ligne), ce qui désoriente l'utilisateur.
-> 2. **L'instabilité de `System.console()` sous les environnements IDE** : `System.console()` renvoie `null` lorsqu'il est exécuté dans la console intégrée d'un IDE comme IntelliJ IDEA, Eclipse ou VS Code. Appeler une méthode dessus déclenche un crash `NullPointerException`. C'est pourquoi l'ingénieur privilégie un `Scanner(System.in)` encapsulé et sécurisé comme notre `ConsoleScanner` !
-
+> 2. **L'instabilité de `System.console()` sous les environnements IDE** : `System.console()` renvoie `null` lorsqu'il est exécuté dans la console intégrée d'un IDE comme IntelliJ IDEA, Eclipse ou VS Code. Appeler une méthode dessus déclenche un crash `NullPointerException`. C'est pourquoi l'ingénieur privilégie un `Scanner(System.in)` encapsulé dans une classe de base `View` !
 
 > ℹ️ **Le remplacement de la virgule par le point :**
 > Selon les paramètres régionaux (*Locale*) de la machine de l'étudiant, la saisie d'un décimal attend soit une virgule (France/Sénégal `14,5`), soit un point (USA `14.5`). Utiliser `saisie.replace(',', '.')` avant `Double.parseDouble()` rend votre code universel et immunisé contre les différences d'OS.
@@ -305,7 +374,14 @@ public class Main {
 > Si vous appelez `scanner.close()` à l'intérieur d'une méthode secondaire, la JVM ferme définitivement le flux standard d'entrée système `System.in`. Tout appel ultérieur à `new Scanner(System.in)` déclenchera immédiatement une `IllegalStateException: Scanner closed`. Ne fermez le scanner qu'à la terminaison complète du programme dans le `main`.
 
 > 💡 **La séparation étanche Vue - Métier :**
-> Remarquez que la classe `Main` n'effectue aucun calcul de moyenne, ne modifie pas les listes en direct et n'instancie aucun objet de persistance. Elle délègue tout aux services via les DTOs.
+> Remarquez que la classe `Main` n'effectue aucun calcul de moyenne, ne modifie pas les listes en direct et n'instancie aucun objet de persistance. Elle orchestre la vue `EtudiantView` et délègue tout aux services via les DTOs.
+
+> 📘 **Démystification : Ce que les Frameworks Modernes (Spring, Quarkus, Symfony) font sous le capot**
+> En réalisant manuellement l'architecture par couches, la boucle console, la gestion du Singleton `Scanner` et l'injection par la `ServiceFactory`, vous venez de reproduire exactement le fonctionnement interne des plus grands frameworks industriels :
+> 1. **Le conteneur IoC (Inversion of Control)** : Dans Spring ou Symfony, un conteneur d'injection de dépendances instancie automatiquement tous les Singletons (Services, Repositories, Database) au démarrage de l'application.
+> 2. **L'autowiring** : Le framework inspecte les constructeurs et injecte automatiquement les interfaces requises sans que le développeur n'ait à écrire `new`.
+> 3. **La couche Contrôleur** : En mode Web, le contrôleur REST remplace notre menu console `switch/case` : il reçoit les requêtes HTTP JSON, les mappe en DTOs, et intercepte les exceptions métier via un `@ControllerAdvice` global pour renvoyer des codes HTTP normalisés (400, 404, 409).
+> *Comprendre ces fondations manuelles fait de vous un développeur capable de dompter n'importe quel framework sans jamais le subir !*
 
 ---
 
@@ -315,7 +391,7 @@ public class Main {
 
 | Règle | Raison technique | Solution appliquée |
 | :--- | :--- | :--- |
-| **Toujours lire en `nextLine()`** | Évite le résidu de `\n` laissé par `nextInt()` dans le buffer. | `ConsoleScanner.lireChaineNonVide()` |
+| **Toujours lire en `nextLine()`** | Évite le résidu de `\n` laissé par `nextInt()` dans le buffer. | `View.lireTexte()` / `View.lireEntier()` |
 | **Parser manuellement les nombres** | Intercepte les fautes de frappe sans crasher l'application. | `Integer.parseInt(saisie)` avec `try-catch` |
 | **Nettoyer les espaces superflus** | Évite les faux rejets sur `" 1"` ou `"ETU-001 "`. | `.trim()` systématique sur les entrées |
 | **Catcher `BusinessException`** | Offre un retour explicite à l'utilisateur sans trace brute. | Gestion centralisée dans le `switch/case` |
@@ -348,6 +424,6 @@ public class Main {
 ```markdown
 [DevLog - Entrée 12]
 - Sujet : Implémentation du menu console interactif sécurisé
-- Action : Créez la classe `ConsoleScanner` et assemblez la classe `com.ism.Main`.
+- Action : Créez la classe abstraite `View`, la classe concrète `EtudiantView` et assemblez la classe `com.ism.Main`.
 - Défi : Lancez l'application en console. Tentez volontairement de saisir des lettres lorsque le menu demande un choix de 1 à 5, puis entrez une note de 30/20. Vérifiez que l'application réagit avec élégance en affichant les messages d'avertissement et vous redemande une saisie sans jamais crasher.
 ```

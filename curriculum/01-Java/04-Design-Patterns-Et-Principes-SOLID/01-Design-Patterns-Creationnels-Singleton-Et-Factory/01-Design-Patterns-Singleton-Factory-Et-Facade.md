@@ -58,9 +58,22 @@ classDiagram
 2. **Attribut statique privé** : Mémorise l'instance unique dans le Metaspace.
 3. **Méthode d'accès statique publique (`getInstance()`)** : Instancie l'objet lors du premier appel (*Lazy Loading*) ou au chargement de la classe (*Eager Loading*), puis renvoie systématiquement cette même référence.
 
-### 2.2 Le Patron Factory (Fabrique Centralisée)
+### 2.2 Typologie Rigoureuse : Quelles Classes Sont Éligibles au Singleton ?
+
+Une incompréhension fréquente chez les développeurs consiste à vouloir appliquer le Singleton sans discernement. Le Professeur Baila Wane pose une règle d'or sans équivoque :
+
+> ⚠️ **La frontière absolue d'éligibilité au Singleton :**
+> - **OUI (Classes Éligibles)** : Les classes orientées **service, traitement ou accès technique** qui n'ont **pas d'état propre par individu**. Exemples : `DatabaseMemory`, `DatabaseBD`, les Repositories (`EtudiantRepository`), les Services métiers (`EtudiantService`), les Validateurs statiques, et l'instance unique de `Scanner` pour la console. Tous les utilisateurs et threads exécutent les mêmes méthodes sur une unique instance partagée en mémoire.
+> - **NON (Classes Formellement Proscrites)** : Les classes porteuses d'un **état propre et mutable par occurrence**, à savoir les **Entités du Domaine** (`Etudiant`, `Note`, `Produit`, `Salle`) et les **DTOs** ! Si vous transformiez `Etudiant` en Singleton, l'inscription d'Amadou écraserait instantanément les données de Fatou dans toute l'application !
+
+### 2.3 Le Patron Factory et la Persistance Multi-Stratégie
 
 La **Factory (Fabrique)** est un patron créationnel qui délègue l'acte d'instanciation d'objets à un composant spécialisé, masquant ainsi au client les détails de construction et les dépendances requises.
+
+Dans une application d'entreprise, la Factory permet notamment de gérer le changement de stratégie de stockage sans impacter le code appelant :
+- Une interface commune `Database` définit les opérations de base (`createConnection()`, persistance).
+- Une énumération `PersistenceStrategie { MEMORY, BD }` exprime la modalité d'exécution.
+- La `DatabaseFactory` instancie soit `DatabaseMemory.getInstance()`, soit `DatabaseBD.getInstance()`.
 
 ```mermaid
 flowchart TD
@@ -69,6 +82,8 @@ flowchart TD
     end
 
     subgraph Factories ["Couche Fabrique (com.ism.factory)"]
+        DF["DatabaseFactory
+- createDatabase(strategy)"]
         RF["RepositoryFactory
 - Fournit les repositories"]
         SF["ServiceFactory
@@ -78,15 +93,19 @@ flowchart TD
     subgraph Instances ["Composants Instanciés"]
         DM[("DatabaseMemory
 (Singleton)")]
-        ER["EtudiantRepositoryMemory"]
+        DBD[("DatabaseBD
+(JDBC / PostgreSQL)")]
+        ER["EtudiantRepository"]
         ES["EtudiantServiceImpl
 (Reçoit ER injecté)"]
     end
 
     UI -->|Demande le service| SF
     SF -->|Demande le repository| RF
-    RF -->|Obtient l'instance unique| DM
-    RF -->|Instancie| ER
+    RF -->|Pilote par stratégie| DF
+    DF -->|Instancie selon stratégie| DM
+    DF -.->|Bascule transparente| DBD
+    RF -->|Injecte Database dans| ER
     SF -->|Injecte ER dans| ES
     SF -->|Renvoie l'interface EtudiantService| UI
 ```
@@ -262,6 +281,67 @@ Pour inscrire un étudiant et calculer sa situation, l'interface console n'a pas
 EtudiantService service = ServiceFactory.getEtudiantService();
 EtudiantListeDto resultat = service.inscrireEtudiant(dto);
 ```
+
+### 3.5 Persistance Multi-Stratégie : `DatabaseFactory` et Enum `PersistenceStrategie`
+
+Lors de la séance consacrée à l'évolutivité des applications d'entreprise, le Professeur Baila Wane formalise le découplage entre la stratégie de stockage et la couche repository :
+1. Une interface `Database` déclare le contrat de connexion et d'exécution :
+```java
+package com.ism.repository;
+
+public interface Database {
+    void createConnection();
+}
+```
+2. Deux implémentations sont créées : `DatabaseMemory` (stockage en listes dans la RAM) et `DatabaseBD` (connexion réelle JDBC / PostgreSQL).
+3. Une énumération `PersistenceStrategie` et sa fabrique `DatabaseFactory` centralisent l'aiguillage :
+```java
+package com.ism.factory;
+
+import com.ism.repository.Database;
+import com.ism.repository.bd.DatabaseBD;
+import com.ism.repository.memory.DatabaseMemory;
+
+public enum PersistenceStrategie {
+    MEMORY,
+    BD
+}
+
+public final class DatabaseFactory {
+
+    private DatabaseFactory() {}
+
+    public static Database createDatabase(PersistenceStrategie strategie) {
+        return switch (strategie) {
+            case MEMORY -> DatabaseMemory.getInstance();
+            case BD -> DatabaseBD.getInstance();
+            default -> throw new IllegalArgumentException("Stratégie de persistance non reconnue : " + strategie);
+        };
+    }
+}
+```
+
+> 📘 **Pourquoi le mot-clé `static` est incompatible avec l'interface `Database` ?**
+> Une méthode statique appartient exclusivement à sa classe et ne peut jamais implémenter une méthode déclarée dans une interface. L'abstraction `Database` impose que les classes d'accès soient des **instances** (obtenues via `getInstance()`), permettant ainsi au repository de recevoir n'importe quelle implémentation de `Database` par polymorphisme sans modification de code.
+
+### 3.6 Le Patron Builder contre le Piège des Constructeurs Télescopiques
+
+Lorsque les entités grandissent, ajouter un constructeur pour 3 paramètres, puis un autre pour 4, puis pour 6 conduit au *Telescoping Constructor Antipattern* :
+```java
+// Code fragile et illisible : risque permanent d'inverser deux String
+new Etudiant(1L, "ETU-001", "Wane", "Amadou", "amadou@ism.sn", "771002030", "L3 GLRS");
+```
+
+Le patron **Builder** généré par l'annotation Lombok `@Builder` remplace cette cascade par une construction fluide, lisible et auto-documentée :
+```java
+Etudiant etudiant = Etudiant.builder()
+        .matricule("ETU-001")
+        .nom("Wane")
+        .prenom("Amadou")
+        .classe("L3 GLRS")
+        .build();
+```
+Tous les champs non renseignés sont automatiquement initialisés à leurs valeurs par défaut (`null` ou `0`), sans risque d'inversion d'arguments.
 
 ---
 

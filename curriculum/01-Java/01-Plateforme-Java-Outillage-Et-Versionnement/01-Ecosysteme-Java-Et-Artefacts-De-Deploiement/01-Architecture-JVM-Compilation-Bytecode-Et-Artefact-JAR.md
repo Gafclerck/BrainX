@@ -245,6 +245,25 @@ Pour exécuter votre application compilée directement depuis n'importe quel ter
 java -jar target/gestion-etudiants-notes-java-1.0.0-SNAPSHOT.jar
 ```
 
+### 3.4 Gestion du Cache Local Maven (`~/.m2`) et Résilience Réseau
+
+Une problématique fréquemment rencontrée en environnement de cours ou en entreprise concerne le téléchargement des dépendances :
+- Lorsque vous ajoutez une dépendance dans `pom.xml` (par exemple Lombok ou un driver SGBD), Maven interroge d'abord le **dépôt local** situé dans votre répertoire utilisateur : `~/.m2/repository` (sous Windows : `C:\Users\<Utilisateur>\.m2\repository`).
+- Si l'artefact y est déjà présent, Maven l'utilise immédiatement sans solliciter le réseau.
+- Si l'artefact est absent, Maven contacte le dépôt distant **Maven Central**.
+
+> 💡 **Résolution d'incident réseau en salle de travaux pratiques :**
+> Si votre connexion internet faiblit ou est bloquée par un proxy d'entreprise, IntelliJ IDEA ou VS Code affiche une dépendance soulignée en rouge dans le `pom.xml`.
+> La parade d'ingénieur consiste à copier le dossier de la dépendance depuis la machine d'un collègue disposant déjà de la bibliothèque dans son `~/.m2/repository` vers votre propre `.m2`. Dès que les fichiers `.jar` et `.pom` sont déposés dans le bon chemin arborescent, Maven valide instantanément la dépendance sans téléchargement !
+
+### 3.5 Distribution d'Interfaces Partagées sous Forme de JAR Commun (*Projet Contrat*)
+
+Dans les architectures d'entreprise modulaires (ou projets multi-modules), nous appliquons le principe d'isolation du code source :
+- Nous créons un sous-projet dédié aux **interfaces et DTOs communs** (souvent baptisé `common-contracts` ou `projet-commande`).
+- Ce module est compilé en un fichier JAR autonome via `mvn clean package`.
+- Ce JAR est ensuite distribué aux équipes de développement (ou déposé sur un serveur Nexus/Artifactory interne).
+- Les développeurs des couches clientes lient ce JAR à leur `pom.xml` : ils ont accès aux signatures de méthodes et aux contrats sans jamais avoir accès au code source interne des algorithmes métier ou des connecteurs de base de données.
+
 ---
 
 ## 4. Bonnes Pratiques, Pièges & Débogage
